@@ -1,0 +1,46 @@
+node_modules/
+.next/
+dist/
+build/
+*.local
+.env.local
+.env.*.local
+.DS_Store
+*-service-account*.json
+*bounce-party-crm*.json
+
+# Local helper / migration scripts
+apply_*.py
+inspect_*.py
+restore_*.py
+fix_*.py
+extract_*.py
+create_*.py
+add_*.py
+
+# Local backups / comparisons
+*.bak
+*.before-*
+.route-board-archive19-compare/
+STAGE_2_CHANGES.md
+receipt_action_block.txt
+=
+
+# Local build/cache
+tsconfig.tsbuildinfo
+
+# Local secrets
+.env.local
+.env.*.local
+*-service-account*.json
+*bounce-party-crm*.json
+credentials/
+secrets/
+
+# Supabase local CLI state
+supabase/.temp/
+
+# Source debugging / recovery artifacts
+*.broken.txt
+*.escaped-backup.txt
+*.broken-option-check

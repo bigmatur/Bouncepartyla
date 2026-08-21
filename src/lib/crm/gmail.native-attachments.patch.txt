@@ -1,0 +1,50 @@
+APPLY THESE CHANGES TO src/lib/crm/gmail.ts
+
+1) Add imports:
+
+import {
+  downloadCrmAttachment,
+} from "@/lib/communication/attachments";
+import type {
+  CrmAttachment,
+} from "@/lib/communication/types";
+
+2) Change sendCrmEmailReply signature to:
+
+export async function sendCrmEmailReply(params: {
+  conversationId: string;
+  body: string;
+  attachments?: CrmAttachment[];
+}) {
+
+3) Replace the first body validation with:
+
+  const body = String(params.body || "").trim();
+  const attachments = params.attachments || [];
+
+  if (!body && attachments.length === 0) {
+    throw new Error("Reply cannot be empty.");
+  }
+
+4) Immediately before transporter.sendMail(), add:
+
+  const mailAttachments = await Promise.all(
+    attachments.map(async (attachment) => {
+      const downloaded = await downloadCrmAttachment({
+        conversationId: params.conversationId,
+        attachment,
+      });
+
+      return {
+        filename: attachment.name,
+        content: downloaded.content,
+        contentType: attachment.mimeType,
+      };
+    }),
+  );
+
+5) Add to transporter.sendMail({...}):
+
+    attachments: mailAttachments,
+
+No other Gmail sync/inbound logic should change.
