@@ -436,6 +436,26 @@ function googleMapsExternalUrl({
 
   return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
+function googleDirectionsEmbedUrl({
+  apiKey,
+  origin,
+  destination,
+}: {
+  apiKey: string;
+  origin: string;
+  destination: string;
+}) {
+  if (!apiKey || !destination) return "";
+
+  const url = new URL("https://www.google.com/maps/embed/v1/directions");
+
+  url.searchParams.set("key", apiKey);
+  url.searchParams.set("origin", origin || destination);
+  url.searchParams.set("destination", destination);
+  url.searchParams.set("mode", "driving");
+
+  return url.toString();
+}
 
 function nextCompletionStatus(stop: DriverStop) {
   if (stop.stop_type === "pickup") {
@@ -870,11 +890,20 @@ export default function DriverRouteApp({
     ? mapAddress(activeStop)
     : "";
 
-  const externalMapUrl =
+    const externalMapUrl =
     googleMapsExternalUrl({
       origin: mapOrigin,
       destination: mapDestination,
     });
+
+  const fallbackMapUrl =
+    googleMapsApiKey && mapDestination
+      ? googleDirectionsEmbedUrl({
+          apiKey: googleMapsApiKey,
+          origin: previewMapOrigin,
+          destination: mapDestination,
+        })
+      : "";
 
   const completedCount =
     navigableStops.filter(isCompleted).length;
@@ -1162,37 +1191,40 @@ export default function DriverRouteApp({
             driverLocation={driverLocation}
             destination={mapDestination}
           />
-        ) : googleMapsApiKey &&
-          mapDestination ? (
-          <div className="flex h-full w-full items-center justify-center bg-[#d9d4ca] px-6 text-center text-sm font-semibold text-[#23313f]">
-            <div>
-              <div>
-                {locationStatus ===
-                "loading"
-                  ? "Getting driver GPS location..."
-                  : locationStatus ===
-                      "denied"
-                    ? "Location permission is required for navigation."
-                    : locationStatus ===
-                        "error"
-                      ? "Could not get driver GPS location."
-                      : "Waiting for driver GPS location..."}
-              </div>
+       ) : googleMapsApiKey &&
+  mapDestination &&
+  fallbackMapUrl ? (
+  <div className="relative h-full w-full">
+    <iframe
+      title="Driver route map"
+      src={fallbackMapUrl}
+      className="h-full w-full border-0"
+      loading="lazy"
+      allowFullScreen
+    />
 
-              {locationStatus !==
-                "loading" && (
-                <button
-                  type="button"
-                  onClick={
-                    requestDriverLocation
-                  }
-                  className="mt-4 rounded-full bg-[#23313f] px-5 py-3 text-sm font-semibold text-white"
-                >
-                  Update GPS
-                </button>
-              )}
-            </div>
-          </div>
+    <div className="absolute inset-x-4 top-24 z-10 mx-auto max-w-md rounded-2xl bg-white/95 px-4 py-3 text-center text-sm font-semibold text-[#23313f] shadow-lg backdrop-blur">
+      <div>
+        {locationStatus === "loading"
+          ? "Getting driver GPS location..."
+          : locationStatus === "denied"
+            ? "Location permission is required for navigation."
+            : locationStatus === "error"
+              ? "Could not get driver GPS location."
+              : "Waiting for driver GPS location..."}
+      </div>
+
+      {locationStatus !== "loading" && (
+        <button
+          type="button"
+          onClick={requestDriverLocation}
+          className="mt-3 rounded-full bg-[#23313f] px-5 py-3 text-sm font-semibold text-white"
+        >
+          Update GPS
+        </button>
+      )}
+    </div>
+  </div>
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-[#d9d4ca] px-6 text-center text-sm font-semibold text-[#23313f]">
             Add NEXT_PUBLIC_GOOGLE_MAPS_API_KEY
