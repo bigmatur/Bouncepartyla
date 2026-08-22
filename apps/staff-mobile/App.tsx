@@ -2,6 +2,10 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import type { Session } from "@supabase/supabase-js";
+import {
+  NavigationProvider,
+  TaskRemovedBehavior,
+} from "@googlemaps/react-native-navigation-sdk";
 
 import { LoginScreen } from "./src/auth/LoginScreen";
 import { DriverLocationTracker } from "./src/features/location/DriverLocationTracker";
@@ -44,7 +48,14 @@ export default function App() {
   }
 
   return (
-    <>
+    <NavigationProvider
+      termsAndConditionsDialogOptions={{
+        title: "Navigation Terms",
+        companyName: "Bounce Party LA",
+        showOnlyDisclaimer: true,
+      }}
+      taskRemovedBehavior={TaskRemovedBehavior.QUIT_SERVICE}
+    >
       <StatusBar style="dark" />
       {session ? (
         <>
@@ -54,7 +65,7 @@ export default function App() {
       ) : (
         <LoginScreen />
       )}
-    </>
+    </NavigationProvider>
   );
 }
 
