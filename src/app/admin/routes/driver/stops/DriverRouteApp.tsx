@@ -819,23 +819,37 @@ export default function DriverRouteApp({
   return (
     <div className="relative h-[100dvh] min-h-screen overflow-hidden bg-[#111827]">
       <div className="absolute inset-0">
-        {isNavigatorMode ? (
-          driverLocation && mapDestination ? (
-            <DriverNavigatorMap
-              apiKey={googleMapsApiKey}
-              driverLocation={driverLocation}
-              destination={mapDestination}
-            />
-          ) : (
-            <div className="flex h-full w-full flex-col items-center justify-center bg-[#d9d4ca] px-8 text-center text-[#23313f]">
-              <div className="text-base font-semibold">Waiting for driver GPS…</div>
-              <div className="mt-2 max-w-sm text-xs leading-5 text-[#6c6258]">
-                Navigation starts from the current driver location. It will not
-                use the warehouse or previous stop as a fake origin.
-              </div>
-            </div>
-          )
-        ) : mapUrl ? (
+      {isNavigatorMode ? (
+  driverLocation && mapDestination ? (
+    <DriverNavigatorMap
+      apiKey={googleMapsApiKey}
+      driverLocation={driverLocation}
+      destination={mapDestination}
+    />
+  ) : mapUrl ? (
+    <div className="relative h-full w-full">
+      <iframe
+        title="Driver route map"
+        src={mapUrl}
+        className="h-full w-full border-0"
+        loading="lazy"
+        allowFullScreen
+      />
+
+      <div className="pointer-events-none absolute inset-x-4 top-24 z-10 rounded-2xl bg-white/95 px-4 py-3 text-center text-sm font-semibold text-[#23313f] shadow-lg backdrop-blur">
+        {locationStatus === "denied"
+          ? "Location permission is required for navigation."
+          : locationStatus === "error"
+            ? "Could not get driver GPS location."
+            : "Getting driver GPS location…"}
+      </div>
+    </div>
+  ) : (
+    <div className="flex h-full w-full items-center justify-center bg-[#d9d4ca] px-6 text-center text-sm font-semibold text-[#23313f]">
+      Waiting for route map…
+    </div>
+  )
+) : mapUrl ? (
           <iframe
             title="Driver route map"
             src={mapUrl}
