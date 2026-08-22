@@ -6,10 +6,11 @@
   "scripts": {
     "start": "expo start",
     "start:dev-client": "expo start --dev-client",
-    "prebuild": "expo prebuild",
-    "prebuild:clean": "expo prebuild --clean",
-    "ios": "expo run:ios",
-    "android": "expo run:android",
+    "native:check": "node scripts/check-native-env.mjs",
+    "prebuild": "npm run native:check && expo prebuild",
+    "prebuild:clean": "npm run native:check && expo prebuild --clean",
+    "ios": "npm run native:check && expo run:ios",
+    "android": "npm run native:check && expo run:android",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
