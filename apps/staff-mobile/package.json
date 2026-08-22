@@ -5,15 +5,18 @@
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
+    "start:dev-client": "expo start --dev-client",
     "ios": "expo run:ios",
     "android": "expo run:android",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@googlemaps/react-native-navigation-sdk": "^0.16.3",
     "@react-native-async-storage/async-storage": "^2.1.2",
     "@supabase/supabase-js": "^2.57.4",
     "expo": "^54.0.0",
     "expo-constants": "^18.0.0",
+    "expo-dev-client": "^6.0.0",
     "expo-location": "^19.0.0",
     "expo-status-bar": "^3.0.8",
     "react": "19.1.0",
