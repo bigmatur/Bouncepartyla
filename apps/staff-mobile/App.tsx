@@ -4,6 +4,7 @@ import { StatusBar } from "expo-status-bar";
 import type { Session } from "@supabase/supabase-js";
 
 import { LoginScreen } from "./src/auth/LoginScreen";
+import { DriverLocationTracker } from "./src/features/location/DriverLocationTracker";
 import { HomeScreen } from "./src/screens/HomeScreen";
 import { supabase } from "./src/lib/supabase";
 
@@ -45,7 +46,14 @@ export default function App() {
   return (
     <>
       <StatusBar style="dark" />
-      {session ? <HomeScreen /> : <LoginScreen />}
+      {session ? (
+        <>
+          <DriverLocationTracker />
+          <HomeScreen />
+        </>
+      ) : (
+        <LoginScreen />
+      )}
     </>
   );
 }
