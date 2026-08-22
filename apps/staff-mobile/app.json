@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "Bounce Party LA Staff",
+    "slug": "bounce-party-la-staff",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "bouncepartyla-staff",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.bouncepartyla.staff",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Bounce Party LA Staff uses your location to show your assigned route and support live driver navigation."
+      }
+    },
+    "android": {
+      "package": "com.bouncepartyla.staff",
+      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
+    },
+    "extra": {
+      "supabaseUrl": "${EXPO_PUBLIC_SUPABASE_URL}",
+      "supabaseAnonKey": "${EXPO_PUBLIC_SUPABASE_ANON_KEY}"
+    }
+  }
+}
