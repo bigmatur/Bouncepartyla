@@ -15,6 +15,10 @@ import {
   type MobileRouteStop,
   type TodayDriverRoute,
 } from "../features/routes/driverRoutes";
+import {
+  nextRouteAction,
+  updateMyRouteStopStatus,
+} from "../features/routes/routeActions";
 import { supabase } from "../lib/supabase";
 
 function formatTime(value: string | null) {
@@ -45,6 +49,7 @@ export function HomeScreen() {
   const [route, setRoute] = useState<TodayDriverRoute | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [actionPending, setActionPending] = useState(false);
   const [error, setError] = useState("");
 
   const loadRoute = useCallback(async (mode: "initial" | "refresh" = "initial") => {
@@ -52,8 +57,7 @@ export function HomeScreen() {
     setError("");
 
     try {
-      const nextRoute = await loadTodayDriverRoute();
-      setRoute(nextRoute);
+      setRoute(await loadTodayDriverRoute());
     } catch (loadError) {
       setError(
         loadError instanceof Error ? loadError.message : "Could not load today's route.",
@@ -77,6 +81,28 @@ export function HomeScreen() {
     () => route?.stops.find((stop) => !isCompletedStop(stop)) || null,
     [route],
   );
+
+  const activeAction = activeStop ? nextRouteAction(activeStop) : null;
+
+  const runActiveAction = useCallback(async () => {
+    if (!activeStop || !activeAction?.status || actionPending) return;
+
+    setActionPending(true);
+    setError("");
+
+    try {
+      await updateMyRouteStopStatus(activeStop.id, activeAction.status);
+      await loadRoute("refresh");
+    } catch (actionError) {
+      setError(
+        actionError instanceof Error
+          ? actionError.message
+          : "Could not update the route stop.",
+      );
+    } finally {
+      setActionPending(false);
+    }
+  }, [activeAction?.status, activeStop, actionPending, loadRoute]);
 
   if (loading && !route) {
     return (
@@ -118,14 +144,8 @@ export function HomeScreen() {
 
       {error ? (
         <View style={styles.errorCard}>
-          <Text style={styles.errorTitle}>Route unavailable</Text>
+          <Text style={styles.errorTitle}>Action unavailable</Text>
           <Text style={styles.errorText}>{error}</Text>
-          <Pressable
-            onPress={() => void loadRoute("refresh")}
-            style={({ pressed }) => [styles.retryButton, pressed ? styles.pressed : null]}
-          >
-            <Text style={styles.retryText}>Try Again</Text>
-          </Pressable>
         </View>
       ) : null}
 
@@ -180,11 +200,26 @@ export function HomeScreen() {
               ) : null}
 
               <Pressable
-                disabled
-                style={styles.primaryButtonDisabled}
+                disabled={!activeAction?.status || actionPending}
+                onPress={() => void runActiveAction()}
+                style={({ pressed }) => [
+                  styles.primaryButton,
+                  pressed ? styles.pressed : null,
+                  actionPending ? styles.primaryButtonBusy : null,
+                ]}
               >
-                <Text style={styles.primaryButtonText}>Navigation comes next</Text>
+                {actionPending ? (
+                  <ActivityIndicator color="#23313f" />
+                ) : (
+                  <Text style={styles.primaryButtonText}>
+                    {activeAction?.label || "Continue"}
+                  </Text>
+                )}
               </Pressable>
+
+              <Text style={styles.actionHint}>
+                Starting the first route action also starts the driver's work shift.
+              </Text>
             </View>
           ) : (
             <View style={styles.completeCard}>
@@ -237,15 +272,8 @@ export function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: "#f5f1e8",
-  },
-  content: {
-    paddingHorizontal: 18,
-    paddingTop: 64,
-    paddingBottom: 48,
-  },
+  screen: { flex: 1, backgroundColor: "#f5f1e8" },
+  content: { paddingHorizontal: 18, paddingTop: 64, paddingBottom: 48 },
   centered: {
     flex: 1,
     alignItems: "center",
@@ -253,37 +281,17 @@ const styles = StyleSheet.create({
     backgroundColor: "#f5f1e8",
     padding: 24,
   },
-  loadingText: {
-    marginTop: 14,
-    color: "#6c6258",
-    fontSize: 14,
-  },
+  loadingText: { marginTop: 14, color: "#6c6258", fontSize: 14 },
   headerRow: {
     flexDirection: "row",
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 16,
   },
-  headerCopy: {
-    flex: 1,
-  },
-  eyebrow: {
-    color: "#b88645",
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 1.7,
-  },
-  title: {
-    color: "#23313f",
-    fontSize: 31,
-    fontWeight: "800",
-    marginTop: 6,
-  },
-  subtitle: {
-    color: "#6c6258",
-    fontSize: 14,
-    marginTop: 6,
-  },
+  headerCopy: { flex: 1 },
+  eyebrow: { color: "#b88645", fontSize: 11, fontWeight: "800", letterSpacing: 1.7 },
+  title: { color: "#23313f", fontSize: 31, fontWeight: "800", marginTop: 6 },
+  subtitle: { color: "#6c6258", fontSize: 14, marginTop: 6 },
   signOut: {
     borderColor: "#d1c8bb",
     borderRadius: 12,
@@ -291,14 +299,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 9,
   },
-  signOutText: {
-    color: "#23313f",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  pressed: {
-    opacity: 0.68,
-  },
+  signOutText: { color: "#23313f", fontSize: 12, fontWeight: "700" },
+  pressed: { opacity: 0.68 },
   errorCard: {
     backgroundColor: "#fff1f0",
     borderColor: "#efb7b3",
@@ -307,35 +309,9 @@ const styles = StyleSheet.create({
     marginTop: 22,
     padding: 16,
   },
-  errorTitle: {
-    color: "#8c2e2a",
-    fontSize: 16,
-    fontWeight: "800",
-  },
-  errorText: {
-    color: "#7a4844",
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: 6,
-  },
-  retryButton: {
-    alignSelf: "flex-start",
-    backgroundColor: "#8c2e2a",
-    borderRadius: 12,
-    marginTop: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-  },
-  retryText: {
-    color: "white",
-    fontSize: 12,
-    fontWeight: "800",
-  },
-  statsRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 24,
-  },
+  errorTitle: { color: "#8c2e2a", fontSize: 16, fontWeight: "800" },
+  errorText: { color: "#7a4844", fontSize: 13, lineHeight: 19, marginTop: 6 },
+  statsRow: { flexDirection: "row", gap: 10, marginTop: 24 },
   statCard: {
     flex: 1,
     backgroundColor: "#ffffff",
@@ -343,34 +319,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 16,
   },
-  statValue: {
-    color: "#23313f",
-    fontSize: 24,
-    fontWeight: "800",
-  },
-  statLabel: {
-    color: "#81766a",
-    fontSize: 11,
-    fontWeight: "700",
-    marginTop: 3,
-  },
-  currentCard: {
-    backgroundColor: "#23313f",
-    borderRadius: 26,
-    marginTop: 18,
-    padding: 20,
-  },
-  currentTopRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  cardLabel: {
-    color: "#f0c987",
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 1.5,
-  },
+  statValue: { color: "#23313f", fontSize: 24, fontWeight: "800" },
+  statLabel: { color: "#81766a", fontSize: 11, fontWeight: "700", marginTop: 3 },
+  currentCard: { backgroundColor: "#23313f", borderRadius: 26, marginTop: 18, padding: 20 },
+  currentTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  cardLabel: { color: "#f0c987", fontSize: 11, fontWeight: "800", letterSpacing: 1.5 },
   typePill: {
     overflow: "hidden",
     backgroundColor: "rgba(255,255,255,0.12)",
@@ -381,137 +334,38 @@ const styles = StyleSheet.create({
     paddingHorizontal: 11,
     paddingVertical: 6,
   },
-  currentTime: {
-    color: "#f0c987",
-    fontSize: 17,
-    fontWeight: "800",
-    marginTop: 22,
-  },
-  currentCustomer: {
-    color: "#ffffff",
-    fontSize: 27,
-    fontWeight: "800",
-    marginTop: 4,
-  },
-  currentAddress: {
-    color: "rgba(255,255,255,0.76)",
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 7,
-  },
-  detailBlock: {
-    borderTopColor: "rgba(255,255,255,0.12)",
-    borderTopWidth: 1,
-    marginTop: 18,
-    paddingTop: 14,
-  },
-  detailLabel: {
-    color: "#f0c987",
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 1.3,
-  },
-  detailText: {
-    color: "rgba(255,255,255,0.88)",
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: 5,
-  },
-  primaryButtonDisabled: {
+  currentTime: { color: "#f0c987", fontSize: 17, fontWeight: "800", marginTop: 22 },
+  currentCustomer: { color: "#ffffff", fontSize: 27, fontWeight: "800", marginTop: 4 },
+  currentAddress: { color: "rgba(255,255,255,0.76)", fontSize: 14, lineHeight: 20, marginTop: 7 },
+  detailBlock: { borderTopColor: "rgba(255,255,255,0.12)", borderTopWidth: 1, marginTop: 18, paddingTop: 14 },
+  detailLabel: { color: "#f0c987", fontSize: 10, fontWeight: "800", letterSpacing: 1.3 },
+  detailText: { color: "rgba(255,255,255,0.88)", fontSize: 13, lineHeight: 19, marginTop: 5 },
+  primaryButton: {
     alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.16)",
+    backgroundColor: "#f0c987",
     borderRadius: 16,
     marginTop: 20,
+    minHeight: 52,
+    justifyContent: "center",
     paddingVertical: 15,
   },
-  primaryButtonText: {
-    color: "#ffffff",
-    fontSize: 14,
-    fontWeight: "800",
-  },
-  completeCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 24,
-    marginTop: 18,
-    padding: 20,
-  },
-  completeTitle: {
-    color: "#23313f",
-    fontSize: 21,
-    fontWeight: "800",
-  },
-  completeText: {
-    color: "#6c6258",
-    fontSize: 14,
-    lineHeight: 21,
-    marginTop: 7,
-  },
-  listSection: {
-    marginTop: 28,
-  },
-  sectionTitle: {
-    color: "#23313f",
-    fontSize: 19,
-    fontWeight: "800",
-    marginBottom: 12,
-  },
-  stopRow: {
-    flexDirection: "row",
-    backgroundColor: "#ffffff",
-    borderRadius: 18,
-    marginBottom: 10,
-    padding: 14,
-  },
-  sequence: {
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#23313f",
-    borderRadius: 14,
-    height: 38,
-    width: 38,
-  },
-  sequenceDone: {
-    backgroundColor: "#82927e",
-  },
-  sequenceText: {
-    color: "#ffffff",
-    fontSize: 13,
-    fontWeight: "800",
-  },
-  stopCopy: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  stopTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-  },
-  stopTitle: {
-    flex: 1,
-    color: "#23313f",
-    fontSize: 15,
-    fontWeight: "800",
-  },
-  stopTime: {
-    color: "#6c6258",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  stopMeta: {
-    color: "#81766a",
-    fontSize: 12,
-    marginTop: 4,
-  },
-  stopStatus: {
-    color: "#a16a2c",
-    fontSize: 11,
-    fontWeight: "800",
-    marginTop: 7,
-    textTransform: "capitalize",
-  },
-  stopStatusDone: {
-    color: "#647660",
-  },
+  primaryButtonBusy: { opacity: 0.75 },
+  primaryButtonText: { color: "#23313f", fontSize: 15, fontWeight: "900" },
+  actionHint: { color: "rgba(255,255,255,0.58)", fontSize: 11, lineHeight: 16, marginTop: 10, textAlign: "center" },
+  completeCard: { backgroundColor: "#ffffff", borderRadius: 24, marginTop: 18, padding: 20 },
+  completeTitle: { color: "#23313f", fontSize: 21, fontWeight: "800" },
+  completeText: { color: "#6c6258", fontSize: 14, lineHeight: 21, marginTop: 7 },
+  listSection: { marginTop: 28 },
+  sectionTitle: { color: "#23313f", fontSize: 19, fontWeight: "800", marginBottom: 12 },
+  stopRow: { flexDirection: "row", backgroundColor: "#ffffff", borderRadius: 18, marginBottom: 10, padding: 14 },
+  sequence: { alignItems: "center", justifyContent: "center", backgroundColor: "#23313f", borderRadius: 14, height: 38, width: 38 },
+  sequenceDone: { backgroundColor: "#82927e" },
+  sequenceText: { color: "#ffffff", fontSize: 13, fontWeight: "800" },
+  stopCopy: { flex: 1, marginLeft: 12 },
+  stopTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  stopTitle: { flex: 1, color: "#23313f", fontSize: 15, fontWeight: "800" },
+  stopTime: { color: "#6c6258", fontSize: 12, fontWeight: "700" },
+  stopMeta: { color: "#81766a", fontSize: 12, marginTop: 4 },
+  stopStatus: { color: "#a16a2c", fontSize: 11, fontWeight: "800", marginTop: 7, textTransform: "capitalize" },
+  stopStatusDone: { color: "#5f735c" },
 });
