@@ -817,7 +817,7 @@ export default function DriverRouteApp({
     navigableStops.every((stop) => isCompleted(stop));
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[#111827]">
+    <div className="relative h-[100dvh] min-h-screen overflow-hidden bg-[#111827]">
       <div className="absolute inset-0">
         {isNavigatorMode ? (
           driverLocation && mapDestination ? (
