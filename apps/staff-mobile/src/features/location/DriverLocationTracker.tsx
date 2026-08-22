@@ -14,11 +14,95 @@ function finiteOrNull(value: number | null | undefined) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+type StaffTimeDashboard = {
+  current?: {
+    id?: string | null;
+    clock_out_at?: string | null;
+  } | null;
+};
+
 export function DriverLocationTracker() {
   useEffect(() => {
     let cancelled = false;
     let subscription: Location.LocationSubscription | null = null;
+    let reconcileTimer: ReturnType<typeof setInterval> | null = null;
     let lastUploadedAt = 0;
+    let driverName = "";
+    let permissionGranted = false;
+
+    async function stopWatching() {
+      subscription?.remove();
+      subscription = null;
+    }
+
+    async function uploadPosition(position: Location.LocationObject) {
+      if (!driverName || cancelled) return;
+
+      const now = Date.now();
+
+      // Avoid flooding the database when iOS/Android emits several updates
+      // very close together. Route Board only needs a fresh operational ping.
+      if (now - lastUploadedAt < 5000) return;
+      lastUploadedAt = now;
+
+      const coords = position.coords;
+      const result = await supabase.from("driver_location_pings").insert({
+        driver_name: driverName,
+        route_date: localDateISO(),
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        accuracy: finiteOrNull(coords.accuracy),
+        heading: finiteOrNull(coords.heading),
+        speed: finiteOrNull(coords.speed),
+      });
+
+      if (result.error) {
+        console.warn("Driver GPS ping failed", result.error.message);
+      }
+    }
+
+    async function ensureWatching() {
+      if (cancelled || subscription || !driverName) return;
+
+      if (!permissionGranted) {
+        const permission = await Location.requestForegroundPermissionsAsync();
+
+        if (cancelled || permission.status !== "granted") return;
+        permissionGranted = true;
+      }
+
+      subscription = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 5000,
+          distanceInterval: 10,
+        },
+        (position) => {
+          void uploadPosition(position);
+        },
+      );
+    }
+
+    async function reconcileTrackingState() {
+      if (cancelled || !driverName) return;
+
+      const dashboardResult = await supabase.rpc("get_my_staff_time_dashboard", {
+        p_limit: 1,
+      });
+
+      if (cancelled || dashboardResult.error) return;
+
+      const dashboard = (dashboardResult.data || null) as StaffTimeDashboard | null;
+      const hasOpenShift = Boolean(
+        dashboard?.current?.id && !dashboard.current.clock_out_at,
+      );
+
+      if (hasOpenShift) {
+        await ensureWatching();
+      } else {
+        await stopWatching();
+      }
+    }
 
     async function start() {
       const {
@@ -40,44 +124,25 @@ export function DriverLocationTracker() {
 
       if (cancelled || driverResult.error || !driverResult.data?.name) return;
 
-      const permission = await Location.requestForegroundPermissionsAsync();
+      driverName = String(driverResult.data.name).trim();
+      await reconcileTrackingState();
 
-      if (cancelled || permission.status !== "granted") return;
-
-      subscription = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 5000,
-          distanceInterval: 10,
-        },
-        (position) => {
-          const now = Date.now();
-
-          // Avoid flooding the database when iOS/Android emits several updates
-          // very close together. Route Board only needs a fresh operational ping.
-          if (now - lastUploadedAt < 5000) return;
-          lastUploadedAt = now;
-
-          const coords = position.coords;
-
-          void supabase.from("driver_location_pings").insert({
-            driver_name: driverResult.data.name,
-            route_date: localDateISO(),
-            latitude: coords.latitude,
-            longitude: coords.longitude,
-            accuracy: finiteOrNull(coords.accuracy),
-            heading: finiteOrNull(coords.heading),
-            speed: finiteOrNull(coords.speed),
-          });
-        },
-      );
+      reconcileTimer = setInterval(() => {
+        void reconcileTrackingState();
+      }, 15000);
     }
 
     void start();
 
     return () => {
       cancelled = true;
+
+      if (reconcileTimer) {
+        clearInterval(reconcileTimer);
+      }
+
       subscription?.remove();
+      subscription = null;
     };
   }, []);
 
