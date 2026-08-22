@@ -7,8 +7,10 @@
     "start": "expo start",
     "start:dev-client": "expo start --dev-client",
     "native:check": "node scripts/check-native-env.mjs",
+    "native:verify": "node scripts/verify-native-project.mjs",
     "prebuild": "npm run native:check && expo prebuild",
     "prebuild:clean": "npm run native:check && expo prebuild --clean",
+    "prebuild:verify": "npm run prebuild:clean && npm run native:verify",
     "ios": "npm run native:check && expo run:ios",
     "android": "npm run native:check && expo run:android",
     "typecheck": "tsc --noEmit"
