@@ -20,6 +20,7 @@ import {
   updateMyRouteStopStatus,
 } from "../features/routes/routeActions";
 import { supabase } from "../lib/supabase";
+import { NavigationScreen } from "./NavigationScreen";
 
 function formatTime(value: string | null) {
   if (!value) return "--";
@@ -50,6 +51,7 @@ export function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actionPending, setActionPending] = useState(false);
+  const [navigationStop, setNavigationStop] = useState<MobileRouteStop | null>(null);
   const [error, setError] = useState("");
 
   const loadRoute = useCallback(async (mode: "initial" | "refresh" = "initial") => {
@@ -83,6 +85,7 @@ export function HomeScreen() {
   );
 
   const activeAction = activeStop ? nextRouteAction(activeStop) : null;
+  const activeStatus = String(activeStop?.status || "").toLowerCase();
 
   const runActiveAction = useCallback(async () => {
     if (!activeStop || !activeAction?.status || actionPending) return;
@@ -92,6 +95,11 @@ export function HomeScreen() {
 
     try {
       await updateMyRouteStopStatus(activeStop.id, activeAction.status);
+
+      if (activeAction.status === "on_the_way") {
+        setNavigationStop({ ...activeStop, status: "on_the_way" });
+      }
+
       await loadRoute("refresh");
     } catch (actionError) {
       setError(
@@ -103,6 +111,23 @@ export function HomeScreen() {
       setActionPending(false);
     }
   }, [activeAction?.status, activeStop, actionPending, loadRoute]);
+
+  const markNavigationStopArrived = useCallback(async () => {
+    if (!navigationStop) return;
+
+    await updateMyRouteStopStatus(navigationStop.id, "arrived");
+    await loadRoute("refresh");
+  }, [loadRoute, navigationStop]);
+
+  if (navigationStop) {
+    return (
+      <NavigationScreen
+        stop={navigationStop}
+        onClose={() => setNavigationStop(null)}
+        onArrived={markNavigationStopArrived}
+      />
+    );
+  }
 
   if (loading && !route) {
     return (
@@ -199,6 +224,18 @@ export function HomeScreen() {
                 </View>
               ) : null}
 
+              {activeStatus === "on_the_way" ? (
+                <Pressable
+                  onPress={() => setNavigationStop(activeStop)}
+                  style={({ pressed }) => [
+                    styles.navigationButton,
+                    pressed ? styles.pressed : null,
+                  ]}
+                >
+                  <Text style={styles.navigationButtonText}>Open Navigation</Text>
+                </Pressable>
+              ) : null}
+
               <Pressable
                 disabled={!activeAction?.status || actionPending}
                 onPress={() => void runActiveAction()}
@@ -218,7 +255,7 @@ export function HomeScreen() {
               </Pressable>
 
               <Text style={styles.actionHint}>
-                Starting the first route action also starts the driver's work shift.
+                Starting navigation also starts the driver's work shift. Arrival and completion continue to use the existing route workflow.
               </Text>
             </View>
           ) : (
@@ -340,11 +377,22 @@ const styles = StyleSheet.create({
   detailBlock: { borderTopColor: "rgba(255,255,255,0.12)", borderTopWidth: 1, marginTop: 18, paddingTop: 14 },
   detailLabel: { color: "#f0c987", fontSize: 10, fontWeight: "800", letterSpacing: 1.3 },
   detailText: { color: "rgba(255,255,255,0.88)", fontSize: 13, lineHeight: 19, marginTop: 5 },
+  navigationButton: {
+    alignItems: "center",
+    borderColor: "rgba(240,201,135,0.75)",
+    borderRadius: 16,
+    borderWidth: 1,
+    justifyContent: "center",
+    marginTop: 20,
+    minHeight: 50,
+    paddingVertical: 14,
+  },
+  navigationButtonText: { color: "#f0c987", fontSize: 14, fontWeight: "900" },
   primaryButton: {
     alignItems: "center",
     backgroundColor: "#f0c987",
     borderRadius: 16,
-    marginTop: 20,
+    marginTop: 12,
     minHeight: 52,
     justifyContent: "center",
     paddingVertical: 15,
