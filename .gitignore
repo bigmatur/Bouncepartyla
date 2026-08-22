@@ -44,3 +44,8 @@ supabase/.temp/
 *.broken.txt
 *.escaped-backup.txt
 *.broken-option-check
+
+# Staff mobile generated native projects / Expo local state
+apps/staff-mobile/.expo/
+apps/staff-mobile/ios/
+apps/staff-mobile/android/
