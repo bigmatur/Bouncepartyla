@@ -82,13 +82,37 @@ function withNavigationDesugaring(config) {
 
     if (!source.includes("coreLibraryDesugaringEnabled true")) {
       const compileOptionsPattern = /compileOptions\s*\{/;
-      if (!compileOptionsPattern.test(source)) {
-        throw new Error("Could not find Android compileOptions block for Navigation SDK desugaring.");
+
+      if (compileOptionsPattern.test(source)) {
+        source = source.replace(
+          compileOptionsPattern,
+          "compileOptions {\n        coreLibraryDesugaringEnabled true",
+        );
+      } else {
+        // Expo SDK 54's default Android app/build.gradle has no compileOptions
+        // block. Insert one inside android {} before defaultConfig instead of
+        // treating its absence as an error.
+        const defaultConfigPattern = /(^\s*)defaultConfig\s*\{/m;
+        const defaultConfigMatch = source.match(defaultConfigPattern);
+
+        if (!defaultConfigMatch) {
+          throw new Error(
+            "Could not find Android defaultConfig block for Navigation SDK desugaring.",
+          );
+        }
+
+        const indent = defaultConfigMatch[1] || "    ";
+        const compileOptions = [
+          `${indent}compileOptions {`,
+          `${indent}    coreLibraryDesugaringEnabled true`,
+          `${indent}    sourceCompatibility JavaVersion.VERSION_17`,
+          `${indent}    targetCompatibility JavaVersion.VERSION_17`,
+          `${indent}}`,
+          "",
+        ].join("\n");
+
+        source = source.replace(defaultConfigPattern, `${compileOptions}${defaultConfigMatch[0]}`);
       }
-      source = source.replace(
-        compileOptionsPattern,
-        "compileOptions {\n        coreLibraryDesugaringEnabled true",
-      );
     }
 
     if (!source.includes("com.android.tools:desugar_jdk_libs_nio")) {
