@@ -1,5 +1,4 @@
 const {
-  AndroidConfig,
   withAndroidManifest,
   withAppBuildGradle,
   withAppDelegate,
@@ -16,6 +15,23 @@ function requireApiKey(apiKey) {
   return value;
 }
 
+function getMainApplicationNode(manifest) {
+  const applications = manifest?.application;
+
+  if (!Array.isArray(applications) || applications.length === 0) {
+    throw new Error(
+      "AndroidManifest.xml is missing an <application> element required for Google Navigation configuration.",
+    );
+  }
+
+  // Expo SDK 54 can generate android:name through a placeholder/value that does
+  // not end in `.MainApplication` during the manifest mod phase. Expo's
+  // getMainApplicationOrThrow helper filters by that suffix and can therefore
+  // reject an otherwise valid generated manifest. For metadata we only need the
+  // single app-level <application> node, which is the first generated node.
+  return applications[0];
+}
+
 function upsertAndroidMetaData(application, name, value) {
   const existing = application["meta-data"] || [];
   const filtered = existing.filter((item) => item?.$?.["android:name"] !== name);
@@ -30,8 +46,7 @@ function upsertAndroidMetaData(application, name, value) {
 
 function withAndroidNavigationManifest(config, apiKey) {
   return withAndroidManifest(config, (mod) => {
-    const manifest = mod.modResults.manifest;
-    const application = AndroidConfig.Manifest.getMainApplicationOrThrow(manifest);
+    const application = getMainApplicationNode(mod.modResults.manifest);
     upsertAndroidMetaData(application, "com.google.android.geo.API_KEY", apiKey);
     return mod;
   });
