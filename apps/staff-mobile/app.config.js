@@ -18,6 +18,15 @@ module.exports = ({ config }) => {
         },
       ],
       [
+  "expo-image-picker",
+  {
+    photosPermission:
+      "Allow Bounce Party LA Staff to access photos for delivery and pickup proof.",
+    cameraPermission:
+      "Allow Bounce Party LA Staff to use the camera for delivery and pickup proof photos.",
+  },
+],
+      [
         "./plugins/withGoogleNavigation",
         {
           apiKey: googleNavigationApiKey,
