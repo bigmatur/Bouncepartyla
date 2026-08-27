@@ -2522,7 +2522,7 @@ export default function RouteBoardClient({
   warehouseOriginAddress,
   bookingRouteStops,
   supportsRouteStopWindows,
-  liveDriverLocations,
+  liveDriverLocations = [],
 }: {
   stops: RouteStop[];
   drivers: Driver[];
@@ -2537,7 +2537,7 @@ export default function RouteBoardClient({
   warehouseOriginAddress: string;
   bookingRouteStops: RouteStop[];
   supportsRouteStopWindows: boolean;
-  liveDriverLocations: LiveDriverLocation[];
+  liveDriverLocations?: LiveDriverLocation[];
 }) {
   const [currentLiveDriverLocations, setCurrentLiveDriverLocations] =
     useState<LiveDriverLocation[]>(liveDriverLocations);
