@@ -226,6 +226,26 @@ function isMissingTableError(error: any) {
   );
 }
 
+function isMissingFunctionError(error: any, functionName?: string) {
+  const message = String(error?.message || "").toLowerCase();
+  const code = String(error?.code || "").toLowerCase();
+  const target = String(functionName || "").toLowerCase();
+
+  if (code === "42883") {
+    if (!target) {
+      return true;
+    }
+
+    return message.includes(target);
+  }
+
+  return (
+    message.includes("function") &&
+    message.includes("does not exist") &&
+    (!target || message.includes(target))
+  );
+}
+
 function isRefreshPaymentTotalsPermissionError(error: any) {
   const message = String(error?.message || "").toLowerCase();
   const code = String(error?.code || "").toLowerCase();
@@ -353,7 +373,11 @@ async function getDiscountSecuritySettings() {
     .rpc("get_discount_security_settings")
     .maybeSingle();
 
-  if (error && !isMissingTableError(error)) {
+  if (
+    error &&
+    !isMissingTableError(error) &&
+    !isMissingFunctionError(error, "get_discount_security_settings")
+  ) {
     throw new Error(error.message);
   }
 
@@ -2486,7 +2510,7 @@ async function autoCreateRouteStopsForBooking({
   balanceDue: number;
   items: ParsedBookingItem[];
 }) {
-  const supabase = await createClient();
+  const supabase = createServiceClient();
 
   const existingResult =
     await supabase
@@ -3672,104 +3696,123 @@ export async function createBookingAction(
     const { data: authData } =
       await supabase.auth.getUser();
 
-    const completionSession =
-      await createBookingCompletionSession(
-        {
-          supabase,
-          bookingId,
-          customerEmail,
-          createdByAuthUserId:
-            authData.user?.id ||
-            null,
-        },
-      );
-
-    const requestHeaders =
-      await headers();
-
-    const origin =
-      requestHeaders.get(
-        "origin",
-      ) ||
-      process.env
-        .NEXT_PUBLIC_SITE_URL ||
-      "http://localhost:3001";
-
-    const completionUrl =
-      new URL(
-        `/booking/complete/${encodeURIComponent(
-          completionSession.token,
-        )}`,
-        origin,
-      ).toString();
-
-    staffCompletionUrl =
-      completionUrl;
-
-    const bookingNumberLabel =
-      `#${String(
-        bookingId,
-      ).slice(0, 8)}`;
-
-    const expirationLabel =
-      new Date(
-        completionSession.expiresAt,
-      ).toLocaleString(
-        "en-US",
-        {
-          dateStyle:
-            "medium",
-          timeStyle:
-            "short",
-          timeZone:
-            "America/Los_Angeles",
-        },
-      );
-
-    void bookingNumberLabel;
-
-    if (customerEmail) {
-      try {
-        await enqueueBookingNotification({
-          eventCode:
-            "contract_ready",
-          bookingId,
-          dedupeSuffix:
-            `completion:${completionSession.token}`,
-          payload: {
-            action_url:
-              completionUrl,
-            expires_at:
-              `${expirationLabel} Pacific Time`,
+    try {
+      const completionSession =
+        await createBookingCompletionSession(
+          {
+            supabase,
+            bookingId,
+            customerEmail,
+            createdByAuthUserId:
+              authData.user?.id ||
+              null,
           },
-        });
-
-        const delivery =
-          await processNotificationQueueBestEffort(
-            {
-              bookingId,
-              limit: 20,
-            },
-          );
-
-        staffCompletionEmailStatus =
-          delivery.sent > 0
-            ? "sent"
-            : delivery.failed >
-                0
-              ? "failed"
-              : "not_configured";
-      } catch (
-        notificationError
-      ) {
-        staffCompletionEmailStatus =
-          "failed";
-
-        console.error(
-          "Booking completion notification failed",
-          notificationError,
         );
+
+      const requestHeaders =
+        await headers();
+
+      const origin =
+        requestHeaders.get(
+          "origin",
+        ) ||
+        process.env
+          .NEXT_PUBLIC_SITE_URL ||
+        "http://localhost:3001";
+
+      const completionUrl =
+        new URL(
+          `/booking/complete/${encodeURIComponent(
+            completionSession.token,
+          )}`,
+          origin,
+        ).toString();
+
+      staffCompletionUrl =
+        completionUrl;
+
+      const bookingNumberLabel =
+        `#${String(
+          bookingId,
+        ).slice(0, 8)}`;
+
+      const expirationLabel =
+        new Date(
+          completionSession.expiresAt,
+        ).toLocaleString(
+          "en-US",
+          {
+            dateStyle:
+              "medium",
+            timeStyle:
+              "short",
+            timeZone:
+              "America/Los_Angeles",
+          },
+        );
+
+      void bookingNumberLabel;
+
+      if (customerEmail) {
+        try {
+          await enqueueBookingNotification({
+            eventCode:
+              "contract_ready",
+            bookingId,
+            dedupeSuffix:
+              `completion:${completionSession.token}`,
+            payload: {
+              action_url:
+                completionUrl,
+              expires_at:
+                `${expirationLabel} Pacific Time`,
+            },
+          });
+
+          const delivery =
+            await processNotificationQueueBestEffort(
+              {
+                bookingId,
+                limit: 20,
+              },
+            );
+
+          staffCompletionEmailStatus =
+            delivery.sent > 0
+              ? "sent"
+              : delivery.failed >
+                  0
+                ? "failed"
+                : "not_configured";
+        } catch (
+          notificationError
+        ) {
+          staffCompletionEmailStatus =
+            "failed";
+
+          console.error(
+            "Booking completion notification failed",
+            notificationError,
+          );
+        }
       }
+    } catch (completionSessionError) {
+      staffCompletionEmailStatus =
+        "failed";
+
+      console.error(
+        "Booking completion session creation failed",
+        {
+          bookingId,
+          error:
+            completionSessionError instanceof
+            Error
+              ? completionSessionError.message
+              : String(
+                  completionSessionError,
+                ),
+        },
+      );
     }
   }
 
