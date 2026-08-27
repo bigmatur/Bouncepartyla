@@ -2,7 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createBookingAction } from "../actions";
-import { checkBookingItemAvailabilityAction } from "../availability-actions";
+import {
+  checkBookingItemAvailabilityAction,
+  getAdminInventorySnapshotAction,
+} from "../availability-actions";
 import { calculateBookingPricingAction } from "../pricing-actions";
 import { verifyDiscountPasswordAction } from "@/app/admin/settings/actions";
 import GoogleAddressInput from "@/components/admin/GoogleAddressInput";
@@ -114,6 +117,13 @@ type ProductAvailabilityState = {
   components: AvailabilityComponent[];
   missingComponents: AvailabilityComponent[];
   modifierAvailability: ModifierAvailabilityItem[];
+};
+
+type InventorySnapshotItem = {
+  productId: string;
+  available: boolean;
+  remainingQuantity: number;
+  message: string | null;
 };
 
 type PricingResult = {
@@ -497,6 +507,17 @@ export default function NewBookingWizard({
     Record<string, ProductAvailabilityState>
   >({});
 
+  const [inventorySnapshotByProductId, setInventorySnapshotByProductId] = useState<
+    Record<string, InventorySnapshotItem>
+  >({});
+  const [inventorySnapshotLoading, setInventorySnapshotLoading] = useState(false);
+  const [inventorySnapshotError, setInventorySnapshotError] = useState<string | null>(
+    null,
+  );
+  const [inventorySnapshotUpdatedAt, setInventorySnapshotUpdatedAt] = useState<
+    string | null
+  >(null);
+
   const [deliveryFee, setDeliveryFee] = useState(0);
   const [taxRate, setTaxRate] = useState(0);
   const [depositAmount, setDepositAmount] = useState(0);
@@ -505,6 +526,7 @@ export default function NewBookingWizard({
 
   const [contractModalOpen, setContractModalOpen] = useState(false);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [bookingSubmitPending, setBookingSubmitPending] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState(
     paymentMethods[0]?.method || ""
   );
@@ -1010,6 +1032,12 @@ export default function NewBookingWizard({
     setAvailabilityByProductId({});
   }
 
+  function resetInventorySnapshot() {
+    setInventorySnapshotByProductId({});
+    setInventorySnapshotError(null);
+    setInventorySnapshotUpdatedAt(null);
+  }
+
   function resetPricing() {
     setPricingResult(null);
     setTaxRate(0);
@@ -1019,16 +1047,19 @@ export default function NewBookingWizard({
   function updateEventDate(value: string) {
     setEventDate(value);
     resetAvailability();
+    resetInventorySnapshot();
   }
 
   function updateEventStartTime(value: string) {
     setEventStartTime(value);
     resetAvailability();
+    resetInventorySnapshot();
   }
 
   function updateEventEndTime(value: string) {
     setEventEndTime(value);
     resetAvailability();
+    resetInventorySnapshot();
   }
 
   function updateSetupAddress(value: string) {
@@ -1439,6 +1470,72 @@ export default function NewBookingWizard({
     }
   }
 
+  async function loadInventorySnapshotForFilteredProducts() {
+    if (!eventDate || !eventStartTime || !eventEndTime) {
+      setInventorySnapshotError(
+        "Choose date, start time, and end time before loading stock snapshot.",
+      );
+      return;
+    }
+
+    const productIds = filteredProducts.map((item) => item.id);
+
+    if (productIds.length === 0) {
+      setInventorySnapshotByProductId({});
+      setInventorySnapshotError(null);
+      setInventorySnapshotUpdatedAt(new Date().toISOString());
+      return;
+    }
+
+    setInventorySnapshotLoading(true);
+    setInventorySnapshotError(null);
+
+    try {
+      const formData = new FormData();
+      formData.set("eventDate", eventDate);
+      formData.set("eventStartTime", eventStartTime);
+      formData.set("eventEndTime", eventEndTime);
+      formData.set("bookingActor", bookingActor);
+      formData.set("productIds", JSON.stringify(productIds));
+
+      const result = await getAdminInventorySnapshotAction(formData);
+
+      if (!result?.ok) {
+        setInventorySnapshotByProductId({});
+        setInventorySnapshotError(result?.message || "Failed to load stock snapshot.");
+        return;
+      }
+
+      const nextSnapshot: Record<string, InventorySnapshotItem> = {};
+
+      for (const row of result.items || []) {
+        if (!row?.productId) {
+          continue;
+        }
+
+        nextSnapshot[row.productId] = {
+          productId: row.productId,
+          available: Boolean(row.available),
+          remainingQuantity: Math.max(0, Number(row.remainingQuantity || 0)),
+          message: row.message || null,
+        };
+      }
+
+      setInventorySnapshotByProductId(nextSnapshot);
+      setInventorySnapshotUpdatedAt(new Date().toISOString());
+    } catch (error: any) {
+      setInventorySnapshotByProductId({});
+      setInventorySnapshotError(error?.message || "Failed to load stock snapshot.");
+    } finally {
+      setInventorySnapshotLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    resetAvailability();
+    resetInventorySnapshot();
+  }, [bookingActor]);
+
   /*
    * Live-check selected product quantities.
    *
@@ -1742,6 +1839,17 @@ export default function NewBookingWizard({
     return availabilityByProductId[item.productId]?.loading === true;
   });
 
+  const snapshotRows = filteredProducts
+    .map((product) => inventorySnapshotByProductId[product.id])
+    .filter(Boolean);
+
+  const snapshotAvailableCount = snapshotRows.filter((row) => row.available).length;
+  const snapshotUnavailableCount = snapshotRows.filter((row) => !row.available).length;
+  const snapshotUnavailableProducts = filteredProducts.filter((product) => {
+    const row = inventorySnapshotByProductId[product.id];
+    return Boolean(row && !row.available);
+  });
+
   const canCreateBooking =
     hasCustomer &&
     hasRequiredCustomerFields &&
@@ -1870,6 +1978,10 @@ export default function NewBookingWizard({
   ]);
 
   async function openPaymentModal() {
+    if (bookingSubmitPending) {
+      return;
+    }
+
     if (completionStrategy === "staff_send_to_customer") {
       setPaymentError(null);
       setContractAccepted(false);
@@ -1949,6 +2061,10 @@ export default function NewBookingWizard({
   }
 
   async function confirmCreateBooking() {
+    if (bookingSubmitPending) {
+      return;
+    }
+
     if (paymentAmount < 0) {
       setPaymentError("Payment amount cannot be negative.");
       return;
@@ -2141,10 +2257,12 @@ export default function NewBookingWizard({
       event.preventDefault();
       setStep(5);
       setFormErrorMessage("Complete required booking fields before submitting.");
+      setBookingSubmitPending(false);
       return;
     }
 
     setFormErrorMessage("");
+    setBookingSubmitPending(true);
   }
 
   return (
@@ -2628,6 +2746,75 @@ export default function NewBookingWizard({
                   />
                 </Field>
               </div>
+
+              <div className="mt-4 rounded-2xl border border-[#e6dccd] bg-[#f7f2ea] p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-[#1f1e1b]">
+                      Fast stock snapshot (admin)
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-[#6c6258]">
+                      Loads real remaining quantity for products in the current filter.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={loadInventorySnapshotForFilteredProducts}
+                    disabled={inventorySnapshotLoading || !eventDate || !eventStartTime || !eventEndTime}
+                    className="rounded-full bg-[#23313f] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#18222d] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {inventorySnapshotLoading ? "Loading..." : "Refresh snapshot"}
+                  </button>
+                </div>
+
+                {inventorySnapshotError && (
+                  <div className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 ring-1 ring-red-100">
+                    {inventorySnapshotError}
+                  </div>
+                )}
+
+                {snapshotRows.length > 0 && !inventorySnapshotError && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                    <span className="rounded-full bg-emerald-50 px-3 py-1 font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                      Available: {snapshotAvailableCount}
+                    </span>
+                    <span className="rounded-full bg-red-50 px-3 py-1 font-semibold text-red-700 ring-1 ring-red-200">
+                      Unavailable: {snapshotUnavailableCount}
+                    </span>
+                    {inventorySnapshotUpdatedAt && (
+                      <span className="rounded-full bg-white px-3 py-1 font-semibold text-[#6c6258] ring-1 ring-[#e6dccd]">
+                        Updated {new Date(inventorySnapshotUpdatedAt).toLocaleTimeString("en-US", {
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {snapshotUnavailableProducts.length > 0 && !inventorySnapshotError && (
+                  <div className="mt-3 rounded-xl bg-red-50 p-3 ring-1 ring-red-100">
+                    <div className="text-xs font-semibold uppercase tracking-[0.08em] text-red-700">
+                      Unavailable positions now
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {snapshotUnavailableProducts.slice(0, 24).map((product) => {
+                        const row = inventorySnapshotByProductId[product.id];
+
+                        return (
+                          <span
+                            key={product.id}
+                            className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-red-700 ring-1 ring-red-200"
+                          >
+                            {product.name} · {Math.max(0, Number(row?.remainingQuantity || 0))}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="grid gap-4 p-6 md:grid-cols-2 2xl:grid-cols-3">
@@ -2635,6 +2822,8 @@ export default function NewBookingWizard({
                 const selected = selectedProductIds.includes(product.id);
                 const price = getProductPrice(product);
                 const availabilityState = availabilityByProductId[product.id];
+                const stockSnapshot = inventorySnapshotByProductId[product.id];
+                const unavailableBySnapshot = Boolean(stockSnapshot && !stockSnapshot.available);
                 const badge = getAvailabilityBadge(availabilityState);
 
                 return (
@@ -2647,6 +2836,8 @@ export default function NewBookingWizard({
                       "group overflow-hidden rounded-[26px] border text-left transition hover:-translate-y-0.5 hover:shadow-[0_16px_35px_rgba(0,0,0,0.08)] disabled:cursor-wait disabled:opacity-70",
                       selected
                         ? "border-[#c9964f] bg-[#fff8eb] ring-2 ring-[#c9964f]/30"
+                        : unavailableBySnapshot
+                          ? "border-red-200 bg-red-50"
                         : (availabilityState?.productAvailable ??
                             availabilityState?.available) === false
                           ? "border-red-200 bg-red-50"
@@ -2669,6 +2860,21 @@ export default function NewBookingWizard({
 
                     <div className="p-4">
                       <div className="flex flex-wrap items-center gap-2">
+                        {stockSnapshot && (
+                          <span
+                            className={[
+                              "rounded-full px-3 py-1 text-xs font-semibold ring-1",
+                              stockSnapshot.available
+                                ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+                                : "bg-red-50 text-red-700 ring-red-200",
+                            ].join(" ")}
+                          >
+                            {stockSnapshot.available
+                              ? `In stock: ${stockSnapshot.remainingQuantity}`
+                              : "Out for selected date"}
+                          </span>
+                        )}
+
                         <span
                           className={`rounded-full px-3 py-1 text-xs font-semibold ${badge.className}`}
                         >
@@ -2693,6 +2899,12 @@ export default function NewBookingWizard({
                       <div className="mt-2 text-xs text-[#6c6258]">
                         {product.category_name || "Other"}
                       </div>
+
+                      {stockSnapshot?.message && !stockSnapshot.available && (
+                        <div className="mt-2 text-xs font-semibold text-red-700">
+                          {stockSnapshot.message}
+                        </div>
+                      )}
 
                       <div className="mt-3 flex items-center justify-between gap-3">
                         <span className="text-sm font-semibold text-[#9a723e]">
@@ -3908,12 +4120,14 @@ export default function NewBookingWizard({
             <button
               type="button"
               onClick={openPaymentModal}
-              disabled={!canCreateBooking}
+              disabled={!canCreateBooking || bookingSubmitPending}
               className="w-full rounded-full bg-[#c9964f] px-6 py-4 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(201,150,79,0.28)] transition hover:bg-[#b78744] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {completionStrategy === "staff_send_to_customer"
-                ? "Create temporary booking"
-                : "Create booking"}
+              {bookingSubmitPending
+                ? "Creating booking..."
+                : completionStrategy === "staff_send_to_customer"
+                  ? "Create temporary booking"
+                  : "Create booking"}
             </button>
           </aside>
         </section>
@@ -3923,7 +4137,7 @@ export default function NewBookingWizard({
         <button
           type="button"
           onClick={() => setStep((current) => Math.max(1, current - 1))}
-          disabled={step === 1}
+          disabled={step === 1 || bookingSubmitPending}
           className="rounded-full border border-[#d8cec0] bg-white px-6 py-3 text-sm font-semibold text-[#2b2a28] transition hover:bg-[#faf8f5] disabled:cursor-not-allowed disabled:opacity-40"
         >
           Back
@@ -3933,6 +4147,7 @@ export default function NewBookingWizard({
           <button
             type="button"
             onClick={() => setStep((current) => Math.min(5, current + 1))}
+            disabled={bookingSubmitPending}
             className="rounded-full bg-[#23313f] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#18222d]"
           >
             Continue
@@ -4322,6 +4537,7 @@ export default function NewBookingWizard({
               <button
                 type="button"
                 onClick={() => setPaymentModalOpen(false)}
+                disabled={bookingSubmitPending}
                 className="rounded-full border border-[#d8cec0] bg-white px-5 py-2.5 text-sm font-semibold text-[#2b2a28]"
               >
                 Cancel
@@ -4330,11 +4546,24 @@ export default function NewBookingWizard({
               <button
                 type="button"
                 onClick={confirmCreateBooking}
+                disabled={bookingSubmitPending}
                 className="rounded-full bg-[#23313f] px-5 py-2.5 text-sm font-semibold text-white"
               >
-                Create booking
+                {bookingSubmitPending ? "Creating..." : "Create booking"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {bookingSubmitPending && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#1a232d]/55 backdrop-blur-[1px]">
+          <div className="flex items-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm font-semibold text-[#1f1e1b] shadow-[0_12px_35px_rgba(0,0,0,0.22)]">
+            <span
+              className="h-5 w-5 animate-spin rounded-full border-2 border-[#d8cec0] border-t-[#23313f]"
+              aria-hidden="true"
+            />
+            Creating booking, please wait...
           </div>
         </div>
       )}

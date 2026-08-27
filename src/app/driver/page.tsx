@@ -57,11 +57,12 @@ function isCancelledStatus(value: string | null | undefined) {
 export default async function DriverPortalPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ date?: string; driver?: string }>;
+  searchParams?: Promise<{ date?: string; driver?: string; limited?: string }>;
 }) {
   const resolvedSearchParams = searchParams ? await searchParams : {};
   const selectedDate = String(resolvedSearchParams?.date || todayISO());
   const selectedDriver = String(resolvedSearchParams?.driver || "").trim();
+  const limitedMode = String(resolvedSearchParams?.limited || "") === "1";
 
   const { supabase, access, linkedDriverRecord } = await requireDriverInterfaceAccess();
 
@@ -178,6 +179,12 @@ export default async function DriverPortalPage({
             <p className="mt-2 text-xs font-semibold uppercase tracking-[0.14em] text-[#9a723e]">
               Preview mode
             </p>
+          )}
+
+          {limitedMode && (
+            <div className="mt-4 rounded-2xl bg-[#fff7e8] px-4 py-3 text-sm font-semibold text-[#8a6b20] ring-1 ring-[#efd9ad]">
+              This login is in preview access mode. Route board, driver view, and checklist require a staff role such as Driver.
+            </div>
           )}
         </section>
 

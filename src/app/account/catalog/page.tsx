@@ -258,7 +258,7 @@ export default async function AccountCatalogPage({
               </div>
 
               <h2 className="mt-3 text-base font-semibold sm:mt-4 sm:text-lg">{product.name || "Product"}</h2>
-              <p className="mt-2 hidden line-clamp-3 text-sm text-black/60 sm:block">{product.short_description || product.description || "Description is coming soon."}</p>
+              <p className="mt-2 hidden min-h-[96px] line-clamp-4 text-sm text-black/60 sm:block">{product.short_description || product.description || "Description is coming soon."}</p>
               <div className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-black/40">
                 {categoryLabel(categories.find((category: any) => category.id === product.category_id))}
               </div>

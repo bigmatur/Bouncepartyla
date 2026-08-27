@@ -221,6 +221,10 @@ export default async function CatalogPage({
                       {product.name}
                     </h4>
 
+                    <p className="mt-2 min-h-[80px] whitespace-pre-line text-sm leading-5 text-[#6c6258] line-clamp-4">
+                      {product.short_description || "No short description"}
+                    </p>
+
                     <p className="mt-2 text-xs text-[#6c6258]">
                       {getCategoryName(categories, product.category_id)}
                     </p>

@@ -4,6 +4,7 @@ import {
   requireDriverInterfaceAccess,
   resolveDriverRecordForView,
 } from "@/lib/auth/require-driver";
+import { isStaffRole } from "@/lib/auth/access";
 
 function todayISO() {
   const date = new Date();
@@ -22,6 +23,13 @@ export default async function DriverViewProxyPage(props: {
   const selectedDriver = String(searchParams.driver || "").trim();
 
   const { supabase, access, linkedDriverRecord } = await requireDriverInterfaceAccess();
+
+  if (!isStaffRole(access.role) && access.role !== "driver") {
+    const fallbackQuery = new URLSearchParams();
+    fallbackQuery.set("date", selectedDate);
+    fallbackQuery.set("limited", "1");
+    redirect(`/driver?${fallbackQuery.toString()}`);
+  }
 
   const { driverRecord } = await resolveDriverRecordForView({
     supabase,

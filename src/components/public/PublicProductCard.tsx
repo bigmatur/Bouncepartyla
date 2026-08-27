@@ -102,7 +102,7 @@ export default function PublicProductCard({
               product.name}
           </h2>
 
-          <p className="mt-2 line-clamp-2 text-sm leading-6 text-black/55">
+          <p className="mt-2 min-h-[96px] line-clamp-4 text-sm leading-6 text-black/55">
             {product.short_description ||
               product.description ||
               "Party rental details are available on the product page."}

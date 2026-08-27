@@ -37,6 +37,7 @@ import {
 } from "./actions";
 import GoogleAddressInput from "@/components/admin/GoogleAddressInput";
 import MultiDriverRouteMap from "@/components/admin/routes/MultiDriverRouteMap";
+import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { getBookingMarkerColor } from "@/lib/booking/marker-color";
 import {
   bookingItemsProductSummary,
@@ -184,7 +185,29 @@ function getOne(value: any) {
 
 function timeValue(value: string | null | undefined) {
   if (!value) return "";
-  return String(value).slice(0, 5);
+
+  const raw = String(value).trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})/);
+
+  if (!match) {
+    return raw.slice(0, 5);
+  }
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+
+  if (
+    !Number.isFinite(hours) ||
+    !Number.isFinite(minutes) ||
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return "";
+  }
+
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
 function timeFromAny(value: any) {
@@ -861,6 +884,7 @@ function bookingStopByType(
   bookingId: string | null,
   stopType: string,
   bookingRouteStops: RouteStop[],
+  preferredDate?: string | null,
 ) {
   if (!bookingId) return null;
 
@@ -870,7 +894,17 @@ function bookingStopByType(
 
   if (candidates.length === 0) return null;
 
-  return candidates.sort((a, b) => {
+  const preferredDateIso = String(preferredDate || "").slice(0, 10);
+  const dateScopedCandidates = preferredDateIso
+    ? candidates.filter(
+        (item) => String(item.stop_date || "").slice(0, 10) === preferredDateIso,
+      )
+    : [];
+
+  const activeCandidates =
+    dateScopedCandidates.length > 0 ? dateScopedCandidates : candidates;
+
+  return activeCandidates.sort((a, b) => {
     const updatedA = new Date(
       String(a.updated_at || a.created_at || 0),
     ).getTime();
@@ -1158,6 +1192,8 @@ function SortableStopCard({
   selectedDate,
   bookingRouteStops,
   supportsRouteStopWindows,
+  orderedStopIds,
+  canPersistBoardOrderOnSave,
 }: {
   stop: RouteStop;
   sequenceNumber: number | null;
@@ -1172,6 +1208,8 @@ function SortableStopCard({
   selectedDate: string;
   bookingRouteStops: RouteStop[];
   supportsRouteStopWindows: boolean;
+  orderedStopIds: string[];
+  canPersistBoardOrderOnSave: boolean;
 }) {
   const {
     attributes,
@@ -1197,19 +1235,32 @@ function SortableStopCard({
   const url = mapUrl(stop);
   const components = componentsForBooking(stop.booking_id, checklistItems);
   const options = optionsForBooking(stop.booking_id, modifiers);
+  const referenceDateForBookingStop =
+    String(stop.stop_date || selectedDate).slice(0, 10);
   const currentRouteStop =
     bookingStopByType(
       stop.booking_id,
       String(stop.stop_type || ""),
       bookingRouteStops,
+      referenceDateForBookingStop,
     ) || stop;
 
   const deliveryStop =
-    bookingStopByType(stop.booking_id, "delivery", bookingRouteStops) ||
+    bookingStopByType(
+      stop.booking_id,
+      "delivery",
+      bookingRouteStops,
+      referenceDateForBookingStop,
+    ) ||
     currentRouteStop;
 
   const pickupStop =
-    bookingStopByType(stop.booking_id, "pickup", bookingRouteStops) ||
+    bookingStopByType(
+      stop.booking_id,
+      "pickup",
+      bookingRouteStops,
+      referenceDateForBookingStop,
+    ) ||
     (currentRouteStop.stop_type === "pickup" ? currentRouteStop : null);
 
   const deliveryWindows = parseWindows(
@@ -1458,6 +1509,14 @@ function SortableStopCard({
   );
 
   useEffect(() => {
+    setDeliveryTimeLocked(Boolean(deliveryStop.time_locked));
+  }, [deliveryStop.id, deliveryStop.time_locked]);
+
+  useEffect(() => {
+    setPickupTimeLocked(Boolean(pickupStop?.time_locked));
+  }, [pickupStop?.id, pickupStop?.time_locked]);
+
+  useEffect(() => {
     if (!liveDeliveryTiming) return;
 
     setDeliveryDate(liveDeliveryTiming.date || deliveryDate);
@@ -1533,6 +1592,9 @@ const effectiveDeliveryDurationMin =
     !isBreakCard && booking
       ? getBookingMarkerColor(booking, options as any[])
       : null;
+  const cardDriverName =
+    currentRouteStop.driver_name || stop.driver_name || "";
+  const cardTruckName = currentRouteStop.truck_name || stop.truck_name || "";
 
   return (
     <article
@@ -1787,12 +1849,12 @@ const effectiveDeliveryDurationMin =
                 style={{ backgroundColor: color }}
               />
               <span className="text-sm font-semibold text-[#1f1e1b]">
-                {stop.driver_name || "Unassigned"}
+                {cardDriverName || "Unassigned"}
               </span>
             </div>
 
             <div className="mt-1 hidden text-xs text-[#8b8177] sm:block">
-              {stop.truck_name || "No truck"}
+              {cardTruckName || "No truck"}
             </div>
 
             {Number(stop.balance_due || 0) > 0 && (
@@ -1815,6 +1877,13 @@ const effectiveDeliveryDurationMin =
             action={updateRouteStopCompactAction}
             className="grid min-w-0 gap-3 rounded-[18px] bg-white p-3 ring-1 ring-[#eee5d9] sm:gap-4 sm:rounded-[24px] sm:p-5 md:grid-cols-2"
           >
+            {canPersistBoardOrderOnSave && orderedStopIds.length > 0 ? (
+              <input
+                type="hidden"
+                name="orderedIds"
+                value={JSON.stringify(orderedStopIds)}
+              />
+            ) : null}
             <input
               type="hidden"
               name="deliveryStopId"
@@ -2066,25 +2135,39 @@ const effectiveDeliveryDurationMin =
                       name="deliveryTimeLocked"
                       checked={deliveryTimeLocked}
                       onChange={(event) => {
-  const locked = event.target.checked;
-  setDeliveryTimeLocked(locked);
+                        const locked = event.target.checked;
+                        setDeliveryTimeLocked(locked);
 
-  if (!locked) {
-    const nextEnd = addMinutesToTime(
-      deliveryStartTime,
-      effectiveDeliveryDurationMin,
-    );
+                        if (!locked) {
+                          const nextEnd = addMinutesToTime(
+                            deliveryStartTime,
+                            effectiveDeliveryDurationMin,
+                          );
 
-    setDeliveryEndTime(nextEnd);
+                          setDeliveryEndTime(nextEnd);
 
-    onTimingDraftChange(deliveryStop.id, {
-      locked,
-      endTime: nextEnd,
-    });
-  } else {
-    onTimingDraftChange(deliveryStop.id, { locked });
-  }
-}}
+                          onTimingDraftChange(deliveryStop.id, {
+                            locked,
+                            date: deliveryDate,
+                            startTime: deliveryStartTime,
+                            endTime: nextEnd,
+                          });
+                        } else {
+                          const nextEnd = addMinutesToTime(
+                            deliveryStartTime,
+                            effectiveDeliveryDurationMin,
+                          );
+
+                          setDeliveryEndTime(nextEnd);
+
+                          onTimingDraftChange(deliveryStop.id, {
+                            locked,
+                            date: deliveryDate,
+                            startTime: deliveryStartTime,
+                            endTime: nextEnd,
+                          });
+                        }
+                      }}
                       className="mt-0.5 h-4 w-4"
                     />
                     <span>
@@ -2200,28 +2283,42 @@ const effectiveDeliveryDurationMin =
                           type="checkbox"
                           name="pickupTimeLocked"
                           checked={pickupTimeLocked}
-                         onChange={(event) => {
-  const locked = event.target.checked;
-  setPickupTimeLocked(locked);
+                          onChange={(event) => {
+                            const locked = event.target.checked;
+                            setPickupTimeLocked(locked);
 
-  if (pickupStop) {
-    if (!locked) {
-      const nextEnd = addMinutesToTime(
-        pickupStartTime,
-        teardownDurationMin,
-      );
+                            if (pickupStop) {
+                              if (!locked) {
+                                const nextEnd = addMinutesToTime(
+                                  pickupStartTime,
+                                  teardownDurationMin,
+                                );
 
-      setPickupEndTime(nextEnd);
+                                setPickupEndTime(nextEnd);
 
-      onTimingDraftChange(pickupStop.id, {
-        locked,
-        endTime: nextEnd,
-      });
-    } else {
-      onTimingDraftChange(pickupStop.id, { locked });
-    }
-  }
-}}
+                                onTimingDraftChange(pickupStop.id, {
+                                  locked,
+                                  date: pickupDate,
+                                  startTime: pickupStartTime,
+                                  endTime: nextEnd,
+                                });
+                              } else {
+                                const nextEnd = addMinutesToTime(
+                                  pickupStartTime,
+                                  teardownDurationMin,
+                                );
+
+                                setPickupEndTime(nextEnd);
+
+                                onTimingDraftChange(pickupStop.id, {
+                                  locked,
+                                  date: pickupDate,
+                                  startTime: pickupStartTime,
+                                  endTime: nextEnd,
+                                });
+                              }
+                            }
+                          }}
                           className="mt-0.5 h-4 w-4"
                         />
                         <span>
@@ -2387,6 +2484,30 @@ const effectiveDeliveryDurationMin =
   );
 }
 
+function shouldPersistRouteOrderInCurrentView(params: {
+  selectedType: string;
+  selectedStatus: string;
+  query: string;
+}) {
+  return (
+    params.selectedType === "all" &&
+    params.selectedStatus === "all" &&
+    !params.query.trim()
+  );
+}
+
+type LiveDriverLocation = {
+  id: string;
+  driver_name: string;
+  route_date: string | null;
+  latitude: number;
+  longitude: number;
+  accuracy: number | null;
+  heading: number | null;
+  speed: number | null;
+  created_at: string;
+};
+
 export default function RouteBoardClient({
   stops,
   drivers,
@@ -2401,6 +2522,7 @@ export default function RouteBoardClient({
   warehouseOriginAddress,
   bookingRouteStops,
   supportsRouteStopWindows,
+  liveDriverLocations,
 }: {
   stops: RouteStop[];
   drivers: Driver[];
@@ -2415,8 +2537,92 @@ export default function RouteBoardClient({
   warehouseOriginAddress: string;
   bookingRouteStops: RouteStop[];
   supportsRouteStopWindows: boolean;
+  liveDriverLocations: LiveDriverLocation[];
 }) {
+  const [currentLiveDriverLocations, setCurrentLiveDriverLocations] =
+    useState<LiveDriverLocation[]>(liveDriverLocations);
+  const [mapPanelMode, setMapPanelMode] = useState<"planner" | "tracker">(
+    "planner",
+  );
+
   const [selectedDriver, setSelectedDriver] = useState("all");
+
+  const liveTrackerHref = useMemo(() => {
+    const params = new URLSearchParams();
+    params.set("date", selectedDate);
+    return `/admin/routes/live?${params.toString()}`;
+  }, [selectedDate]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const browserSupabase = createBrowserSupabaseClient();
+
+    async function refreshLiveDriverLocations() {
+      const result = await browserSupabase
+        .from("driver_location_pings")
+        .select(
+          `
+          id,
+          driver_name,
+          route_date,
+          latitude,
+          longitude,
+          accuracy,
+          heading,
+          speed,
+          created_at
+          `,
+        )
+        .eq("route_date", selectedDate)
+        .gte(
+          "created_at",
+          new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        )
+        .order("created_at", { ascending: false })
+        .limit(500);
+
+      if (cancelled || result.error) {
+        if (result.error) {
+          console.warn(
+            "[RouteBoard] Live driver refresh failed:",
+            result.error.message,
+          );
+        }
+        return;
+      }
+
+      const latestByDriver = new Map<string, LiveDriverLocation>();
+
+      for (const ping of result.data || []) {
+        const driverName = String(ping.driver_name || "").trim();
+        if (!driverName) continue;
+
+        const key = driverName.toLowerCase();
+        if (!latestByDriver.has(key)) {
+          latestByDriver.set(key, ping as LiveDriverLocation);
+        }
+      }
+
+      if (!cancelled) {
+        setCurrentLiveDriverLocations(
+          Array.from(latestByDriver.values()),
+        );
+      }
+    }
+
+    setCurrentLiveDriverLocations(liveDriverLocations);
+    void refreshLiveDriverLocations();
+
+    const timer = window.setInterval(() => {
+      void refreshLiveDriverLocations();
+    }, 15_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [selectedDate, liveDriverLocations]);
+
   const [selectedStopKind, setSelectedStopKind] = useState<
     "all" | "delivery" | "pickup"
   >("all");
@@ -2855,6 +3061,53 @@ const date = String(draft.date || stop.stop_date || selectedDate).slice(
             savedDuration ||
             60;
 
+        // For the first stop in a type-chain, borrow timing from the previous
+        // global stop (same driver/date) so mixed delivery/pickup order cascades.
+        if (
+          index === 0 &&
+          !stop.time_locked &&
+          !draft.locked &&
+          !draft.startTime &&
+          !draft.endTime
+        ) {
+          const curGlobalPos = globalPositionById.get(String(stop.id)) ?? -1;
+
+          for (let gPos = curGlobalPos - 1; gPos >= 0; gPos--) {
+            const candidate = deliveryPickupStops[gPos];
+
+            if (!candidate || isBreakRouteStop(candidate)) {
+              continue;
+            }
+
+            const candidateDraft = timingDraftByStopId[candidate.id] || {};
+            const candidateDate = String(
+              candidateDraft.date || candidate.stop_date || selectedDate,
+            ).slice(0, 10);
+            const candidateDriver = String(candidate.driver_name || "");
+
+            if (
+              candidateDate !== date ||
+              candidateDriver !== String(stop.driver_name || "")
+            ) {
+              continue;
+            }
+
+            const candidateTiming = result.get(String(candidate.id));
+            const candidateEnd =
+              candidateTiming?.endTime ||
+              timeValue(candidate.scheduled_end_time);
+
+            if (!candidateEnd) {
+              continue;
+            }
+
+            previousStop = candidate;
+            previousGeoStop = candidate;
+            previousEndTime = candidateEnd;
+            break;
+          }
+        }
+
         // Cross-type interleave check: if a stop of a different type falls
         // between the previous chain-stop and this stop in global sort order
         // (e.g. a delivery placed after some pickups), use that stop's end
@@ -2916,25 +3169,41 @@ const effectiveLocked =
   effectiveLocked ||
   draft.date ||
   draft.startTime ||
-  (effectiveLocked && draft.endTime) ||
-  (index === 0 && (startTime || endTime)),
+  draft.endTime,
 );
 
         if (index === 0) {
-          if (startTime && !endTime) {
+          if (!hasManualAnchor && previousStop && previousEndTime) {
+            const mapTravelMinutes = segmentTravelMinutes(
+              previousGeoStop || previousStop,
+              stop,
+            );
+            const fallbackMinutes = estimateTravelMinutes(
+              previousGeoStop || previousStop,
+              stop,
+            );
+
+            startTime = addMinutesToTime(
+              previousEndTime,
+              mapTravelMinutes ?? fallbackMinutes,
+            );
             endTime = addMinutesToTime(startTime, currentDuration);
-          }
+          } else {
+            if (startTime && !endTime) {
+              endTime = addMinutesToTime(startTime, currentDuration);
+            }
 
-          if (!startTime && endTime) {
-            startTime = addMinutesToTime(endTime, -currentDuration);
-          }
+            if (!startTime && endTime) {
+              startTime = addMinutesToTime(endTime, -currentDuration);
+            }
 
-          if (!startTime) {
-            startTime = savedStartTime || "08:00";
-          }
+            if (!startTime) {
+              startTime = savedStartTime || "08:00";
+            }
 
-          if (!endTime) {
-            endTime = addMinutesToTime(startTime, currentDuration);
+            if (!endTime) {
+              endTime = addMinutesToTime(startTime, currentDuration);
+            }
           }
         } else if (hasManualAnchor) {
           if (startTime && !effectiveLocked) {
@@ -3041,11 +3310,23 @@ const effectiveLocked =
     orderedStops.forEach((stop) => {
       const booking = getOne(stop.bookings);
       const liveTiming = liveTimingByStopId.get(stop.id);
+      const referenceDateForBookingStop =
+        String(stop.stop_date || selectedDate).slice(0, 10);
       const deliveryStop =
-        bookingStopByType(stop.booking_id, "delivery", bookingRouteStops) ||
+        bookingStopByType(
+          stop.booking_id,
+          "delivery",
+          bookingRouteStops,
+          referenceDateForBookingStop,
+        ) ||
         stop;
       const pickupStop =
-        bookingStopByType(stop.booking_id, "pickup", bookingRouteStops) ||
+        bookingStopByType(
+          stop.booking_id,
+          "pickup",
+          bookingRouteStops,
+          referenceDateForBookingStop,
+        ) ||
         (stop.stop_type === "pickup" ? stop : null);
 
       const deliveryWindows = parseWindows(
@@ -3204,6 +3485,35 @@ const effectiveLocked =
     [visibleStops],
   );
 
+  const canPersistBoardOrderOnCardSave =
+    shouldPersistRouteOrderInCurrentView({
+      selectedType,
+      selectedStatus,
+      query,
+    });
+
+  const orderedStopIdsForCardSave = useMemo(
+    () => orderedStops.map((stop) => stop.id),
+    [orderedStops],
+  );
+
+  function persistRouteOrderIds(orderedIds: string[]) {
+    if (orderedIds.length < 1) return;
+
+    const formData = new FormData();
+    formData.set("orderedIds", JSON.stringify(orderedIds));
+
+    startTransition(() => {
+      void saveRouteOrderAction(formData).catch((error: unknown) => {
+        setRouteSaveError(
+          error instanceof Error
+            ? error.message
+            : "Could not save route order.",
+        );
+      });
+    });
+  }
+
   function routeOriginAddressForStops(stopsForRoute: RouteStop[]) {
     const firstStop = stopsForRoute[0];
 
@@ -3244,7 +3554,25 @@ const effectiveLocked =
         ? countableStops
         : countableStops.filter((stop) => stop.stop_type === selectedStopKind);
 
-    const result = drivers.map((driver) => {
+    const normalizedDrivers =
+      drivers.some((driver) => driver.name === "Unassigned")
+        ? drivers
+        : [
+            {
+              id: "unassigned",
+              name: "Unassigned",
+              color: "#8b8177",
+              phone: null,
+              account_email: null,
+              auth_user_id: null,
+              notes: null,
+              active: true,
+              sort_order: -1,
+            } as Driver,
+            ...drivers,
+          ];
+
+    const result = normalizedDrivers.map((driver) => {
       const driverStops =
         driver.name === "Unassigned"
           ? visibleTypeStops.filter((stop) => !stop.driver_name)
@@ -3263,7 +3591,9 @@ const effectiveLocked =
       };
     });
 
-    const existingDriverNames = new Set(drivers.map((driver) => driver.name));
+    const existingDriverNames = new Set(
+      normalizedDrivers.map((driver) => driver.name),
+    );
 
     const extraDrivers = Array.from(
       new Set(
@@ -3521,50 +3851,61 @@ const effectiveLocked =
 
     if (!over || String(active.id) === String(over.id)) return;
 
-    setOrderedStops((items) => {
-      const isVisible = (stop: RouteStop) => {
-        if (selectedStopKind === "delivery" && stop.stop_type !== "delivery") return false;
-        if (selectedStopKind === "pickup" && stop.stop_type !== "pickup") return false;
+    const isVisible = (stop: RouteStop) => {
+      if (selectedStopKind === "delivery" && stop.stop_type !== "delivery") return false;
+      if (selectedStopKind === "pickup" && stop.stop_type !== "pickup") return false;
 
-        if (selectedDriver !== "all") {
-          if (selectedDriver === "Unassigned") {
-            if (stop.driver_name) return false;
-          } else if (String(stop.driver_name || "") !== selectedDriver) {
-            return false;
-          }
+      if (selectedDriver !== "all") {
+        if (selectedDriver === "Unassigned") {
+          if (stop.driver_name) return false;
+        } else if (String(stop.driver_name || "") !== selectedDriver) {
+          return false;
         }
+      }
 
-        if (selectedTimingFilter === "issues") {
-          const health = routeTimingHealthByStopId.get(stop.id);
-          if (health?.tone !== "warning" && health?.tone !== "conflict") return false;
-        }
+      if (selectedTimingFilter === "issues") {
+        const health = routeTimingHealthByStopId.get(stop.id);
+        if (health?.tone !== "warning" && health?.tone !== "conflict") return false;
+      }
 
-        return true;
-      };
+      return true;
+    };
 
-      const currentVisible = items.filter(isVisible);
-      const visibleIds = currentVisible.map((stop) => stop.id);
-      const oldVisibleIndex = visibleIds.indexOf(String(active.id));
-      const newVisibleIndex = visibleIds.indexOf(String(over.id));
+    const currentVisible = orderedStops.filter(isVisible);
+    const visibleIds = currentVisible.map((stop) => stop.id);
+    const oldVisibleIndex = visibleIds.indexOf(String(active.id));
+    const newVisibleIndex = visibleIds.indexOf(String(over.id));
 
-      if (oldVisibleIndex < 0 || newVisibleIndex < 0) return items;
+    if (oldVisibleIndex < 0 || newVisibleIndex < 0) {
+      return;
+    }
 
-      const reorderedVisible = arrayMove(
-        currentVisible,
-        oldVisibleIndex,
-        newVisibleIndex,
-      );
+    const reorderedVisible = arrayMove(
+      currentVisible,
+      oldVisibleIndex,
+      newVisibleIndex,
+    );
 
-      let replacementIndex = 0;
+    let replacementIndex = 0;
+    const reorderedItems = orderedStops.map((item) =>
+      visibleIds.includes(item.id)
+        ? reorderedVisible[replacementIndex++]
+        : item,
+    );
 
-      return items.map((item) =>
-       visibleIds.includes(item.id)
-       ? reorderedVisible[replacementIndex++]
-       : item,
- );
- });
-setRouteSegmentsByChainId({});
-}
+    setOrderedStops(reorderedItems);
+    setRouteSegmentsByChainId({});
+
+    const canAutoPersistOrder = shouldPersistRouteOrderInCurrentView({
+      selectedType,
+      selectedStatus,
+      query,
+    });
+
+    if (canAutoPersistOrder) {
+      persistRouteOrderIds(reorderedItems.map((stop) => stop.id));
+    }
+  }
 
  const handleRouteSegmentsChange = useCallback(
   (nextSegments: Record<string, RouteSegment[]>) => {
@@ -3892,29 +4233,72 @@ setRouteSegmentsByChainId({});
               </p>
             </div>
 
-            {selectedDriver !== "all" && routeUrl && (
-              <a
-                href={routeUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-full bg-[#23313f] px-5 py-3 text-sm font-semibold text-white"
-              >
-                Open route in Google Maps
-              </a>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="rounded-full border border-[#d8cec0] bg-[#f7f1e8] p-1">
+                <button
+                  type="button"
+                  onClick={() => setMapPanelMode("planner")}
+                  className={[
+                    "rounded-full px-3 py-1.5 text-xs font-semibold transition",
+                    mapPanelMode === "planner"
+                      ? "bg-[#23313f] text-white"
+                      : "text-[#6c6258] hover:bg-white",
+                  ].join(" ")}
+                >
+                  Route planner
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMapPanelMode("tracker")}
+                  className={[
+                    "rounded-full px-3 py-1.5 text-xs font-semibold transition",
+                    mapPanelMode === "tracker"
+                      ? "bg-[#23313f] text-white"
+                      : "text-[#6c6258] hover:bg-white",
+                  ].join(" ")}
+                >
+                  Live tracker
+                </button>
+              </div>
+
+              {mapPanelMode === "planner" && selectedDriver !== "all" && routeUrl && (
+                <a
+                  href={routeUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-full bg-[#23313f] px-5 py-3 text-sm font-semibold text-white"
+                >
+                  Open route in Google Maps
+                </a>
+              )}
+
+              {mapPanelMode === "tracker" && (
+                <a
+                  href={liveTrackerHref}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-full bg-[#23313f] px-5 py-3 text-sm font-semibold text-white"
+                >
+                  Open full tracker
+                </a>
+              )}
+            </div>
           </div>
 
           <div className="mt-4 min-w-0 space-y-3 sm:mt-5 sm:space-y-4">
-            <MultiDriverRouteMap
-              key={`route-map-${routeCalculationVersion}`}
-              apiKey={googleMapsApiKey}
-              warehouseOriginAddress={warehouseOriginAddress}
-              groups={multiDriverMapGroups}
-              className="relative h-[38vh] min-h-[250px] max-h-[330px] w-full min-w-0 overflow-hidden rounded-[18px] border border-[#eee5d9] sm:h-auto sm:min-h-[420px] sm:max-h-none sm:rounded-[28px]"
-              onRouteSegmentsChange={handleRouteSegmentsChange}
-            />
+            {mapPanelMode === "planner" ? (
+              <>
+                <MultiDriverRouteMap
+                  key={`route-map-${routeCalculationVersion}`}
+                  apiKey={googleMapsApiKey}
+                  warehouseOriginAddress={warehouseOriginAddress}
+                  groups={multiDriverMapGroups}
+                  liveDriverLocations={currentLiveDriverLocations}
+                  className="relative h-[38vh] min-h-[250px] max-h-[330px] w-full min-w-0 overflow-hidden rounded-[18px] border border-[#eee5d9] sm:h-auto sm:min-h-[420px] sm:max-h-none sm:rounded-[28px]"
+                  onRouteSegmentsChange={handleRouteSegmentsChange}
+                />
 
-            <div className="grid min-w-0 gap-3 xl:grid-cols-2">
+                <div className="grid min-w-0 gap-3 xl:grid-cols-2">
               {groupedDriverRoutes.map((group) => {
                 const deliveryChainId = `${group.driver.id}::delivery`;
                 const pickupChainId = `${group.driver.id}::pickup`;
@@ -3935,13 +4319,75 @@ setRouteSegmentsByChainId({});
                   routeSegmentsByChainId[deliveryChainId] || [];
                 const pickupRouteSegments =
                   routeSegmentsByChainId[pickupChainId] || [];
+                const driverOrderedStops =
+                  driverRouteStopsByName.get(group.driver.name) || [];
+                const previousStopById = new Map<string, RouteStop>();
+
+                driverOrderedStops.forEach((stop, index) => {
+                  if (index <= 0) return;
+                  const previous = driverOrderedStops[index - 1];
+                  if (!previous) return;
+                  previousStopById.set(String(stop.id), previous);
+                });
+
+                const allDriverRouteSegments = [
+                  ...deliveryRouteSegments,
+                  ...pickupRouteSegments,
+                ];
+                const orderedSummaryStops = driverOrderedStops.map((stop) => ({
+                  id: stop.id,
+                  title: mainProductName(stop),
+                  stopType: stop.stop_type,
+                  sequenceNumber: displaySequenceById.get(stop.id)?.number || 1,
+                }));
+
+                const routeSegmentByEdge = new Map<string, RouteSegment>();
+                allDriverRouteSegments.forEach((segment) => {
+                  const fromStopId = String(segment.fromStopId || "").trim();
+                  const toStopId = String(segment.toStopId || "").trim();
+
+                  if (!fromStopId || !toStopId) return;
+
+                  const key = `${fromStopId}->${toStopId}`;
+
+                  if (!routeSegmentByEdge.has(key)) {
+                    routeSegmentByEdge.set(key, segment);
+                  }
+                });
 
                 function renderStopBadges(
-                  stops: typeof deliveries,
+                  stops: Array<{
+                    id: string;
+                    title: string;
+                    stopType: string | null;
+                    sequenceNumber: number;
+                  }>,
                   routeSegments: RouteSegment[],
-                  stopClassName: string,
-                  segmentClassName: string,
                 ) {
+                  const stopClassName = (stopType: string | null) => {
+                    if (stopType === "delivery") {
+                      return "bg-emerald-600";
+                    }
+
+                    if (stopType === "pickup") {
+                      return "bg-red-600";
+                    }
+
+                    return "bg-[#23313f]";
+                  };
+
+                  const segmentClassName = (stopType: string | null) => {
+                    if (stopType === "delivery") {
+                      return "bg-white/80 text-emerald-800 ring-1 ring-emerald-200";
+                    }
+
+                    if (stopType === "pickup") {
+                      return "bg-white/80 text-red-800 ring-1 ring-red-200";
+                    }
+
+                    return "bg-white/80 text-[#23313f] ring-1 ring-[#d8cec0]";
+                  };
+
                   const incomingStopClassName = (segment: RouteSegment) => {
                     if (segment.fromStopType === "delivery") {
                       return "bg-emerald-600";
@@ -3954,75 +4400,100 @@ setRouteSegmentsByChainId({});
                     return stopClassName;
                   };
 
-                  const relevantSegments = routeSegments.filter(
-                    (segment) =>
-                      segment.toStopType === stops[0]?.stopType ||
-                      (segment.fromStopType === stops[0]?.stopType &&
-                        segment.toStopType === stops[0]?.stopType),
-                  );
+                  const incomingSegmentForStop = (stop: (typeof stops)[number]) => {
+                    const stopId = String(stop.id || "");
+                    const previousStop = previousStopById.get(stopId);
 
-                  const firstStopSequence = Number(
-                    stops[0]?.sequenceNumber || 0,
-                  );
-                  const incomingFirstSegment = relevantSegments.find(
-                    (segment) =>
-                      segment.toSequence === firstStopSequence,
-                  );
+                    if (previousStop) {
+                      const edgeKey = `${String(previousStop.id)}->${stopId}`;
+                      const byEdge = routeSegmentByEdge.get(edgeKey);
+
+                      if (byEdge) {
+                        return byEdge;
+                      }
+                    }
+
+                    const currentSequence = Number(stop.sequenceNumber || 0);
+
+                    const byOrigin = routeSegments.find(
+                      (segment) =>
+                        Number(segment.fromSequence || 0) === 0 &&
+                        (String(segment.toStopId || "") === stopId ||
+                          (segment.toSequence === currentSequence &&
+                            segment.toStopType === stop.stopType)),
+                    );
+
+                    if (byOrigin) {
+                      return byOrigin;
+                    }
+
+                    return routeSegments.find(
+                      (segment) =>
+                        String(segment.toStopId || "") === stopId ||
+                        (segment.toSequence === currentSequence &&
+                          segment.toStopType === stop.stopType),
+                    );
+                  };
 
                   return stops.length > 0 ? (
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                      {incomingFirstSegment && (
-                        <>
-                          <span
-                            className={`inline-flex items-center gap-1 rounded-full px-2 py-1 font-semibold text-white ${incomingStopClassName(
-                              incomingFirstSegment,
-                            )}`}
-                            title={incomingFirstSegment.from}
-                          >
-                            #{incomingFirstSegment.fromSequence || 0}
-                          </span>
-                          <span
-                            className={`inline-flex items-center rounded-full px-1.5 py-1 text-[10px] font-semibold leading-none ${segmentClassName}`}
-                            title={`${incomingFirstSegment.from} → ${incomingFirstSegment.to}`}
-                          >
-                            {compactSegmentLabel(incomingFirstSegment)}
-                          </span>
-                        </>
-                      )}
-
-                      {stops.map((stop, index) => {
-                        const currentSequence = Number(
-                          stop.sequenceNumber || 0,
-                        );
-                        const nextSequence = Number(
-                          stops[index + 1]?.sequenceNumber || 0,
-                        );
-                        const segment = relevantSegments.find(
-                          (item) =>
-                            item.fromSequence === currentSequence &&
-                            item.toSequence === nextSequence &&
-                            item.fromStopType === stop.stopType &&
-                            item.toStopType === stops[index + 1]?.stopType,
-                        );
-                        const showSegment = index < stops.length - 1 && segment;
+                      {stops.map((stop) => {
+                        const stopId = String(stop.id || "");
+                        const previousStop = previousStopById.get(stopId);
+                        const incomingSegment = incomingSegmentForStop(stop);
+                        const incomingFromStopId = String(
+                          incomingSegment?.fromStopId || "",
+                        ).trim();
+                        const incomingSequenceFromId = incomingFromStopId
+                          ? Number(
+                              displaySequenceById.get(incomingFromStopId)
+                                ?.number || 0,
+                            )
+                          : 0;
+                        const incomingSequence =
+                          incomingSequenceFromId > 0
+                            ? incomingSequenceFromId
+                            : Number(incomingSegment?.fromSequence || 0);
+                        const fallbackPreviousSequence = previousStop
+                          ? Number(
+                              displaySequenceById.get(String(previousStop.id))
+                                ?.number || 0,
+                            )
+                          : 0;
+                        const effectiveIncomingSequence =
+                          incomingSequence > 0
+                            ? incomingSequence
+                            : fallbackPreviousSequence;
+                        const incomingLabel =
+                          effectiveIncomingSequence > 0
+                            ? ""
+                            : "WH";
 
                         return (
                           <Fragment key={`${group.driver.id}-${stop.id}`}>
                             <span
-                              className={`inline-flex items-center gap-1 rounded-full px-2 py-1 font-semibold text-white ${stopClassName}`}
+                              className={`inline-flex items-center rounded-full px-1.5 py-1 text-[10px] font-semibold leading-none ${segmentClassName(
+                                stop.stopType,
+                              )}`}
+                              title={
+                                incomingSegment
+                                  ? `${incomingSegment.from} → ${incomingSegment.to}`
+                                  : incomingLabel
+                              }
+                            >
+                              {incomingSegment
+                                ? `${incomingLabel ? `${incomingLabel} ` : ""}${compactSegmentLabel(incomingSegment)}`
+                                : incomingLabel}
+                            </span>
+
+                            <span
+                              className={`inline-flex items-center gap-1 rounded-full px-2 py-1 font-semibold text-white ${stopClassName(
+                                stop.stopType,
+                              )}`}
                               title={stop.title}
                             >
                               #{stop.sequenceNumber || 1}
                             </span>
-
-                            {showSegment && (
-                              <span
-                                className={`inline-flex items-center rounded-full px-1.5 py-1 text-[10px] font-semibold leading-none ${segmentClassName}`}
-                                title={`${segment.from} → ${segment.to}`}
-                              >
-                                {compactSegmentLabel(segment)}
-                              </span>
-                            )}
                           </Fragment>
                         );
                       })}
@@ -4064,46 +4535,43 @@ setRouteSegmentsByChainId({});
                     </div>
 
                     <div className="mt-2 space-y-2 text-xs">
-                      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
-                        <div className="font-semibold uppercase tracking-[0.12em] text-emerald-700">
-                          Deliveries
+                      <div className="rounded-xl border border-[#d8cec0] bg-[#f8f6f2] px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="font-semibold uppercase tracking-[0.12em] text-[#6c6258]">
+                            Route order
+                          </div>
+                          <div className="text-[10px] font-semibold text-[#8b8177]">
+                            D {deliveries.length} · P {pickups.length}
+                          </div>
                         </div>
-                        {deliveries.length > 0 ? (
-                          renderStopBadges(
-                            deliveries,
-                            deliveryRouteSegments,
-                            "bg-emerald-600",
-                            "bg-white/80 text-emerald-800 ring-1 ring-emerald-200",
-                          )
-                        ) : (
-                          <span className="mt-1 block text-emerald-700/80">
-                            No deliveries
-                          </span>
-                        )}
-                      </div>
 
-                      <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2">
-                        <div className="font-semibold uppercase tracking-[0.12em] text-red-700">
-                          Pickups
-                        </div>
-                        {pickups.length > 0 ? (
+                        {orderedSummaryStops.length > 0 ? (
                           renderStopBadges(
-                            pickups,
-                            pickupRouteSegments,
-                            "bg-red-600",
-                            "bg-white/80 text-red-800 ring-1 ring-red-200",
+                            orderedSummaryStops,
+                            allDriverRouteSegments,
                           )
                         ) : (
-                          <span className="mt-1 block text-red-700/80">
-                            No pickups
+                          <span className="mt-1 block text-[#8b8177]">
+                            No route stops
                           </span>
                         )}
                       </div>
                     </div>
                   </article>
                 );
-              })}
-            </div>
+                  })}
+                </div>
+              </>
+            ) : (
+              <div className="overflow-hidden rounded-[18px] border border-[#eee5d9] sm:rounded-[28px]">
+                <iframe
+                  title="Live driver tracker"
+                  src={liveTrackerHref}
+                  className="h-[72vh] min-h-[560px] w-full border-0"
+                  loading="lazy"
+                />
+              </div>
+            )}
           </div>
         </section>
       </section>
@@ -4247,6 +4715,8 @@ setRouteSegmentsByChainId({});
                     selectedDate={selectedDate}
                     bookingRouteStops={bookingRouteStops}
                     supportsRouteStopWindows={supportsRouteStopWindows}
+                    orderedStopIds={orderedStopIdsForCardSave}
+                    canPersistBoardOrderOnSave={canPersistBoardOrderOnCardSave}
                   />
                 );
               })}

@@ -696,7 +696,7 @@ export default function BookingBuilder({
                                 <div className="font-semibold text-[#1f1e1b]">
                                   {product.name}
                                 </div>
-                                <div className="mt-1 line-clamp-2 text-sm text-[#6c6258]">
+                                <div className="mt-1 min-h-[80px] line-clamp-4 text-sm leading-5 text-[#6c6258]">
                                   {product.short_description || "No description"}
                                 </div>
                               </div>

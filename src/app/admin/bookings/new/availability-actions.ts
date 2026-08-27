@@ -952,3 +952,127 @@ export async function checkPublicBookingItemAvailabilityAction(
         : "Not available for the selected date and time.",
   };
 }
+
+export async function getAdminInventorySnapshotAction(formData: FormData) {
+  const supabase = await createClient();
+
+  const eventDate = getString(formData, "eventDate");
+  const eventStartTime = getString(formData, "eventStartTime");
+  const eventEndTime = getString(formData, "eventEndTime");
+  const bookingActor = parseBookingActor(getString(formData, "bookingActor"));
+
+  if (!eventDate || !isValidTimeString(eventStartTime) || !isValidTimeString(eventEndTime)) {
+    return {
+      ok: false,
+      message: "Choose date, start time, and end time before loading stock snapshot.",
+      items: [],
+    };
+  }
+
+  const productIdsRaw = getString(formData, "productIds");
+
+  let parsedProductIds: string[] = [];
+
+  try {
+    const parsed = JSON.parse(productIdsRaw || "[]");
+
+    if (Array.isArray(parsed)) {
+      parsedProductIds = parsed
+        .map((value) => String(value || "").trim())
+        .filter(Boolean);
+    }
+  } catch {
+    return {
+      ok: false,
+      message: "Could not parse product list for stock snapshot.",
+      items: [],
+    };
+  }
+
+  const productIds = Array.from(new Set(parsedProductIds)).slice(0, 120);
+
+  if (productIds.length === 0) {
+    return {
+      ok: true,
+      message: null,
+      items: [],
+    };
+  }
+
+  const timePolicyMessage = await validateTimePolicy(
+    supabase,
+    {
+      bookingActor,
+      eventDate,
+      eventStartTime,
+      eventEndTime,
+    },
+  );
+
+  if (timePolicyMessage) {
+    return {
+      ok: false,
+      message: timePolicyMessage,
+      items: [],
+    };
+  }
+
+  const checks = await Promise.all(
+    productIds.map(async (productId) => {
+      try {
+        const itemFormData = new FormData();
+        itemFormData.set("productId", productId);
+        itemFormData.set("quantity", "1");
+        itemFormData.set("eventDate", eventDate);
+        itemFormData.set("eventStartTime", eventStartTime);
+        itemFormData.set("eventEndTime", eventEndTime);
+        itemFormData.set("bookingActor", bookingActor);
+        itemFormData.set("modifierCount", "0");
+
+        const result = await checkBookingItemAvailabilityCore(
+          supabase,
+          itemFormData,
+        );
+
+        const requiredComponents = Array.isArray(result?.components)
+          ? result.components.filter((component: any) => component?.isRequired !== false)
+          : [];
+
+        const remainingQuantity = requiredComponents.length
+          ? Math.max(
+              0,
+              Math.floor(
+                Math.min(
+                  ...requiredComponents.map((component: any) => {
+                    const required = Math.max(1, getNumberValue(component?.quantityRequired, 1));
+                    const available = Math.max(0, getNumberValue(component?.quantityAvailable, 0));
+                    return available / required;
+                  }),
+                ),
+              ),
+            )
+          : 0;
+
+        return {
+          productId,
+          available: Boolean(result?.productAvailable ?? result?.available),
+          remainingQuantity,
+          message: result?.message || null,
+        };
+      } catch (error: any) {
+        return {
+          productId,
+          available: false,
+          remainingQuantity: 0,
+          message: error?.message || "Availability check failed.",
+        };
+      }
+    }),
+  );
+
+  return {
+    ok: true,
+    message: null,
+    items: checks,
+  };
+}
