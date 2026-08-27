@@ -42,6 +42,26 @@ function isMissingTableError(error: any) {
   );
 }
 
+function isMissingFunctionError(error: any, functionName?: string) {
+  const message = String(error?.message || "").toLowerCase();
+  const code = String(error?.code || "").toLowerCase();
+  const target = String(functionName || "").toLowerCase();
+
+  if (code === "42883") {
+    if (!target) {
+      return true;
+    }
+
+    return message.includes(target);
+  }
+
+  return (
+    message.includes("function") &&
+    message.includes("does not exist") &&
+    (!target || message.includes(target))
+  );
+}
+
 export default async function NewBookingPage(props: PageProps) {
   const searchParams = props.searchParams ? await props.searchParams : {};
   const initialErrorMessage = resolveWizardErrorMessage(searchParams.error);
@@ -194,7 +214,11 @@ export default async function NewBookingPage(props: PageProps) {
     throw new Error(workingHourExceptionsResult.error.message);
   }
 
-  if (discountSecurityResult.error && !isMissingTableError(discountSecurityResult.error)) {
+  if (
+    discountSecurityResult.error &&
+    !isMissingTableError(discountSecurityResult.error) &&
+    !isMissingFunctionError(discountSecurityResult.error, "get_discount_security_settings")
+  ) {
     throw new Error(discountSecurityResult.error.message);
   }
 
