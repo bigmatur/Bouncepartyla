@@ -23,6 +23,18 @@ type DriverRouteGroup = {
   stops: RouteStopLite[];
 };
 
+type LiveDriverLocation = {
+  id: string;
+  driver_name: string;
+  route_date: string | null;
+  latitude: number;
+  longitude: number;
+  accuracy: number | null;
+  heading: number | null;
+  speed: number | null;
+  created_at: string;
+};
+
 type RouteSegmentSummary = {
   from: string;
   to: string;
@@ -40,6 +52,7 @@ type MultiDriverRouteMapProps = {
   apiKey: string;
   warehouseOriginAddress?: string | null;
   groups: DriverRouteGroup[];
+  liveDriverLocations?: LiveDriverLocation[];
   className?: string;
   onRouteSegmentsChange?: (
     segmentsByDriverId: Record<string, RouteSegmentSummary[]>,
@@ -186,6 +199,45 @@ function markerIcon(
   };
 }
 
+function driverLocationIcon(
+  color: string,
+  heading: number | null | undefined,
+  stale: boolean,
+) {
+  const validHeading =
+    typeof heading === "number" &&
+    Number.isFinite(heading) &&
+    heading >= 0
+      ? heading
+      : 0;
+
+  const opacity = stale ? 0.58 : 1;
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="54" height="54" viewBox="0 0 54 54">
+      <circle cx="27" cy="27" r="23" fill="#ffffff" opacity="0.96" />
+      <circle
+        cx="27"
+        cy="27"
+        r="19"
+        fill="${color}"
+        opacity="${opacity}"
+        stroke="#ffffff"
+        stroke-width="3"
+      />
+      <g transform="rotate(${validHeading} 27 27)">
+        <path d="M27 14 L35 34 L27 30 L19 34 Z" fill="#ffffff" />
+      </g>
+    </svg>
+  `;
+
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: new window.google.maps.Size(54, 54),
+    anchor: new window.google.maps.Point(27, 27),
+  };
+}
+
 function lightenHexColor(hexColor: string, amount: number) {
   const match = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(
     hexColor || "",
@@ -215,10 +267,14 @@ export default function MultiDriverRouteMap({
   apiKey,
   warehouseOriginAddress,
   groups,
+  liveDriverLocations = [],
   className,
   onRouteSegmentsChange,
 }: MultiDriverRouteMapProps) {
   const mapRef = useRef<HTMLDivElement | null>(null);
+  const mapInstanceRef = useRef<any>(null);
+  const liveMarkerCleanupsRef = useRef<Array<() => void>>([]);
+  const [mapReadyVersion, setMapReadyVersion] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const activeGroups = useMemo(
@@ -261,7 +317,11 @@ export default function MultiDriverRouteMap({
         fullscreenControl: true,
       });
 
+      mapInstanceRef.current = map;
+      setMapReadyVersion((version) => version + 1);
+
       const bounds = new window.google.maps.LatLngBounds();
+
       const directionsService = new window.google.maps.DirectionsService();
       const geocoder = new window.google.maps.Geocoder();
 
@@ -604,9 +664,127 @@ export default function MultiDriverRouteMap({
 
     return () => {
       cancelled = true;
+      liveMarkerCleanupsRef.current.forEach((cleanup) => cleanup());
+      liveMarkerCleanupsRef.current = [];
+      mapInstanceRef.current = null;
       cleanups.forEach((cleanup) => cleanup());
     };
-  }, [apiKey, activeGroups, warehouseOriginAddress, onRouteSegmentsChange]);
+  }, [
+    apiKey,
+    activeGroups,
+    warehouseOriginAddress,
+    onRouteSegmentsChange,
+  ]);
+
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function renderLiveDriverMarkers() {
+      if (!apiKey || !mapInstanceRef.current) return;
+
+      try {
+        await loadGoogleMaps(apiKey);
+      } catch {
+        return;
+      }
+
+      if (
+        cancelled ||
+        !mapInstanceRef.current ||
+        !window.google?.maps
+      ) {
+        return;
+      }
+
+      liveMarkerCleanupsRef.current.forEach((cleanup) => cleanup());
+      liveMarkerCleanupsRef.current = [];
+
+      const map = mapInstanceRef.current;
+      const driverColorByName = new Map<string, string>();
+
+      for (const group of groups) {
+        const key = String(group.driverName || "")
+          .trim()
+          .toLowerCase();
+
+        if (key && !driverColorByName.has(key)) {
+          driverColorByName.set(key, group.color || "#23313f");
+        }
+      }
+
+      for (const location of liveDriverLocations) {
+        const driverName = String(location.driver_name || "").trim();
+        const driverKey = driverName.toLowerCase();
+
+        if (!driverName || !driverColorByName.has(driverKey)) continue;
+
+        const latitude = Number(location.latitude);
+        const longitude = Number(location.longitude);
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) continue;
+
+        const createdAt = new Date(location.created_at).getTime();
+        if (!Number.isFinite(createdAt)) continue;
+
+        const ageMs = Date.now() - createdAt;
+        const ageMinutes = ageMs / 60_000;
+        if (ageMinutes > 5) continue;
+
+        const stale = ageMinutes > 2;
+        const position = { lat: latitude, lng: longitude };
+        const color = driverColorByName.get(driverKey) || "#23313f";
+
+        const marker = new window.google.maps.Marker({
+          map,
+          position,
+          zIndex: 500,
+          title: `${driverName} · ${stale ? "Last known location" : "Live location"}`,
+          icon: driverLocationIcon(color, location.heading, stale),
+        });
+
+        const ageText =
+          ageMs < 60_000
+            ? `${Math.max(1, Math.round(ageMs / 1000))} sec ago`
+            : `${Math.max(1, Math.round(ageMinutes))} min ago`;
+
+        const accuracy = Number(location.accuracy);
+        const infoWindow = new window.google.maps.InfoWindow({
+          content: `
+            <div style="font-family: Arial, sans-serif; min-width: 180px; padding: 3px 1px;">
+              <div style="font-size: 13px; font-weight: 700; color: #1f1e1b;">${driverName}</div>
+              <div style="margin-top: 4px; font-size: 11px; font-weight: 700; color: ${stale ? "#b47316" : "#1f9d55"};">
+                ${stale ? "LAST KNOWN LOCATION" : "LIVE LOCATION"}
+              </div>
+              <div style="margin-top: 4px; font-size: 11px; color: #6c6258;">Updated ${ageText}</div>
+              ${
+                Number.isFinite(accuracy)
+                  ? `<div style="margin-top: 2px; font-size: 10px; color: #8b8177;">Accuracy ${Math.round(accuracy)} m</div>`
+                  : ""
+              }
+            </div>
+          `,
+        });
+
+        const listener = marker.addListener("click", () => {
+          infoWindow.open({ map, anchor: marker });
+        });
+
+        liveMarkerCleanupsRef.current.push(() => {
+          listener?.remove?.();
+          infoWindow.close();
+          marker.setMap(null);
+        });
+      }
+    }
+
+    void renderLiveDriverMarkers();
+
+    return () => {
+      cancelled = true;
+      liveMarkerCleanupsRef.current.forEach((cleanup) => cleanup());
+      liveMarkerCleanupsRef.current = [];
+    };
+  }, [apiKey, groups, liveDriverLocations, mapReadyVersion]);
 
   if (!apiKey) {
     return (
