@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getUnifiedAccess, isStaffRole, type AppPermission } from "@/lib/auth/access";
+import { cancelBookingWithSupabase } from "@/lib/booking/cancel-booking";
 
 function getString(formData: FormData, key: string) {
   const value = formData.get(key);
@@ -364,69 +365,17 @@ export async function cancelBookingAction(formData: FormData) {
     throw new Error("Booking ID is required.");
   }
 
-  const booking = await verifyBookingExists(bookingId);
-  const currentStatus = normalizeStatus(booking.status);
-
-  if (currentStatus === "cancelled") {
-    await revalidateBookingPages(bookingId);
-    redirect(`/admin/bookings/${bookingId}?saved=booking-already-cancelled`);
-  }
-
-  if (currentStatus === "closed") {
-    throw new Error(
-      "Closed booking cannot be cancelled. Reopen it before cancelling."
-    );
-  }
-
-  await releaseBookingReservations(bookingId);
-  await cancelBookingRouteStops(bookingId);
-
-  const cancellationNote = cancellationReason
-    ? `Booking cancelled. Reason: ${cancellationReason}`
-    : "Booking cancelled by admin.";
-
-  let updateResult = await supabase
-    .from("bookings")
-    .update({
-      status: "cancelled",
-      archived_at: null,
-      cancellation_reason: cancellationReason || null,
-      cancelled_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", bookingId);
-
-  /*
-   * Поддержка старой схемы без cancellation_reason/cancelled_at.
-   */
-  if (updateResult.error && isMissingColumnError(updateResult.error)) {
-    updateResult = await supabase
-      .from("bookings")
-      .update({
-        status: "cancelled",
-        notes: cancellationNote,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", bookingId);
-  }
-
-  /*
-   * Ещё один fallback, если нет notes или updated_at.
-   */
-  if (updateResult.error && isMissingColumnError(updateResult.error)) {
-    updateResult = await supabase
-      .from("bookings")
-      .update({
-        status: "cancelled",
-      })
-      .eq("id", bookingId);
-  }
-
-  if (updateResult.error) {
-    throw new Error(updateResult.error.message);
-  }
+  const result = await cancelBookingWithSupabase(
+    supabase,
+    bookingId,
+    cancellationReason
+  );
 
   await revalidateBookingPages(bookingId);
+
+  if (result.alreadyCancelled) {
+    redirect(`/admin/bookings/${bookingId}?saved=booking-already-cancelled`);
+  }
 
   redirect(`/admin/bookings/${bookingId}?saved=booking-cancelled`);
 }
