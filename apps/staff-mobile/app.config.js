@@ -26,6 +26,7 @@ module.exports = ({ config }) => {
       "Allow Bounce Party LA Staff to use the camera for delivery and pickup proof photos.",
   },
 ],
+      "@react-native-community/datetimepicker",
       [
         "./plugins/withGoogleNavigation",
         {

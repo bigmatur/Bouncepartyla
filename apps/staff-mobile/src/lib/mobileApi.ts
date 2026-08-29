@@ -92,3 +92,197 @@ export async function cancelBookingFromMobile(
     },
   );
 }
+
+export type MobileNewBookingCustomer = {
+  id: string;
+  full_name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+};
+
+export type MobileNewBookingProduct = {
+  id: string;
+  name?: string | null;
+  category_id?: string | null;
+  category_name?: string | null;
+  price?: number | string | null;
+  active?: boolean | null;
+  image_url?: string | null;
+  [key: string]: unknown;
+};
+
+export type MobileNewBookingCategory = {
+  id: string;
+  name?: string | null;
+  active?: boolean | null;
+  sort_order?: number | null;
+};
+
+export type MobileNewBookingModifierOption = {
+  id: string;
+  modifierGroupId?: string | null;
+  name?: string | null;
+  description?: string | null;
+  imageUrl?: string | null;
+  priceDelta?: number | null;
+  inventoryItemId?: string | null;
+  inventoryQuantity?: number | null;
+  trackInventory?: boolean;
+  inventoryBehavior?: "reusable" | "consumable";
+  active?: boolean;
+  sortOrder?: number | null;
+};
+
+export type MobileNewBookingModifierGroup = {
+  connectionId?: string | null;
+  productId: string;
+  modifierGroupId?: string | null;
+  id: string;
+  name?: string | null;
+  description?: string | null;
+  required?: boolean;
+  active?: boolean;
+  sortOrder?: number | null;
+  selectionType?: string | null;
+  maxTotalQuantity?: number | null;
+  imageUrl?: string | null;
+  options: MobileNewBookingModifierOption[];
+};
+
+export type MobileNewBookingPaymentMethod = {
+  method: string;
+  displayName: string;
+  integrationEnabled: boolean;
+  integrationType: string;
+  accountLabel: string | null;
+  accountValue: string | null;
+  iconUrl: string | null;
+};
+
+export type MobileNewBookingBootstrap = {
+  customers: MobileNewBookingCustomer[];
+  products: MobileNewBookingProduct[];
+  categories: MobileNewBookingCategory[];
+  modifierGroups: MobileNewBookingModifierGroup[];
+
+  timeFormat: string;
+
+  workingHours: Array<Record<string, unknown>>;
+
+  workingHourExceptions: Array<Record<string, unknown>>;
+
+  paymentMethods: MobileNewBookingPaymentMethod[];
+
+  tipSettings: {
+    tipsEnabled: boolean;
+    allowCustomTip: boolean;
+    tipMode: "percent" | "amount";
+    defaultTipPercent: number;
+    defaultTipAmount: number;
+    tipPercentOptions: number[];
+    tipAmountOptions: number[];
+  };
+
+  discountSecurity: {
+    discount_password_enabled: boolean;
+    discount_password_hint: string | null;
+  };
+
+  contractSettings: {
+    template_html: string;
+    require_contract_before_payment: boolean;
+    require_typed_signature: boolean;
+    signature_label: string;
+  };
+};
+
+export async function loadNewBookingBootstrapFromMobile() {
+  const result = await authenticatedFetch<{
+    success: true;
+    data: MobileNewBookingBootstrap;
+  }>(
+    "/api/admin/mobile/bookings/new/bootstrap",
+    {
+      method: "GET",
+    },
+  );
+
+  if (!result.success) {
+    return {
+      success: false as const,
+      error:
+        result.error ||
+        "Could not load new booking data.",
+    };
+  }
+
+  if (!result.data?.data) {
+    return {
+      success: false as const,
+      error:
+        "New booking data was not returned by the server.",
+    };
+  }
+
+  return {
+    success: true as const,
+    data: result.data.data,
+  };
+}
+export type MobileNewBookingAvailabilityItem = {
+  productId: string;
+  available: boolean;
+  remainingQuantity: number;
+  message: string | null;
+};
+
+export type MobileNewBookingAvailabilitySnapshot = {
+  ok: boolean;
+  message: string | null;
+  items: MobileNewBookingAvailabilityItem[];
+};
+
+export async function loadNewBookingAvailabilityFromMobile(params: {
+  eventDate: string;
+  eventStartTime: string;
+  eventEndTime: string;
+  productIds: string[];
+}) {
+  const result = await authenticatedFetch<{
+    success: true;
+    data: MobileNewBookingAvailabilitySnapshot;
+  }>(
+    "/api/admin/mobile/bookings/new/availability",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        eventDate: params.eventDate,
+        eventStartTime: params.eventStartTime,
+        eventEndTime: params.eventEndTime,
+        productIds: params.productIds,
+      }),
+    },
+  );
+
+  if (!result.success) {
+    return {
+      success: false as const,
+      error:
+        result.error ||
+        "Could not check product availability.",
+    };
+  }
+
+  if (!result.data?.data) {
+    return {
+      success: false as const,
+      error:
+        "Product availability was not returned by the server.",
+    };
+  }
+
+  return {
+    success: true as const,
+    data: result.data.data,
+  };
+}
