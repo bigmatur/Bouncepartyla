@@ -1,12 +1,14 @@
 "use server";
 
 import { createHash, scryptSync, timingSafeEqual } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createClient as createSupabaseJsClient } from "@supabase/supabase-js";
 import nodemailer from "nodemailer";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
-import { createClient } from "@/lib/supabase/server";
+import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getUnifiedAccess } from "@/lib/auth/access";
 import { createStripeCheckoutSession } from "@/lib/payments/stripe";
@@ -17,6 +19,7 @@ import {
 import { validateBookingItemsAvailability } from "@/features/booking/server/validate-booking-items-availability";
 import { insertBookingIdempotently } from "@/features/booking/server/booking-persistence";
 import { createBookingCompletionSession } from "@/features/booking/server/booking-completion-session";
+import { prepareAdminNewBookingSelection } from "@/lib/booking/admin-new-booking-selection";
 import {
   attachAvailabilityToBookingItems,
   groupModifierSelectionsByProductId,
@@ -35,6 +38,35 @@ import {
 
 type ParsedBookingItem = ParsedBookingProductItem;
 type ParsedModifierItem = ParsedBookingModifierItem;
+
+type BookingExecutionContext = {
+  supabase?: any;
+  returnResult?: boolean;
+  requestOrigin?: string | null;
+  trustedPricing?: {
+    subtotal: number;
+    deliveryFee: number;
+    taxRate: number;
+    taxAmount: number;
+    totalAmount: number;
+    depositAmount: number;
+    balanceDue: number;
+  } | null;
+};
+
+const bookingExecutionContext =
+  new AsyncLocalStorage<BookingExecutionContext>();
+
+async function createClient() {
+  const scopedSupabase =
+    bookingExecutionContext.getStore()?.supabase;
+
+  if (scopedSupabase) {
+    return scopedSupabase;
+  }
+
+  return createServerClient();
+}
 
 type BookingActor = "customer" | "cashier";
 
@@ -2694,11 +2726,14 @@ async function autoCreateRouteStopsForBooking({
   }
 }
 
-export async function createBookingAction(
+async function createBookingActionInternal(
   formData: FormData,
 ) {
   const supabase =
     await createClient();
+
+  const executionContext =
+    bookingExecutionContext.getStore();
 
   const access =
     await getUnifiedAccess(
@@ -2837,6 +2872,7 @@ export async function createBookingAction(
       : requestedStatus;
 
   const deliveryFee =
+    executionContext?.trustedPricing?.deliveryFee ??
     getNumber(
       formData,
       "deliveryFee",
@@ -2844,6 +2880,7 @@ export async function createBookingAction(
     );
 
   const taxRate =
+    executionContext?.trustedPricing?.taxRate ??
     getNumber(
       formData,
       "taxRate",
@@ -2851,6 +2888,7 @@ export async function createBookingAction(
     );
 
   const depositAmount =
+    executionContext?.trustedPricing?.depositAmount ??
     getNumber(
       formData,
       "depositAmount",
@@ -3098,6 +3136,8 @@ export async function createBookingAction(
       eventStartTime,
       eventEndTime,
       bookingActor,
+      supabase:
+        executionContext?.supabase,
     });
 
   await validateRequiredModifierGroups({
@@ -3196,12 +3236,14 @@ export async function createBookingAction(
       0,
     );
 
-  const subtotal = Number(
-    (
-      productSubtotal +
-      modifiersSubtotal
-    ).toFixed(2),
-  );
+  const subtotal =
+    executionContext?.trustedPricing?.subtotal ??
+    Number(
+      (
+        productSubtotal +
+        modifiersSubtotal
+      ).toFixed(2),
+    );
 
   const discountAmount =
     Number(
@@ -3223,6 +3265,7 @@ export async function createBookingAction(
     );
 
   const taxAmount =
+    executionContext?.trustedPricing?.taxAmount ??
     Number(
       (
         (taxableSubtotal +
@@ -3232,6 +3275,7 @@ export async function createBookingAction(
     );
 
   const totalAmount =
+    executionContext?.trustedPricing?.totalAmount ??
     Number(
       (
         taxableSubtotal +
@@ -3241,6 +3285,7 @@ export async function createBookingAction(
     );
 
   const balanceDue =
+    executionContext?.trustedPricing?.balanceDue ??
     Number(
       (
         totalAmount -
@@ -3395,6 +3440,24 @@ export async function createBookingAction(
   if (
     persistedBooking.reusedExistingBooking
   ) {
+    if (
+      executionContext?.returnResult
+    ) {
+      return {
+        bookingId,
+        reusedExistingBooking: true,
+        completionUrl: null,
+        completionEmailStatus:
+          "not_configured" as const,
+        status,
+        totalAmount,
+        balanceDue:
+          isStaffSendToCustomer
+            ? totalAmount
+            : balanceDue,
+      };
+    }
+
     redirect(
       `/admin/bookings/${bookingId}`,
     );
@@ -3716,6 +3779,8 @@ export async function createBookingAction(
         requestHeaders.get(
           "origin",
         ) ||
+        executionContext
+          ?.requestOrigin ||
         process.env
           .NEXT_PUBLIC_SITE_URL ||
         "http://localhost:3001";
@@ -4020,6 +4085,25 @@ export async function createBookingAction(
   );
 
   if (
+    executionContext?.returnResult
+  ) {
+    return {
+      bookingId,
+      reusedExistingBooking: false,
+      completionUrl:
+        staffCompletionUrl || null,
+      completionEmailStatus:
+        staffCompletionEmailStatus,
+      status,
+      totalAmount,
+      balanceDue:
+        isStaffSendToCustomer
+          ? totalAmount
+          : balanceDue,
+    };
+  }
+
+  if (
     isStaffSendToCustomer &&
     staffCompletionUrl
   ) {
@@ -4038,5 +4122,369 @@ export async function createBookingAction(
 
   redirect(
     `/admin/bookings/${bookingId}`,
+  );
+}
+
+export async function createBookingAction(
+  formData: FormData,
+): Promise<void> {
+  await createBookingActionInternal(
+    formData,
+  );
+}
+
+export async function createMobileBookingAction(
+  tokenInput: string,
+  bodyInput: Record<string, unknown>,
+  requestOriginInput?: string | null,
+) {
+  const token = String(tokenInput || "").trim();
+
+  if (!token) {
+    throw new Error("Unauthorized");
+  }
+
+  const url = String(
+    process.env.NEXT_PUBLIC_SUPABASE_URL || "",
+  ).trim();
+
+  const anonKey = String(
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
+  ).trim();
+
+  if (!url || !anonKey) {
+    throw new Error(
+      "Server Supabase configuration is missing.",
+    );
+  }
+
+  const supabase = createSupabaseJsClient(
+    url,
+    anonKey,
+    {
+      global: {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      },
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    },
+  );
+
+  const userResult =
+    await supabase.auth.getUser(token);
+
+  if (
+    userResult.error ||
+    !userResult.data.user
+  ) {
+    throw new Error(
+      "Invalid or expired session.",
+    );
+  }
+
+  const access =
+    await getUnifiedAccess(supabase);
+
+  if (
+    !access.user ||
+    !access.isActive ||
+    !access.can("bookings.create")
+  ) {
+    throw new Error(
+      "You do not have permission to create bookings.",
+    );
+  }
+
+  const body =
+    bodyInput &&
+    typeof bodyInput === "object"
+      ? bodyInput
+      : {};
+
+  const eventDate =
+    String(body.eventDate || "").trim();
+
+  const eventStartTime =
+    String(body.eventStartTime || "").trim();
+
+  const eventEndTime =
+    String(body.eventEndTime || "").trim();
+
+  const setupAddress =
+    String(body.setupAddress || "").trim();
+
+  const setupCity =
+    String(body.setupCity || "").trim();
+
+  const setupState =
+    String(body.setupState || "CA").trim() || "CA";
+
+  const setupZip =
+    String(body.setupZip || "").trim();
+
+  const bookingAttemptId =
+    String(body.bookingAttemptId || "").trim();
+
+  if (!bookingAttemptId) {
+    throw new Error(
+      "Booking attempt ID is required.",
+    );
+  }
+
+  if (!eventDate) {
+    throw new Error(
+      "Choose event date.",
+    );
+  }
+
+  if (
+    !isValidTimeString(eventStartTime) ||
+    !isValidTimeString(eventEndTime)
+  ) {
+    throw new Error(
+      "Choose valid start and end time.",
+    );
+  }
+
+  const prepared =
+    await prepareAdminNewBookingSelection({
+      supabase,
+      setupAddress,
+      setupCity,
+      setupState,
+      setupZip,
+      products: Array.isArray(body.products)
+        ? (body.products as any)
+        : [],
+      modifiers: Array.isArray(body.modifiers)
+        ? (body.modifiers as any)
+        : [],
+    });
+
+  if (prepared.pricing.ok !== true) {
+    throw new Error(
+      prepared.pricing.deliveryError ||
+        prepared.pricing.taxError ||
+        "Booking pricing is not ready.",
+    );
+  }
+
+  const existingCustomerId =
+    String(body.existingCustomerId || "").trim();
+
+  let customerFirstName = "";
+  let customerLastName = "";
+  let customerPhone = "";
+  let customerEmail = "";
+  let customerName = "";
+
+  if (existingCustomerId) {
+    const {
+      data: customer,
+      error: customerError,
+    } = await supabase
+      .from("customers")
+      .select("id, full_name, phone, email")
+      .eq("id", existingCustomerId)
+      .maybeSingle();
+
+    if (customerError) {
+      throw new Error(customerError.message);
+    }
+
+    if (!customer?.id) {
+      throw new Error(
+        "Selected customer was not found.",
+      );
+    }
+
+    customerName =
+      String(customer.full_name || "").trim();
+
+    const nameParts =
+      customerName
+        .split(/\s+/)
+        .filter(Boolean);
+
+    customerFirstName =
+      nameParts.shift() || "";
+
+    customerLastName =
+      nameParts.join(" ");
+
+    customerPhone =
+      String(customer.phone || "").trim();
+
+    customerEmail =
+      String(customer.email || "").trim();
+
+    if (
+      !customerFirstName ||
+      !customerLastName
+    ) {
+      throw new Error(
+        "Selected customer must have both first and last name before creating a booking.",
+      );
+    }
+  } else {
+    const newCustomer =
+      body.newCustomer &&
+      typeof body.newCustomer === "object"
+        ? (body.newCustomer as Record<string, unknown>)
+        : {};
+
+    customerFirstName =
+      String(newCustomer.firstName || "").trim();
+
+    customerLastName =
+      String(newCustomer.lastName || "").trim();
+
+    customerPhone =
+      String(newCustomer.phone || "").trim();
+
+    customerEmail =
+      String(newCustomer.email || "").trim();
+
+    customerName =
+      `${customerFirstName} ${customerLastName}`.trim();
+  }
+
+  const formData = new FormData();
+
+  formData.set("bookingAttemptId", bookingAttemptId);
+  formData.set("existingCustomerId", existingCustomerId);
+  formData.set("customerFirstName", customerFirstName);
+  formData.set("customerLastName", customerLastName);
+  formData.set("customerName", customerName);
+  formData.set("customerPhone", customerPhone);
+  formData.set("customerEmail", customerEmail);
+  formData.set("eventDate", eventDate);
+  formData.set("eventStartTime", eventStartTime);
+  formData.set("eventEndTime", eventEndTime);
+  formData.set("bookingActor", "cashier");
+  formData.set("setupAddress", setupAddress);
+  formData.set("setupCity", setupCity);
+  formData.set("setupState", setupState);
+  formData.set("setupZip", setupZip);
+  formData.set("status", "inventory_reserved");
+  formData.set(
+    "completionStrategy",
+    "staff_send_to_customer",
+  );
+  formData.set(
+    "deliveryFee",
+    String(prepared.pricing.deliveryFee),
+  );
+  formData.set(
+    "taxRate",
+    String(prepared.pricing.taxRate),
+  );
+  formData.set(
+    "depositAmount",
+    String(prepared.pricing.minimumDeposit),
+  );
+  formData.set("paymentAmount", "0");
+  formData.set("tipAmount", "0");
+  formData.set("tipPercent", "0");
+  formData.set("discountAmount", "0");
+  formData.set("contractAccepted", "false");
+
+  prepared.trustedProducts.forEach(
+    (item, index) => {
+      formData.set(
+        `productId_${index}`,
+        item.productId,
+      );
+      formData.set(
+        `quantity_${index}`,
+        String(item.quantity),
+      );
+      formData.set(
+        `unitPrice_${index}`,
+        String(item.unitPrice),
+      );
+      formData.set(
+        `lineNotes_${index}`,
+        "",
+      );
+    },
+  );
+
+  prepared.trustedModifiers.forEach(
+    (item, index) => {
+      formData.set(
+        `modifierProductId_${index}`,
+        item.productId,
+      );
+      formData.set(
+        `modifierGroupId_${index}`,
+        item.groupId,
+      );
+      formData.set(
+        `modifierGroupName_${index}`,
+        item.groupName,
+      );
+      formData.set(
+        `modifierOptionId_${index}`,
+        item.optionId,
+      );
+      formData.set(
+        `modifierOptionName_${index}`,
+        item.optionName,
+      );
+      formData.set(
+        `modifierQuantity_${index}`,
+        String(item.quantity),
+      );
+      formData.set(
+        `modifierPriceDelta_${index}`,
+        String(item.unitPrice),
+      );
+      formData.set(
+        `modifierInventoryItemId_${index}`,
+        item.inventoryItemId || "",
+      );
+      formData.set(
+        `modifierInventoryQuantity_${index}`,
+        String(item.inventoryQuantity),
+      );
+      formData.set(
+        `modifierTrackInventory_${index}`,
+        item.trackInventory ? "true" : "false",
+      );
+      formData.set(
+        `modifierInventoryBehavior_${index}`,
+        item.inventoryBehavior,
+      );
+    },
+  );
+
+  return bookingExecutionContext.run(
+    {
+      supabase,
+      returnResult: true,
+      requestOrigin:
+        String(requestOriginInput || "").trim() || null,
+      trustedPricing: {
+        subtotal: prepared.pricing.subtotal,
+        deliveryFee:
+          prepared.pricing.deliveryFee,
+        taxRate: prepared.pricing.taxRate,
+        taxAmount:
+          prepared.pricing.taxAmount,
+        totalAmount:
+          prepared.pricing.totalAmount,
+        depositAmount:
+          prepared.pricing.minimumDeposit,
+        balanceDue:
+          prepared.pricing.balanceDue,
+      },
+    },
+    () => createBookingActionInternal(formData),
   );
 }

@@ -1,4 +1,8 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 import { checkBookingItemAvailabilityAction } from "@/lib/booking/check-booking-item-availability";
+import { checkBookingItemAvailabilityCore } from "@/lib/booking/booking-availability-core";
+import { cleanupExpiredCustomerCheckoutHoldsBestEffort } from "@/lib/booking/inventory-integrity";
 
 export type BookingAvailabilityActor = "customer" | "cashier";
 
@@ -22,15 +26,28 @@ export async function validateBookingItemsAvailability(params: {
   eventStartTime?: string;
   eventEndTime?: string;
   bookingActor: BookingAvailabilityActor;
+  supabase?: SupabaseClient;
 }): Promise<BookingAvailabilityResult[]> {
   const results: BookingAvailabilityResult[] = [];
 
+  if (params.supabase) {
+    await cleanupExpiredCustomerCheckoutHoldsBestEffort(
+      params.supabase as any,
+      25,
+    );
+  }
+
   for (const item of params.items) {
     const productId = String(item.productId || "").trim();
-    const quantity = Math.max(1, Math.floor(Number(item.quantity || 1)));
+    const quantity = Math.max(
+      1,
+      Math.floor(Number(item.quantity || 1)),
+    );
 
     if (!productId) {
-      throw new Error("A selected product is missing its product ID.");
+      throw new Error(
+        "A selected product is missing its product ID.",
+      );
     }
 
     const formData = new FormData();
@@ -41,17 +58,27 @@ export async function validateBookingItemsAvailability(params: {
     formData.set("eventEndTime", params.eventEndTime || "");
     formData.set("bookingActor", params.bookingActor);
 
-    for (const optionId of Array.from(
-      new Set(
-        (item.selectedModifierGroupOptionIds || [])
-          .map((value) => String(value || "").trim())
-          .filter(Boolean),
-      ),
-    )) {
-      formData.append("selectedModifierGroupOptionIds", optionId);
+    for (
+      const optionId of Array.from(
+        new Set(
+          (item.selectedModifierGroupOptionIds || [])
+            .map((value) => String(value || "").trim())
+            .filter(Boolean),
+        ),
+      )
+    ) {
+      formData.append(
+        "selectedModifierGroupOptionIds",
+        optionId,
+      );
     }
 
-    const result = await checkBookingItemAvailabilityAction(formData);
+    const result = params.supabase
+      ? await checkBookingItemAvailabilityCore(
+          params.supabase,
+          formData,
+        )
+      : await checkBookingItemAvailabilityAction(formData);
 
     if (!result.available) {
       throw new Error(
@@ -66,7 +93,9 @@ export async function validateBookingItemsAvailability(params: {
     const reservedUntil = String(result.reservedUntil || "").trim();
 
     if (!reservedFrom || !reservedUntil) {
-      throw new Error("Failed to calculate the inventory reservation window.");
+      throw new Error(
+        "Failed to calculate the inventory reservation window.",
+      );
     }
 
     results.push({
@@ -74,7 +103,9 @@ export async function validateBookingItemsAvailability(params: {
       quantity,
       reservedFrom,
       reservedUntil,
-      components: Array.isArray(result.components) ? result.components : [],
+      components: Array.isArray(result.components)
+        ? result.components
+        : [],
     });
   }
 

@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -20,6 +21,7 @@ import {
 } from "react-native";
 
 import {
+  createNewBookingFromMobile,
   loadNewBookingAvailabilityFromMobile,
   loadNewBookingBootstrapFromMobile,
   loadNewBookingPricingFromMobile,
@@ -430,6 +432,20 @@ const [
   const [pricingLoading, setPricingLoading] = useState(false);
   const [pricingError, setPricingError] = useState("");
   const [pricingRefreshKey, setPricingRefreshKey] = useState(0);
+
+  const [creatingBooking, setCreatingBooking] =
+    useState(false);
+
+  const [createBookingError, setCreateBookingError] =
+    useState("");
+
+  const [bookingAttemptId] =
+    useState(
+      () =>
+        `mobile-${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2, 12)}`,
+    );
 
   const selectedCustomer =
     useMemo(
@@ -867,7 +883,15 @@ const [
             selectedProductsAvailable
           : step === 4
             ? modifierStepValid
-            : false;
+            : step === 5
+              ? Boolean(
+                  pricing &&
+                    pricing.ok === true &&
+                    !pricingLoading &&
+                    !pricingError &&
+                    !creatingBooking,
+                )
+              : false;
 
   const updateNewCustomer = (
     key: keyof NewCustomerDraft,
@@ -900,7 +924,7 @@ const [
     onClose?.();
   };
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     if (!canContinue) {
       return;
     }
@@ -911,19 +935,143 @@ const [
     }
 
     if (step === 2) {
-  setStep(3);
-  return;
-}
+      setStep(3);
+      return;
+    }
 
-if (step === 3) {
-  setStep(4);
-  return;
-}
+    if (step === 3) {
+      setStep(4);
+      return;
+    }
 
-if (step === 4) {
-  setStep(5);
-  return;
-}
+    if (step === 4) {
+      setCreateBookingError("");
+      setStep(5);
+      return;
+    }
+
+    if (step !== 5 || !pricing) {
+      return;
+    }
+
+    const modifiers =
+      Object.entries(
+        selectedModifierQuantities,
+      ).flatMap(
+        ([key, quantities]) => {
+          const separator =
+            key.indexOf(":");
+
+          if (separator <= 0) {
+            return [];
+          }
+
+          const productId =
+            key.slice(0, separator);
+
+          const groupId =
+            key.slice(separator + 1);
+
+          return Object.entries(
+            quantities,
+          )
+            .filter(
+              ([, quantity]) =>
+                Number(quantity || 0) > 0,
+            )
+            .map(
+              ([optionId, quantity]) => ({
+                productId,
+                groupId,
+                optionId,
+                quantity:
+                  Math.max(
+                    1,
+                    Number(quantity || 1),
+                  ),
+              }),
+            );
+        },
+      );
+
+    setCreatingBooking(true);
+    setCreateBookingError("");
+
+    const result =
+      await createNewBookingFromMobile({
+        bookingAttemptId,
+        existingCustomerId:
+          customerMode === "existing"
+            ? selectedCustomerId
+            : null,
+        newCustomer:
+          customerMode === "new"
+            ? {
+                firstName:
+                  newCustomer.firstName,
+                lastName:
+                  newCustomer.lastName,
+                phone:
+                  newCustomer.phone,
+                email:
+                  newCustomer.email,
+              }
+            : null,
+        eventDate: event.eventDate,
+        eventStartTime:
+          event.eventStartTime,
+        eventEndTime:
+          event.eventEndTime,
+        setupAddress:
+          event.setupAddress,
+        setupCity:
+          event.setupCity,
+        setupState:
+          event.setupState || "CA",
+        setupZip:
+          event.setupZip,
+        products:
+          selectedProductIds.map(
+            (productId) => ({
+              productId,
+              quantity: 1,
+            }),
+          ),
+        modifiers,
+      });
+
+    setCreatingBooking(false);
+
+    if (!result.success) {
+      setCreateBookingError(
+        result.error ||
+          "Could not create booking.",
+      );
+      return;
+    }
+
+    const emailMessage =
+      result.data.completionEmailStatus === "sent"
+        ? "Customer completion link was sent."
+        : result.data.completionEmailStatus === "failed"
+          ? "Booking was created, but the customer completion email failed."
+          : "Booking was created. Customer completion email is not configured.";
+
+    Alert.alert(
+      "Booking created",
+      `Booking #${result.data.bookingId.slice(
+        0,
+        8,
+      )}\n\n${emailMessage}`,
+      [
+        {
+          text: "Done",
+          onPress: () => {
+            onClose?.();
+          },
+        },
+      ],
+    );
   };
 
   if (loading) {
@@ -1194,6 +1342,19 @@ if (step === 4) {
             />
           ) : null}
 
+          {step === 5 &&
+          createBookingError ? (
+            <View style={styles.errorCard}>
+              <Text style={styles.errorTitle}>
+                Could not create booking
+              </Text>
+
+              <Text style={styles.errorText}>
+                {createBookingError}
+              </Text>
+            </View>
+          ) : null}
+
           <View
             style={styles.bottomSpacer}
           />
@@ -1228,7 +1389,9 @@ if (step === 4) {
                 ? styles.continueButtonDisabled
                 : null,
             ]}
-            onPress={handleContinue}
+            onPress={() => {
+              void handleContinue();
+            }}
           >
             <Text
               style={[
@@ -1238,7 +1401,11 @@ if (step === 4) {
                   : null,
               ]}
             >
-              {step === 5 ? "Create Booking" : "Continue"}
+              {step === 5
+                ? creatingBooking
+                  ? "Creating..."
+                  : "Create Booking"
+                : "Continue"}
             </Text>
           </Pressable>
         </View>

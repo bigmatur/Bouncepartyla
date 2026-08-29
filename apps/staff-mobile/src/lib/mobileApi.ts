@@ -400,3 +400,79 @@ export async function loadNewBookingAvailabilityFromMobile(params: {
     data: result.data.data,
   };
 }
+
+
+export type MobileCreateBookingResult = {
+  bookingId: string;
+  reusedExistingBooking: boolean;
+  completionUrl: string | null;
+  completionEmailStatus:
+    | "sent"
+    | "not_configured"
+    | "failed";
+  status: string;
+  totalAmount: number;
+  balanceDue: number;
+};
+
+export async function createNewBookingFromMobile(params: {
+  bookingAttemptId: string;
+  existingCustomerId?: string | null;
+  newCustomer?: {
+    firstName: string;
+    lastName: string;
+    phone: string;
+    email: string;
+  } | null;
+  eventDate: string;
+  eventStartTime: string;
+  eventEndTime: string;
+  setupAddress: string;
+  setupCity: string;
+  setupState: string;
+  setupZip: string;
+  products: Array<{
+    productId: string;
+    quantity: number;
+  }>;
+  modifiers: Array<{
+    productId: string;
+    groupId: string;
+    optionId: string;
+    quantity: number;
+  }>;
+}) {
+  const result =
+    await authenticatedFetch<{
+      success: true;
+      data: MobileCreateBookingResult;
+    }>(
+      "/api/admin/mobile/bookings/new/create",
+      {
+        method: "POST",
+        body: JSON.stringify(params),
+      },
+    );
+
+  if (!result.success) {
+    return {
+      success: false as const,
+      error:
+        result.error ||
+        "Could not create booking.",
+    };
+  }
+
+  if (!result.data?.data) {
+    return {
+      success: false as const,
+      error:
+        "Created booking was not returned by the server.",
+    };
+  }
+
+  return {
+    success: true as const,
+    data: result.data.data,
+  };
+}
