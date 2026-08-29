@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { getGoogleDrivingDistanceMiles } from "@/lib/maps/google-distance";
 
@@ -10,6 +11,7 @@ type DeliveryInput = {
   destinationLat?: number | null;
   destinationLng?: number | null;
   manualDistanceMiles?: number | null;
+  supabase?: SupabaseClient;
 };
 
 type DeliveryMode = "per_mile" | "miles" | "zones" | "radius_zones" | "zip_zones";
@@ -229,9 +231,9 @@ function getPerMileSettings(settings: DeliverySettings) {
   };
 }
 
-async function getDeliverySettings(): Promise<DeliverySettings> {
-  const supabase = await createClient();
-
+async function getDeliverySettings(
+  supabase: SupabaseClient,
+): Promise<DeliverySettings> {
   const { data: businessRows, error: businessError } = await supabase
     .from("business_settings")
     .select("*")
@@ -345,9 +347,10 @@ export async function calculateDeliveryFee({
   destinationLat,
   destinationLng,
   manualDistanceMiles,
+  supabase: providedSupabase,
 }: DeliveryInput): Promise<DeliveryResult> {
-  const supabase = await createClient();
-  const settings = await getDeliverySettings();
+  const supabase = providedSupabase ?? (await createClient());
+  const settings = await getDeliverySettings(supabase);
   const mode = normalizeMode(settings.delivery_pricing_mode);
   const perMileSettings = getPerMileSettings(settings);
 

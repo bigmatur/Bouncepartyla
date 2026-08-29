@@ -2330,45 +2330,51 @@ function ReviewStep({
         <Text style={styles.reviewSectionTitle}>Products</Text>
         {selectedProducts.map((product) => {
           const line = pricing?.products.find((item) => item.productId === product.id);
-          return (
-            <View key={product.id} style={styles.reviewRow}>
-              <Text style={[styles.reviewValue, styles.reviewValueFlexible]}>
-                {String(product.name || "Product")}
-              </Text>
-              <Text style={styles.reviewValue}>
-                {line ? reviewMoney(line.lineTotal) : "—"}
-              </Text>
-            </View>
+          const productOptions = selectedOptions.filter(
+            (item: any) => item.productId === product.id,
           );
-        })}
 
-        {selectedOptions.length > 0 ? (
-          <>
-            <View style={styles.reviewDivider} />
-            {selectedOptions.map((item: any) => {
-              const line = pricing?.modifiers.find(
-                (pricingItem) =>
-                  pricingItem.productId === item.productId &&
-                  pricingItem.groupId === item.groupId &&
-                  pricingItem.optionId === item.optionId,
-              );
-              return (
-                <View key={`${item.productId}:${item.groupId}:${item.optionId}`} style={styles.reviewOptionRow}>
-                  <View style={styles.reviewValueFlexible}>
-                    <Text style={styles.reviewOptionText}>{item.productName}</Text>
-                    <Text style={styles.reviewMuted}>
+          return (
+            <View key={product.id}>
+              <View style={styles.reviewRow}>
+                <Text style={[styles.reviewValue, styles.reviewValueFlexible]}>
+                  {String(product.name || "Product")}
+                </Text>
+                <Text style={styles.reviewValue}>
+                  {line ? reviewMoney(line.lineTotal) : "—"}
+                </Text>
+              </View>
+
+              {productOptions.map((item: any) => {
+                const optionLine = pricing?.modifiers.find(
+                  (pricingItem) =>
+                    pricingItem.productId === item.productId &&
+                    pricingItem.groupId === item.groupId &&
+                    pricingItem.optionId === item.optionId,
+                );
+
+                return (
+                  <View
+                    key={`${item.productId}:${item.groupId}:${item.optionId}`}
+                    style={styles.reviewOptionRow}
+                  >
+                    <Text style={[styles.reviewMuted, styles.reviewValueFlexible]}>
                       {item.groupName}: {item.optionName}
                       {item.quantity > 1 ? ` × ${item.quantity}` : ""}
                     </Text>
+                    <Text style={styles.reviewValue}>
+                      {optionLine ? reviewMoney(optionLine.lineTotal) : "—"}
+                    </Text>
                   </View>
-                  <Text style={styles.reviewValue}>
-                    {line ? reviewMoney(line.lineTotal) : "—"}
-                  </Text>
-                </View>
-              );
-            })}
-          </>
-        ) : null}
+                );
+              })}
+
+              {productOptions.length > 0 ? (
+                <View style={styles.reviewDivider} />
+              ) : null}
+            </View>
+          );
+        })}
       </View>
 
       <View style={styles.reviewSection}>

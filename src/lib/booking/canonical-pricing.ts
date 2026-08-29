@@ -73,6 +73,7 @@ export async function calculateCanonicalBookingPricing(input: {
       destinationLat: input.destinationLat ?? null,
       destinationLng: input.destinationLng ?? null,
       manualDistanceMiles: input.manualDistanceMiles ?? null,
+      supabase: input.supabase,
     });
 
     deliveryFee = money(delivery.deliveryFee);
