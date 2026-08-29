@@ -5,7 +5,11 @@ import {
   getUnifiedAccess,
   isStaffRole,
 } from "@/lib/auth/access";
-import { getAdminInventorySnapshotCore } from "@/lib/booking/booking-availability-core";
+import {
+  checkBookingItemAvailabilityCore,
+  getAdminInventorySnapshotCore,
+} from "@/lib/booking/booking-availability-core";
+import { loadAdminNewBookingBootstrap } from "@/lib/booking/admin-new-booking-bootstrap";
 
 export const dynamic = "force-dynamic";
 
@@ -143,6 +147,9 @@ export async function POST(request: Request) {
         .filter(Boolean)
     : [];
 
+  const includeModifierAvailability =
+    body?.includeModifierAvailability === true;
+
   const formData = new FormData();
 
   formData.set("eventDate", eventDate);
@@ -161,9 +168,144 @@ export async function POST(request: Request) {
         formData,
       );
 
+    if (!includeModifierAvailability) {
+      return NextResponse.json({
+        success: true,
+        data: snapshot,
+      });
+    }
+
+    /*
+     * Modifier inventory metadata is resolved on the server from the same
+     * bootstrap source used by Admin New Booking. The native client only
+     * supplies product/date/time inputs and never supplies trusted inventory
+     * mappings.
+     */
+    const bootstrap =
+      await loadAdminNewBookingBootstrap(
+        supabase,
+      );
+
+    const modifierAvailabilityByProductId:
+      Record<string, unknown[]> = {};
+
+    for (const productId of productIds) {
+      const groups = (
+        bootstrap.modifierGroups || []
+      ).filter(
+        (group: any) =>
+          group.productId === productId &&
+          group.active !== false,
+      );
+
+      const options = groups.flatMap(
+        (group: any) =>
+          (group.options || []).filter(
+            (option: any) =>
+              option.active !== false,
+          ),
+      );
+
+      if (options.length === 0) {
+        modifierAvailabilityByProductId[
+          productId
+        ] = [];
+        continue;
+      }
+
+      const itemFormData = new FormData();
+
+      itemFormData.set(
+        "productId",
+        productId,
+      );
+      itemFormData.set("quantity", "1");
+      itemFormData.set(
+        "eventDate",
+        eventDate,
+      );
+      itemFormData.set(
+        "eventStartTime",
+        eventStartTime,
+      );
+      itemFormData.set(
+        "eventEndTime",
+        eventEndTime,
+      );
+      itemFormData.set(
+        "bookingActor",
+        "cashier",
+      );
+      itemFormData.set(
+        "modifierCount",
+        String(options.length),
+      );
+
+      options.forEach(
+        (option: any, index: number) => {
+          itemFormData.set(
+            `modifierOptionId_${index}`,
+            String(option.id || ""),
+          );
+          itemFormData.set(
+            `modifierOptionName_${index}`,
+            String(
+              option.name || "Option",
+            ),
+          );
+          itemFormData.set(
+            `modifierInventoryItemId_${index}`,
+            String(
+              option.inventoryItemId || "",
+            ),
+          );
+          itemFormData.set(
+            `modifierInventoryQuantity_${index}`,
+            String(
+              Number(
+                option.inventoryQuantity ||
+                  1,
+              ),
+            ),
+          );
+          itemFormData.set(
+            `modifierTrackInventory_${index}`,
+            option.trackInventory ===
+              false
+              ? "false"
+              : "true",
+          );
+          itemFormData.set(
+            `modifierInventoryBehavior_${index}`,
+            option.inventoryBehavior ===
+              "consumable"
+              ? "consumable"
+              : "reusable",
+          );
+        },
+      );
+
+      const result =
+        await checkBookingItemAvailabilityCore(
+          supabase,
+          itemFormData,
+        );
+
+      modifierAvailabilityByProductId[
+        productId
+      ] = Array.isArray(
+        result.modifierAvailability,
+      )
+        ? result.modifierAvailability
+        : [];
+    }
+
     return NextResponse.json({
       success: true,
-      data: snapshot,
+      data: {
+        ...snapshot,
+        modifierAvailabilityByProductId,
+      },
     });
   } catch (error) {
     const message =

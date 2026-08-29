@@ -236,10 +236,26 @@ export type MobileNewBookingAvailabilityItem = {
   message: string | null;
 };
 
+export type MobileNewBookingModifierAvailabilityItem = {
+  optionId: string;
+  optionName: string;
+  inventoryItemId: string;
+  inventoryItemName: string;
+  trackingType: string;
+  quantityNeeded: number;
+  quantityAvailable: number;
+  available: boolean;
+  reason: string | null;
+};
+
 export type MobileNewBookingAvailabilitySnapshot = {
   ok: boolean;
   message: string | null;
   items: MobileNewBookingAvailabilityItem[];
+  modifierAvailabilityByProductId?: Record<
+    string,
+    MobileNewBookingModifierAvailabilityItem[]
+  >;
 };
 
 export async function loadNewBookingAvailabilityFromMobile(params: {
@@ -247,6 +263,7 @@ export async function loadNewBookingAvailabilityFromMobile(params: {
   eventStartTime: string;
   eventEndTime: string;
   productIds: string[];
+  includeModifierAvailability?: boolean;
 }) {
   const result = await authenticatedFetch<{
     success: true;
@@ -260,6 +277,8 @@ export async function loadNewBookingAvailabilityFromMobile(params: {
         eventStartTime: params.eventStartTime,
         eventEndTime: params.eventEndTime,
         productIds: params.productIds,
+        includeModifierAvailability:
+          params.includeModifierAvailability === true,
       }),
     },
   );

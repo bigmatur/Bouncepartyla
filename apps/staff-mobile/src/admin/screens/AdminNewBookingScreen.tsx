@@ -23,8 +23,11 @@ import {
   loadNewBookingAvailabilityFromMobile,
   loadNewBookingBootstrapFromMobile,
   type MobileNewBookingAvailabilityItem,
+  type MobileNewBookingModifierAvailabilityItem,
   type MobileNewBookingBootstrap,
   type MobileNewBookingCustomer,
+  type MobileNewBookingModifierGroup,
+  type MobileNewBookingModifierOption,
   type MobileNewBookingProduct,
 } from "../../lib/mobileApi";
 
@@ -343,6 +346,31 @@ const [
   setAvailabilityError,
 ] = useState("");
 
+const [
+  selectedModifierQuantities,
+  setSelectedModifierQuantities,
+] = useState<Record<string, Record<string, number>>>({});
+
+const [
+  modifierAvailabilityByProductId,
+  setModifierAvailabilityByProductId,
+] = useState<
+  Record<
+    string,
+    MobileNewBookingModifierAvailabilityItem[]
+  >
+>({});
+
+const [
+  modifierAvailabilityLoading,
+  setModifierAvailabilityLoading,
+] = useState(false);
+
+const [
+  modifierAvailabilityError,
+  setModifierAvailabilityError,
+] = useState("");
+
   const loadBootstrap =
     useCallback(async () => {
       setLoading(true);
@@ -547,6 +575,142 @@ const [
     step,
   ]);
 
+  useEffect(() => {
+    const selectedProductIdSet = new Set(selectedProductIds);
+
+    setSelectedModifierQuantities((current) => {
+      let changed = false;
+      const next: Record<string, Record<string, number>> = {};
+
+      for (const [key, quantities] of Object.entries(current)) {
+        const productId = key.split(":", 1)[0];
+
+        if (selectedProductIdSet.has(productId)) {
+          next[key] = quantities;
+        } else {
+          changed = true;
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [selectedProductIds]);
+
+  useEffect(() => {
+    if (
+      step !== 4 ||
+      !validDate(event.eventDate) ||
+      !validEventTimes(
+        event.eventStartTime,
+        event.eventEndTime,
+      ) ||
+      selectedProductIds.length === 0
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    setModifierAvailabilityLoading(true);
+    setModifierAvailabilityError("");
+    setModifierAvailabilityByProductId({});
+
+    void (async () => {
+      const result =
+        await loadNewBookingAvailabilityFromMobile({
+          eventDate: event.eventDate,
+          eventStartTime:
+            event.eventStartTime,
+          eventEndTime:
+            event.eventEndTime,
+          productIds: selectedProductIds,
+          includeModifierAvailability: true,
+        });
+
+      if (cancelled) {
+        return;
+      }
+
+      if (!result.success) {
+        setModifierAvailabilityError(
+          result.error ||
+            "Could not check option availability.",
+        );
+        setModifierAvailabilityLoading(false);
+        return;
+      }
+
+      const next =
+        result.data
+          .modifierAvailabilityByProductId ||
+        {};
+
+      setModifierAvailabilityByProductId(
+        next,
+      );
+
+      setSelectedModifierQuantities(
+        (current) => {
+          let changed = false;
+          const updated: Record<
+            string,
+            Record<string, number>
+          > = {};
+
+          for (const [key, quantities] of Object.entries(
+            current,
+          )) {
+            const [productId] = key.split(":");
+            const productAvailability =
+              next[productId] || [];
+            const nextQuantities: Record<
+              string,
+              number
+            > = {};
+
+            for (const [
+              optionId,
+              quantity,
+            ] of Object.entries(quantities)) {
+              const availability =
+                productAvailability.find(
+                  (item) =>
+                    item.optionId === optionId,
+                );
+
+              if (
+                availability &&
+                availability.available === false
+              ) {
+                changed = true;
+                continue;
+              }
+
+              nextQuantities[optionId] =
+                quantity;
+            }
+
+            updated[key] = nextQuantities;
+          }
+
+          return changed ? updated : current;
+        },
+      );
+
+      setModifierAvailabilityLoading(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    event.eventDate,
+    event.eventEndTime,
+    event.eventStartTime,
+    selectedProductIds,
+    step,
+  ]);
+
   const selectedProductsAvailable =
     useMemo(
       () =>
@@ -563,6 +727,57 @@ const [
       ],
     );
 
+  const activeModifierGroupsForSelectedProducts =
+    useMemo(
+      () =>
+        (bootstrap?.modifierGroups || [])
+          .filter(
+            (group) =>
+              selectedProductIds.includes(group.productId) &&
+              group.active !== false,
+          )
+          .sort(
+            (a, b) =>
+              Number(a.sortOrder || 0) -
+              Number(b.sortOrder || 0),
+          ),
+      [bootstrap?.modifierGroups, selectedProductIds],
+    );
+
+  const modifierStepValid =
+    !modifierAvailabilityLoading &&
+    !modifierAvailabilityError &&
+    activeModifierGroupsForSelectedProducts
+      .filter((group) => group.required === true)
+      .every((group) => {
+        const key = `${group.productId}:${group.id}`;
+        const quantities =
+          selectedModifierQuantities[key] || {};
+
+        return Object.entries(quantities).some(
+          ([optionId, quantity]) => {
+            if (Number(quantity || 0) <= 0) {
+              return false;
+            }
+
+            const availability =
+              (
+                modifierAvailabilityByProductId[
+                  group.productId
+                ] || []
+              ).find(
+                (item) =>
+                  item.optionId === optionId,
+              );
+
+            return (
+              !availability ||
+              availability.available === true
+            );
+          },
+        );
+      });
+
   const canContinue =
     step === 1
       ? customerStepValid
@@ -572,7 +787,9 @@ const [
           ? !availabilityLoading &&
             !availabilityError &&
             selectedProductsAvailable
-          : false;
+          : step === 4
+            ? modifierStepValid
+            : false;
 
   const updateNewCustomer = (
     key: keyof NewCustomerDraft,
@@ -621,7 +838,12 @@ const [
 }
 
 if (step === 3) {
-  // Step 4 — Options will be connected next.
+  setStep(4);
+  return;
+}
+
+if (step === 4) {
+  // Step 5 — Review will be connected after modifier inventory/pricing.
   return;
 }
   };
@@ -850,6 +1072,29 @@ if (step === 3) {
       }
     />
   ) : null}
+
+          {step === 4 ? (
+            <OptionsStep
+              products={bootstrap.products}
+              modifierGroups={bootstrap.modifierGroups}
+              selectedProductIds={selectedProductIds}
+              selectedModifierQuantities={
+                selectedModifierQuantities
+              }
+              setSelectedModifierQuantities={
+                setSelectedModifierQuantities
+              }
+              modifierAvailabilityByProductId={
+                modifierAvailabilityByProductId
+              }
+              modifierAvailabilityLoading={
+                modifierAvailabilityLoading
+              }
+              modifierAvailabilityError={
+                modifierAvailabilityError
+              }
+            />
+          ) : null}
 
           <View
             style={styles.bottomSpacer}
@@ -2161,6 +2406,834 @@ function FieldLabel({
   );
 }
 
+
+function OptionsStep({
+  products,
+  modifierGroups,
+  selectedProductIds,
+  selectedModifierQuantities,
+  setSelectedModifierQuantities,
+  modifierAvailabilityByProductId,
+  modifierAvailabilityLoading,
+  modifierAvailabilityError,
+}: {
+  products: MobileNewBookingProduct[];
+  modifierGroups: MobileNewBookingModifierGroup[];
+  selectedProductIds: string[];
+  selectedModifierQuantities: Record<
+    string,
+    Record<string, number>
+  >;
+  setSelectedModifierQuantities: React.Dispatch<
+    React.SetStateAction<
+      Record<string, Record<string, number>>
+    >
+  >;
+  modifierAvailabilityByProductId: Record<
+    string,
+    MobileNewBookingModifierAvailabilityItem[]
+  >;
+  modifierAvailabilityLoading: boolean;
+  modifierAvailabilityError: string;
+}) {
+  const selectedProducts = useMemo(
+    () =>
+      selectedProductIds
+        .map((productId) =>
+          products.find(
+            (product) => product.id === productId,
+          ),
+        )
+        .filter(
+          (
+            product,
+          ): product is MobileNewBookingProduct =>
+            Boolean(product),
+        ),
+    [products, selectedProductIds],
+  );
+
+  const groupsForProduct = useCallback(
+    (productId: string) =>
+      modifierGroups
+        .filter(
+          (group) =>
+            group.productId === productId &&
+            group.active !== false,
+        )
+        .sort(
+          (a, b) =>
+            Number(a.sortOrder || 0) -
+            Number(b.sortOrder || 0),
+        ),
+    [modifierGroups],
+  );
+
+  const updateOptionQuantity = ({
+    productId,
+    group,
+    option,
+    quantity,
+  }: {
+    productId: string;
+    group: MobileNewBookingModifierGroup;
+    option: MobileNewBookingModifierOption;
+    quantity: number;
+  }) => {
+    const key = `${productId}:${group.id}`;
+    const safeQuantity = Math.max(
+      0,
+      Math.floor(Number(quantity || 0)),
+    );
+
+    setSelectedModifierQuantities(
+      (current) => {
+        const currentGroup = {
+          ...(current[key] || {}),
+        };
+        const selectionType =
+          group.selectionType || "single";
+
+        if (selectionType === "single") {
+          return {
+            ...current,
+            [key]:
+              safeQuantity > 0
+                ? { [option.id]: 1 }
+                : {},
+          };
+        }
+
+        if (safeQuantity > 0) {
+          currentGroup[option.id] =
+            safeQuantity;
+        } else {
+          delete currentGroup[option.id];
+        }
+
+        return {
+          ...current,
+          [key]: currentGroup,
+        };
+      },
+    );
+  };
+
+  const toggleOption = ({
+    productId,
+    group,
+    option,
+  }: {
+    productId: string;
+    group: MobileNewBookingModifierGroup;
+    option: MobileNewBookingModifierOption;
+  }) => {
+    if (option.active === false) {
+      return;
+    }
+
+    const key = `${productId}:${group.id}`;
+    const quantities =
+      selectedModifierQuantities[key] || {};
+    const currentQuantity = Math.max(
+      0,
+      Number(quantities[option.id] || 0),
+    );
+    const selectionType =
+      group.selectionType || "single";
+
+    if (selectionType === "single") {
+      updateOptionQuantity({
+        productId,
+        group,
+        option,
+        quantity:
+          currentQuantity > 0 ? 0 : 1,
+      });
+      return;
+    }
+
+    if (currentQuantity > 0) {
+      updateOptionQuantity({
+        productId,
+        group,
+        option,
+        quantity: 0,
+      });
+      return;
+    }
+
+    const selectedTotal = Object.values(
+      quantities,
+    ).reduce(
+      (sum, quantity) =>
+        sum +
+        Math.max(
+          0,
+          Number(quantity || 0),
+        ),
+      0,
+    );
+
+    const maxTotal =
+      group.maxTotalQuantity == null
+        ? null
+        : Math.max(
+            1,
+            Number(group.maxTotalQuantity),
+          );
+
+    if (
+      maxTotal != null &&
+      selectedTotal >= maxTotal
+    ) {
+      return;
+    }
+
+    updateOptionQuantity({
+      productId,
+      group,
+      option,
+      quantity: 1,
+    });
+  };
+
+  const changeQuantity = ({
+    productId,
+    group,
+    option,
+    delta,
+  }: {
+    productId: string;
+    group: MobileNewBookingModifierGroup;
+    option: MobileNewBookingModifierOption;
+    delta: number;
+  }) => {
+    const key = `${productId}:${group.id}`;
+    const quantities =
+      selectedModifierQuantities[key] || {};
+    const currentQuantity = Math.max(
+      0,
+      Number(quantities[option.id] || 0),
+    );
+    const selectedTotal = Object.values(
+      quantities,
+    ).reduce(
+      (sum, quantity) =>
+        sum +
+        Math.max(
+          0,
+          Number(quantity || 0),
+        ),
+      0,
+    );
+
+    const maxTotal =
+      group.maxTotalQuantity == null
+        ? null
+        : Math.max(
+            1,
+            Number(group.maxTotalQuantity),
+          );
+
+    let nextQuantity = Math.max(
+      0,
+      currentQuantity + delta,
+    );
+
+    if (
+      delta > 0 &&
+      maxTotal != null
+    ) {
+      const remaining = Math.max(
+        0,
+        maxTotal - selectedTotal,
+      );
+
+      nextQuantity =
+        currentQuantity +
+        Math.min(delta, remaining);
+    }
+
+    updateOptionQuantity({
+      productId,
+      group,
+      option,
+      quantity: nextQuantity,
+    });
+  };
+
+  const hasAnyGroups =
+    selectedProducts.some(
+      (product) =>
+        groupsForProduct(product.id)
+          .length > 0,
+    );
+
+  return (
+    <>
+      <Text style={styles.stepTitle}>
+        Options
+      </Text>
+
+      <Text style={styles.stepDescription}>
+        Choose the options for the selected
+        products. Required groups must be
+        completed before you continue.
+      </Text>
+
+      {modifierAvailabilityLoading ? (
+        <View style={styles.availabilityStatusCard}>
+          <ActivityIndicator
+            size="small"
+            color={COLORS.gold}
+          />
+          <Text style={styles.availabilityStatusText}>
+            Checking option availability...
+          </Text>
+        </View>
+      ) : null}
+
+      {modifierAvailabilityError ? (
+        <View
+          style={[
+            styles.availabilityStatusCard,
+            styles.availabilityStatusCardError,
+          ]}
+        >
+          <Text
+            style={[
+              styles.availabilityStatusText,
+              styles.availabilityStatusTextError,
+            ]}
+          >
+            {modifierAvailabilityError}
+          </Text>
+        </View>
+      ) : null}
+
+      {!hasAnyGroups ? (
+        <View style={styles.optionsEmptyCard}>
+          <Text style={styles.optionsEmptyTitle}>
+            No options required
+          </Text>
+          <Text style={styles.optionsEmptyText}>
+            The selected products do not have
+            active option groups.
+          </Text>
+        </View>
+      ) : null}
+
+      {selectedProducts.map(
+        (product) => {
+          const groups =
+            groupsForProduct(product.id);
+
+          if (groups.length === 0) {
+            return null;
+          }
+
+          return (
+            <View
+              key={product.id}
+              style={styles.optionsProductSection}
+            >
+              <View
+                style={styles.optionsProductHeader}
+              >
+                <Text
+                  style={styles.optionsProductLabel}
+                >
+                  Product
+                </Text>
+                <Text
+                  style={styles.optionsProductTitle}
+                >
+                  {String(
+                    product.name ||
+                      "Product",
+                  )}
+                </Text>
+              </View>
+
+              {groups.map((group) => {
+                const key =
+                  `${product.id}:${group.id}`;
+                const quantities =
+                  selectedModifierQuantities[
+                    key
+                  ] || {};
+                const selectionType =
+                  group.selectionType ||
+                  "single";
+                const isSingle =
+                  selectionType ===
+                  "single";
+                const selectedTotal =
+                  Object.values(
+                    quantities,
+                  ).reduce(
+                    (sum, quantity) =>
+                      sum +
+                      Math.max(
+                        0,
+                        Number(
+                          quantity || 0,
+                        ),
+                      ),
+                    0,
+                  );
+                const maxTotal =
+                  group.maxTotalQuantity ==
+                  null
+                    ? null
+                    : Math.max(
+                        1,
+                        Number(
+                          group.maxTotalQuantity,
+                        ),
+                      );
+
+                return (
+                  <View
+                    key={group.id}
+                    style={
+                      styles.optionGroupCard
+                    }
+                  >
+                    <View
+                      style={
+                        styles.optionGroupHeader
+                      }
+                    >
+                      <View
+                        style={
+                          styles.optionGroupTitleRow
+                        }
+                      >
+                        <Text
+                          style={
+                            styles.optionGroupTitle
+                          }
+                        >
+                          {String(
+                            group.name ||
+                              "Options",
+                          )}
+                        </Text>
+
+                        <View
+                          style={[
+                            styles.optionBadge,
+                            group.required
+                              ? styles.optionBadgeRequired
+                              : styles.optionBadgeOptional,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.optionBadgeText,
+                              group.required
+                                ? styles.optionBadgeTextRequired
+                                : styles.optionBadgeTextOptional,
+                            ]}
+                          >
+                            {group.required
+                              ? "Required"
+                              : "Optional"}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {group.description ? (
+                        <Text
+                          style={
+                            styles.optionGroupDescription
+                          }
+                        >
+                          {group.description}
+                        </Text>
+                      ) : null}
+
+                      {!isSingle ? (
+                        <Text
+                          style={
+                            styles.optionGroupCounter
+                          }
+                        >
+                          {selectedTotal}
+                          {maxTotal != null
+                            ? ` of ${maxTotal}`
+                            : ""}{" "}
+                          selected
+                        </Text>
+                      ) : null}
+                    </View>
+
+                    {(group.options || [])
+                      .filter(
+                        (option) =>
+                          option.active !==
+                          false,
+                      )
+                      .map((option) => {
+                        const quantity =
+                          Math.max(
+                            0,
+                            Number(
+                              quantities[
+                                option.id
+                              ] || 0,
+                            ),
+                          );
+                        const selected =
+                          quantity > 0;
+                        const price =
+                          Number(
+                            option.priceDelta ||
+                              0,
+                          );
+                        const availability =
+                          (
+                            modifierAvailabilityByProductId[
+                              product.id
+                            ] || []
+                          ).find(
+                            (item) =>
+                              item.optionId ===
+                              option.id,
+                          );
+
+                        const optionUnavailable =
+                          modifierAvailabilityLoading ||
+                          Boolean(
+                            modifierAvailabilityError,
+                          ) ||
+                          availability?.available ===
+                            false;
+
+                        const inventoryPerSelection =
+                          Math.max(
+                            1,
+                            Number(
+                              option.inventoryQuantity ||
+                                availability?.quantityNeeded ||
+                                1,
+                            ),
+                          );
+
+                        const sameInventoryDemand =
+                          option.inventoryItemId
+                            ? modifierGroups.reduce(
+                                (
+                                  total,
+                                  demandGroup,
+                                ) => {
+                                  if (
+                                    !selectedProductIds.includes(
+                                      demandGroup.productId,
+                                    ) ||
+                                    demandGroup.active === false
+                                  ) {
+                                    return total;
+                                  }
+
+                                  const demandKey =
+                                    `${demandGroup.productId}:${demandGroup.id}`;
+                                  const demandQuantities =
+                                    selectedModifierQuantities[
+                                      demandKey
+                                    ] || {};
+
+                                  return (
+                                    total +
+                                    (
+                                      demandGroup.options || []
+                                    )
+                                      .filter(
+                                        (otherOption) =>
+                                          otherOption.active !==
+                                            false &&
+                                          otherOption.inventoryItemId ===
+                                            option.inventoryItemId &&
+                                          !(
+                                            demandGroup.productId ===
+                                              product.id &&
+                                            demandGroup.id ===
+                                              group.id &&
+                                            otherOption.id ===
+                                              option.id
+                                          ),
+                                      )
+                                      .reduce(
+                                        (
+                                          optionTotal,
+                                          otherOption,
+                                        ) =>
+                                          optionTotal +
+                                          Math.max(
+                                            0,
+                                            Number(
+                                              demandQuantities[
+                                                otherOption.id
+                                              ] || 0,
+                                            ),
+                                          ) *
+                                            Math.max(
+                                              1,
+                                              Number(
+                                                otherOption.inventoryQuantity ||
+                                                  1,
+                                              ),
+                                            ),
+                                        0,
+                                      )
+                                  );
+                                },
+                                0,
+                              )
+                            : 0;
+
+                        const stockMaximum =
+                          availability &&
+                          option.inventoryItemId
+                            ? Math.max(
+                                0,
+                                Math.floor(
+                                  Math.max(
+                                    0,
+                                    Number(
+                                      availability.quantityAvailable ||
+                                        0,
+                                    ) -
+                                      sameInventoryDemand,
+                                  ) /
+                                    inventoryPerSelection,
+                                ),
+                              )
+                            : null;
+
+                        const stockLimitReached =
+                          stockMaximum != null &&
+                          quantity >= stockMaximum;
+
+                        const groupLimitReached =
+                          !isSingle &&
+                          !selected &&
+                          maxTotal != null &&
+                          selectedTotal >=
+                            maxTotal;
+
+                        const optionDisabled =
+                          optionUnavailable ||
+                          groupLimitReached;
+
+                        const canIncrease =
+                          !isSingle &&
+                          !optionUnavailable &&
+                          (maxTotal == null ||
+                            selectedTotal <
+                              maxTotal) &&
+                          (stockMaximum == null ||
+                            !stockLimitReached);
+
+                        const availabilityLabel =
+                          modifierAvailabilityLoading
+                            ? "Checking..."
+                            : modifierAvailabilityError
+                              ? "Availability unavailable"
+                              : availability?.available === false
+                                ? "Unavailable"
+                                : stockMaximum != null
+                                  ? `Available · ${stockMaximum} remaining`
+                                  : "Available";
+
+                        return (
+                          <View
+                            key={option.id}
+                            style={[
+                              styles.optionCard,
+                              selected
+                                ? styles.optionCardSelected
+                                : null,
+                              optionDisabled
+                                ? styles.optionCardDisabled
+                                : null,
+                            ]}
+                          >
+                            <Pressable
+                              disabled={
+                                optionDisabled
+                              }
+                              style={
+                                styles.optionCardMain
+                              }
+                              onPress={() =>
+                                toggleOption({
+                                  productId:
+                                    product.id,
+                                  group,
+                                  option,
+                                })
+                              }
+                            >
+                              <View
+                                style={[
+                                  styles.optionCheck,
+                                  selected
+                                    ? styles.optionCheckSelected
+                                    : null,
+                                ]}
+                              >
+                                {selected ? (
+                                  <Text
+                                    style={
+                                      styles.optionCheckText
+                                    }
+                                  >
+                                    ✓
+                                  </Text>
+                                ) : null}
+                              </View>
+
+                              <View
+                                style={
+                                  styles.optionTextBlock
+                                }
+                              >
+                                <Text
+                                  style={
+                                    styles.optionName
+                                  }
+                                >
+                                  {String(
+                                    option.name ||
+                                      "Option",
+                                  )}
+                                </Text>
+
+                                {option.description ? (
+                                  <Text
+                                    style={
+                                      styles.optionDescription
+                                    }
+                                  >
+                                    {
+                                      option.description
+                                    }
+                                  </Text>
+                                ) : null}
+
+                                <Text
+                                  style={
+                                    styles.optionPrice
+                                  }
+                                >
+                                  {price > 0
+                                    ? `+ $${price.toFixed(
+                                        2,
+                                      )}`
+                                    : "Included"}
+                                </Text>
+
+                                <Text
+                                  style={[
+                                    styles.optionAvailabilityText,
+                                    optionUnavailable
+                                      ? styles.optionAvailabilityUnavailable
+                                      : styles.optionAvailabilityAvailable,
+                                  ]}
+                                >
+                                  {availabilityLabel}
+                                </Text>
+                              </View>
+                            </Pressable>
+
+                            {!isSingle &&
+                            selected ? (
+                              <View
+                                style={
+                                  styles.optionQuantityControl
+                                }
+                              >
+                                <Pressable
+                                  style={
+                                    styles.optionQuantityButton
+                                  }
+                                  onPress={() =>
+                                    changeQuantity({
+                                      productId:
+                                        product.id,
+                                      group,
+                                      option,
+                                      delta: -1,
+                                    })
+                                  }
+                                >
+                                  <Text
+                                    style={
+                                      styles.optionQuantityButtonText
+                                    }
+                                  >
+                                    −
+                                  </Text>
+                                </Pressable>
+
+                                <Text
+                                  style={
+                                    styles.optionQuantityValue
+                                  }
+                                >
+                                  {quantity}
+                                </Text>
+
+                                <Pressable
+                                  disabled={
+                                    !canIncrease
+                                  }
+                                  style={[
+                                    styles.optionQuantityButton,
+                                    !canIncrease
+                                      ? styles.optionQuantityButtonDisabled
+                                      : null,
+                                  ]}
+                                  onPress={() =>
+                                    changeQuantity({
+                                      productId:
+                                        product.id,
+                                      group,
+                                      option,
+                                      delta: 1,
+                                    })
+                                  }
+                                >
+                                  <Text
+                                    style={[
+                                      styles.optionQuantityButtonText,
+                                      !canIncrease
+                                        ? styles.optionQuantityButtonTextDisabled
+                                        : null,
+                                    ]}
+                                  >
+                                    +
+                                  </Text>
+                                </Pressable>
+                              </View>
+                            ) : null}
+                          </View>
+                        );
+                      })}
+                  </View>
+                );
+              })}
+            </View>
+          );
+        },
+      )}
+    </>
+  );
+}
+
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -2759,6 +3832,259 @@ productCheckText: {
   fontSize: 15,
   fontWeight: "900",
 },
+
+  optionsEmptyCard: {
+    marginBottom: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 14,
+    backgroundColor: COLORS.white,
+  },
+
+  optionsEmptyTitle: {
+    color: COLORS.navy,
+    fontSize: 16,
+    fontWeight: "800",
+  },
+
+  optionsEmptyText: {
+    marginTop: 5,
+    color: COLORS.mutedText,
+    fontSize: 13,
+    lineHeight: 19,
+  },
+
+  optionsProductSection: {
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 16,
+    backgroundColor: "#fcfaf7",
+    overflow: "hidden",
+  },
+
+  optionsProductHeader: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+
+  optionsProductLabel: {
+    color: COLORS.gold,
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 1.1,
+  },
+
+  optionsProductTitle: {
+    marginTop: 3,
+    color: COLORS.navy,
+    fontSize: 18,
+    fontWeight: "800",
+  },
+
+  optionGroupCard: {
+    margin: 12,
+    marginBottom: 0,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 14,
+    backgroundColor: COLORS.white,
+  },
+
+  optionGroupHeader: {
+    marginBottom: 10,
+  },
+
+  optionGroupTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+
+  optionGroupTitle: {
+    flex: 1,
+    color: COLORS.navy,
+    fontSize: 16,
+    fontWeight: "800",
+  },
+
+  optionGroupDescription: {
+    marginTop: 5,
+    color: COLORS.mutedText,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+
+  optionGroupCounter: {
+    marginTop: 7,
+    color: COLORS.gold,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  optionBadge: {
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+
+  optionBadgeRequired: {
+    backgroundColor: "#fff4d8",
+  },
+
+  optionBadgeOptional: {
+    backgroundColor: "#f1eee8",
+  },
+
+  optionBadgeText: {
+    fontSize: 11,
+    fontWeight: "800",
+  },
+
+  optionBadgeTextRequired: {
+    color: "#8a6b20",
+  },
+
+  optionBadgeTextOptional: {
+    color: COLORS.mutedText,
+  },
+
+  optionCard: {
+    marginBottom: 9,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 13,
+    backgroundColor: "#fcfaf7",
+    overflow: "hidden",
+  },
+
+  optionCardSelected: {
+    borderColor: COLORS.gold,
+    backgroundColor: "#fff9ec",
+  },
+
+  optionCardDisabled: {
+    opacity: 0.5,
+  },
+
+  optionCardMain: {
+    minHeight: 68,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+  },
+
+  optionCheck: {
+    width: 24,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#bbb1a3",
+    borderRadius: 7,
+  },
+
+  optionCheckSelected: {
+    borderColor: COLORS.gold,
+    backgroundColor: COLORS.gold,
+  },
+
+  optionCheckText: {
+    color: COLORS.white,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+
+  optionTextBlock: {
+    flex: 1,
+    marginLeft: 11,
+  },
+
+  optionName: {
+    color: COLORS.navy,
+    fontSize: 15,
+    fontWeight: "800",
+  },
+
+  optionDescription: {
+    marginTop: 3,
+    color: COLORS.mutedText,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+
+  optionPrice: {
+    marginTop: 5,
+    color: COLORS.gold,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  optionAvailabilityText: {
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+
+  optionAvailabilityAvailable: {
+    color: COLORS.success,
+  },
+
+  optionAvailabilityUnavailable: {
+    color: COLORS.error,
+  },
+
+  optionQuantityControl: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+    backgroundColor: COLORS.white,
+  },
+
+  optionQuantityButton: {
+    width: 36,
+    height: 34,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 9,
+    backgroundColor: COLORS.white,
+  },
+
+  optionQuantityButtonDisabled: {
+    backgroundColor: "#eee9e0",
+  },
+
+  optionQuantityButtonText: {
+    color: COLORS.navy,
+    fontSize: 19,
+    fontWeight: "800",
+  },
+
+  optionQuantityButtonTextDisabled: {
+    color: "#aaa094",
+  },
+
+  optionQuantityValue: {
+    minWidth: 34,
+    color: COLORS.navy,
+    fontSize: 16,
+    fontWeight: "800",
+    textAlign: "center",
+  },
 
   bottomSpacer: {
     height: 30,
