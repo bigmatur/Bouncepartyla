@@ -105,7 +105,9 @@ export type MobileNewBookingProduct = {
   name?: string | null;
   category_id?: string | null;
   category_name?: string | null;
+  base_price?: number | string | null;
   price?: number | string | null;
+  deposit_amount?: number | string | null;
   active?: boolean | null;
   image_url?: string | null;
   [key: string]: unknown;
@@ -257,6 +259,99 @@ export type MobileNewBookingAvailabilitySnapshot = {
     MobileNewBookingModifierAvailabilityItem[]
   >;
 };
+
+export type MobileNewBookingPricingProductLine = {
+  productId: string;
+  name: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+};
+
+export type MobileNewBookingPricingModifierLine = {
+  productId: string;
+  groupId: string;
+  groupName: string;
+  optionId: string;
+  optionName: string;
+  quantity: number;
+  productQuantity: number;
+  unitPrice: number;
+  lineTotal: number;
+};
+
+export type MobileNewBookingPricing = {
+  ok: boolean;
+  products: MobileNewBookingPricingProductLine[];
+  modifiers: MobileNewBookingPricingModifierLine[];
+  productSubtotal: number;
+  modifiersSubtotal: number;
+  subtotal: number;
+  minimumDeposit: number;
+  deliveryFee: number;
+  taxRate: number;
+  taxAmount: number;
+  taxableAmount: number;
+  totalAmount: number;
+  depositAmount: number;
+  balanceDue: number;
+  distanceMiles: number | null;
+  deliveryMode: string;
+  matchedZoneName: string | null;
+  deliveryReason: string;
+  deliveryError: string | null;
+  taxError: string | null;
+};
+
+export async function loadNewBookingPricingFromMobile(params: {
+  setupAddress: string;
+  setupCity: string;
+  setupState: string;
+  setupZip: string;
+  products: Array<{
+    productId: string;
+    quantity: number;
+  }>;
+  modifiers: Array<{
+    productId: string;
+    groupId: string;
+    optionId: string;
+    quantity: number;
+  }>;
+}) {
+  const result = await authenticatedFetch<{
+    success: true;
+    data: MobileNewBookingPricing;
+  }>(
+    "/api/admin/mobile/bookings/new/pricing",
+    {
+      method: "POST",
+      body: JSON.stringify(params),
+    },
+  );
+
+  if (!result.success) {
+    return {
+      success: false as const,
+      error:
+        result.error ||
+        "Could not calculate booking pricing.",
+    };
+  }
+
+  if (!result.data?.data) {
+    return {
+      success: false as const,
+      error:
+        "Booking pricing was not returned by the server.",
+    };
+  }
+
+  return {
+    success: true as const,
+    data: result.data.data,
+  };
+}
 
 export async function loadNewBookingAvailabilityFromMobile(params: {
   eventDate: string;

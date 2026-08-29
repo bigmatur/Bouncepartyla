@@ -22,12 +22,14 @@ import {
 import {
   loadNewBookingAvailabilityFromMobile,
   loadNewBookingBootstrapFromMobile,
+  loadNewBookingPricingFromMobile,
   type MobileNewBookingAvailabilityItem,
   type MobileNewBookingModifierAvailabilityItem,
   type MobileNewBookingBootstrap,
   type MobileNewBookingCustomer,
   type MobileNewBookingModifierGroup,
   type MobileNewBookingModifierOption,
+  type MobileNewBookingPricing,
   type MobileNewBookingProduct,
 } from "../../lib/mobileApi";
 
@@ -423,6 +425,12 @@ const [
       );
     }, [bootstrap?.customers, search]);
 
+  const [pricing, setPricing] =
+    useState<MobileNewBookingPricing | null>(null);
+  const [pricingLoading, setPricingLoading] = useState(false);
+  const [pricingError, setPricingError] = useState("");
+  const [pricingRefreshKey, setPricingRefreshKey] = useState(0);
+
   const selectedCustomer =
     useMemo(
       () =>
@@ -711,6 +719,76 @@ const [
     step,
   ]);
 
+  useEffect(() => {
+    if (step !== 5 || selectedProductIds.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+    setPricingLoading(true);
+    setPricingError("");
+    setPricing(null);
+
+    const modifiers = Object.entries(selectedModifierQuantities).flatMap(
+      ([key, quantities]) => {
+        const separator = key.indexOf(":");
+        if (separator <= 0) return [];
+
+        const productId = key.slice(0, separator);
+        const groupId = key.slice(separator + 1);
+
+        return Object.entries(quantities)
+          .filter(([, quantity]) => Number(quantity || 0) > 0)
+          .map(([optionId, quantity]) => ({
+            productId,
+            groupId,
+            optionId,
+            quantity: Math.max(1, Number(quantity || 1)),
+          }));
+      },
+    );
+
+    void (async () => {
+      const result = await loadNewBookingPricingFromMobile({
+        setupAddress: event.setupAddress,
+        setupCity: event.setupCity,
+        setupState: event.setupState || "CA",
+        setupZip: event.setupZip,
+        products: selectedProductIds.map((productId) => ({
+          productId,
+          quantity: 1,
+        })),
+        modifiers,
+      });
+
+      if (cancelled) return;
+
+      if (!result.success) {
+        setPricingError(
+          result.error || "Could not calculate booking pricing.",
+        );
+        setPricingLoading(false);
+        return;
+      }
+
+      setPricing(result.data);
+      setPricingLoading(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    event.setupAddress,
+    event.setupCity,
+    event.setupState,
+    event.setupZip,
+    pricingRefreshKey,
+    selectedModifierQuantities,
+    selectedProductIds,
+    step,
+  ]);
+
   const selectedProductsAvailable =
     useMemo(
       () =>
@@ -843,7 +921,7 @@ if (step === 3) {
 }
 
 if (step === 4) {
-  // Step 5 — Review will be connected after modifier inventory/pricing.
+  setStep(5);
   return;
 }
   };
@@ -1096,6 +1174,26 @@ if (step === 4) {
             />
           ) : null}
 
+          {step === 5 ? (
+            <ReviewStep
+              customerMode={customerMode}
+              selectedCustomer={selectedCustomer}
+              newCustomer={newCustomer}
+              event={event}
+              timeFormat={bootstrap.timeFormat}
+              products={bootstrap.products}
+              modifierGroups={bootstrap.modifierGroups}
+              selectedProductIds={selectedProductIds}
+              selectedModifierQuantities={selectedModifierQuantities}
+              pricing={pricing}
+              pricingLoading={pricingLoading}
+              pricingError={pricingError}
+              onRetry={() =>
+                setPricingRefreshKey((current) => current + 1)
+              }
+            />
+          ) : null}
+
           <View
             style={styles.bottomSpacer}
           />
@@ -1140,7 +1238,7 @@ if (step === 4) {
                   : null,
               ]}
             >
-              Continue
+              {step === 5 ? "Create Booking" : "Continue"}
             </Text>
           </Pressable>
         </View>
@@ -2094,6 +2192,265 @@ function DateTimeStep({
     </>
   );
 }
+function reviewMoney(value: number) {
+  return `$${Number(value || 0).toFixed(2)}`;
+}
+
+function ReviewStep({
+  customerMode,
+  selectedCustomer,
+  newCustomer,
+  event,
+  timeFormat,
+  products,
+  modifierGroups,
+  selectedProductIds,
+  selectedModifierQuantities,
+  pricing,
+  pricingLoading,
+  pricingError,
+  onRetry,
+}: {
+  customerMode: CustomerMode;
+  selectedCustomer: MobileNewBookingCustomer | null | undefined;
+  newCustomer: NewCustomerDraft;
+  event: EventDraft;
+  timeFormat: string;
+  products: MobileNewBookingProduct[];
+  modifierGroups: MobileNewBookingModifierGroup[];
+  selectedProductIds: string[];
+  selectedModifierQuantities: Record<string, Record<string, number>>;
+  pricing: MobileNewBookingPricing | null;
+  pricingLoading: boolean;
+  pricingError: string;
+  onRetry: () => void;
+}) {
+  const reviewCustomerName =
+    customerMode === "existing"
+      ? selectedCustomer
+        ? customerName(selectedCustomer)
+        : "Customer"
+      : [newCustomer.firstName, newCustomer.lastName]
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+          .join(" ");
+
+  const reviewCustomerSubtitle =
+    customerMode === "existing"
+      ? selectedCustomer
+        ? customerSubtitle(selectedCustomer)
+        : ""
+      : [newCustomer.phone, newCustomer.email]
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+          .join(" · ");
+
+  const selectedProducts = selectedProductIds
+    .map((productId) => products.find((product) => product.id === productId))
+    .filter((product): product is MobileNewBookingProduct => Boolean(product));
+
+  const selectedOptions = modifierGroups.flatMap((group) => {
+    if (!selectedProductIds.includes(group.productId)) return [];
+    const key = `${group.productId}:${group.id}`;
+    const quantities = selectedModifierQuantities[key] || {};
+
+    return Object.entries(quantities)
+      .filter(([, quantity]) => Number(quantity || 0) > 0)
+      .map(([optionId, quantity]) => {
+        const option = group.options.find((item) => item.id === optionId);
+        if (!option) return null;
+
+        const product = products.find((item) => item.id === group.productId);
+        return {
+          productId: group.productId,
+          groupId: group.id,
+          optionId,
+          productName: String(product?.name || "Product"),
+          groupName: String(group.name || "Options"),
+          optionName: String(option.name || "Option"),
+          quantity: Number(quantity || 0),
+        };
+      })
+      .filter(Boolean);
+  });
+
+  const address = [
+    event.setupAddress,
+    event.setupCity,
+    event.setupState,
+    event.setupZip,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(", ");
+
+  const startLabel = formatTimeLabel(
+    event.eventStartTime,
+    timeFormat === "24h" ? "24h" : "12h",
+  );
+  const endLabel = formatTimeLabel(
+    event.eventEndTime,
+    timeFormat === "24h" ? "24h" : "12h",
+  );
+
+  return (
+    <>
+      <Text style={styles.stepTitle}>Review</Text>
+      <Text style={styles.stepDescription}>
+        Confirm the booking details and server-calculated pricing.
+      </Text>
+
+      <View style={styles.reviewSection}>
+        <Text style={styles.reviewSectionTitle}>Customer</Text>
+        <Text style={styles.reviewValue}>{reviewCustomerName || "Customer"}</Text>
+        {reviewCustomerSubtitle ? (
+          <Text style={styles.reviewMuted}>{reviewCustomerSubtitle}</Text>
+        ) : null}
+      </View>
+
+      <View style={styles.reviewSection}>
+        <Text style={styles.reviewSectionTitle}>Event</Text>
+        <View style={styles.reviewRow}>
+          <Text style={styles.reviewLabel}>Date</Text>
+          <Text style={styles.reviewValue}>{event.eventDate}</Text>
+        </View>
+        <View style={styles.reviewRow}>
+          <Text style={styles.reviewLabel}>Time</Text>
+          <Text style={styles.reviewValue}>{startLabel} – {endLabel}</Text>
+        </View>
+        <View style={styles.reviewRow}>
+          <Text style={styles.reviewLabel}>Address</Text>
+          <Text style={[styles.reviewValue, styles.reviewValueFlexible]}>
+            {address}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.reviewSection}>
+        <Text style={styles.reviewSectionTitle}>Products</Text>
+        {selectedProducts.map((product) => {
+          const line = pricing?.products.find((item) => item.productId === product.id);
+          return (
+            <View key={product.id} style={styles.reviewRow}>
+              <Text style={[styles.reviewValue, styles.reviewValueFlexible]}>
+                {String(product.name || "Product")}
+              </Text>
+              <Text style={styles.reviewValue}>
+                {line ? reviewMoney(line.lineTotal) : "—"}
+              </Text>
+            </View>
+          );
+        })}
+
+        {selectedOptions.length > 0 ? (
+          <>
+            <View style={styles.reviewDivider} />
+            {selectedOptions.map((item: any) => {
+              const line = pricing?.modifiers.find(
+                (pricingItem) =>
+                  pricingItem.productId === item.productId &&
+                  pricingItem.groupId === item.groupId &&
+                  pricingItem.optionId === item.optionId,
+              );
+              return (
+                <View key={`${item.productId}:${item.groupId}:${item.optionId}`} style={styles.reviewOptionRow}>
+                  <View style={styles.reviewValueFlexible}>
+                    <Text style={styles.reviewOptionText}>{item.productName}</Text>
+                    <Text style={styles.reviewMuted}>
+                      {item.groupName}: {item.optionName}
+                      {item.quantity > 1 ? ` × ${item.quantity}` : ""}
+                    </Text>
+                  </View>
+                  <Text style={styles.reviewValue}>
+                    {line ? reviewMoney(line.lineTotal) : "—"}
+                  </Text>
+                </View>
+              );
+            })}
+          </>
+        ) : null}
+      </View>
+
+      <View style={styles.reviewSection}>
+        <Text style={styles.reviewSectionTitle}>Pricing</Text>
+
+        {pricingLoading ? (
+          <View style={styles.reviewPricingLoading}>
+            <ActivityIndicator size="small" color={COLORS.gold} />
+            <Text style={styles.reviewMuted}>Calculating delivery and tax...</Text>
+          </View>
+        ) : pricingError ? (
+          <>
+            <Text style={styles.errorText}>{pricingError}</Text>
+            <Pressable style={styles.reviewRetryButton} onPress={onRetry}>
+              <Text style={styles.reviewRetryButtonText}>Try Again</Text>
+            </Pressable>
+          </>
+        ) : pricing ? (
+          <>
+            <View style={styles.reviewRow}>
+              <Text style={styles.reviewLabel}>Products</Text>
+              <Text style={styles.reviewValue}>{reviewMoney(pricing.productSubtotal)}</Text>
+            </View>
+            <View style={styles.reviewRow}>
+              <Text style={styles.reviewLabel}>Options</Text>
+              <Text style={styles.reviewValue}>{reviewMoney(pricing.modifiersSubtotal)}</Text>
+            </View>
+            <View style={styles.reviewRow}>
+              <Text style={styles.reviewLabel}>Subtotal</Text>
+              <Text style={styles.reviewValue}>{reviewMoney(pricing.subtotal)}</Text>
+            </View>
+            <View style={styles.reviewRow}>
+              <Text style={styles.reviewLabel}>Delivery</Text>
+              <Text style={styles.reviewValue}>{reviewMoney(pricing.deliveryFee)}</Text>
+            </View>
+            <View style={styles.reviewRow}>
+              <Text style={styles.reviewLabel}>
+                Tax{pricing.taxRate ? ` (${Number(pricing.taxRate).toFixed(3)}%)` : ""}
+              </Text>
+              <Text style={styles.reviewValue}>{reviewMoney(pricing.taxAmount)}</Text>
+            </View>
+            <View style={styles.reviewDivider} />
+            <View style={styles.reviewTotalRow}>
+              <Text style={styles.reviewTotalLabel}>Total</Text>
+              <Text style={styles.reviewTotalValue}>{reviewMoney(pricing.totalAmount)}</Text>
+            </View>
+            <View style={styles.reviewRow}>
+              <Text style={styles.reviewLabel}>Deposit</Text>
+              <Text style={styles.reviewValue}>{reviewMoney(pricing.depositAmount)}</Text>
+            </View>
+            <View style={styles.reviewRow}>
+              <Text style={styles.reviewLabel}>Balance due</Text>
+              <Text style={styles.reviewValue}>{reviewMoney(pricing.balanceDue)}</Text>
+            </View>
+
+            {pricing.deliveryError || pricing.taxError ? (
+              <View style={styles.reviewPricingWarning}>
+                {pricing.deliveryError ? (
+                  <Text style={styles.errorText}>Delivery: {pricing.deliveryError}</Text>
+                ) : null}
+                {pricing.taxError ? (
+                  <Text style={styles.errorText}>Tax: {pricing.taxError}</Text>
+                ) : null}
+              </View>
+            ) : null}
+
+            <Text style={styles.reviewMuted}>
+              Minimum catalog deposit: {reviewMoney(pricing.minimumDeposit)}
+            </Text>
+          </>
+        ) : null}
+      </View>
+
+      <View style={styles.reviewReadOnlyNote}>
+        <Text style={styles.reviewMuted}>
+          Review is read-only for this checkpoint. Booking creation will be connected to the shared server workflow next.
+        </Text>
+      </View>
+    </>
+  );
+}
+
 function ProductsStep({
   products,
   selectedProductIds,
@@ -2289,7 +2646,10 @@ function ProductsStep({
                   ).trim();
 
                 const priceNumber =
-                  Number(product.price);
+                  Number(
+                    product.base_price ??
+                      product.price,
+                  );
 
                 const priceLabel =
                   Number.isFinite(
@@ -4225,5 +4585,108 @@ productCheckText: {
     color: COLORS.error,
     fontSize: 14,
     lineHeight: 20,
+  },  reviewSection: {
+    marginTop: 16,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.white,
+    padding: 18,
+    gap: 12,
   },
+  reviewSectionTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: COLORS.navy,
+  },
+  reviewRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 16,
+  },
+  reviewOptionRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 16,
+    paddingVertical: 3,
+  },
+  reviewLabel: {
+    fontSize: 14,
+    color: COLORS.mutedText,
+  },
+  reviewValue: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: COLORS.navy,
+    textAlign: "right",
+  },
+  reviewValueFlexible: {
+    flex: 1,
+  },
+  reviewMuted: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: COLORS.mutedText,
+  },
+  reviewOptionText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: COLORS.navy,
+  },
+  reviewDivider: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginVertical: 2,
+  },
+  reviewPricingLoading: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 8,
+  },
+  reviewRetryButton: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    backgroundColor: COLORS.navy,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+  },
+  reviewRetryButtonText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: COLORS.white,
+  },
+  reviewTotalRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 16,
+  },
+  reviewTotalLabel: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: COLORS.navy,
+  },
+  reviewTotalValue: {
+    fontSize: 21,
+    fontWeight: "800",
+    color: COLORS.navy,
+  },
+  reviewPricingWarning: {
+    borderRadius: 14,
+    backgroundColor: COLORS.errorBackground,
+    padding: 12,
+    gap: 4,
+  },
+  reviewReadOnlyNote: {
+    marginTop: 14,
+    borderRadius: 18,
+    backgroundColor: "#fff8eb",
+    padding: 14,
+    borderWidth: 1,
+    borderColor: COLORS.lightGold,
+  },
+
 });
