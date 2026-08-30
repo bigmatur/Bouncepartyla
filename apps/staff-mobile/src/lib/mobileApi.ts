@@ -287,6 +287,7 @@ export type MobileNewBookingPricing = {
   productSubtotal: number;
   modifiersSubtotal: number;
   subtotal: number;
+  discountAmount: number;
   minimumDeposit: number;
   deliveryFee: number;
   taxRate: number;
@@ -303,11 +304,52 @@ export type MobileNewBookingPricing = {
   taxError: string | null;
 };
 
+export async function verifyNewBookingDiscountPasswordFromMobile(
+  password: string,
+) {
+  const result = await authenticatedFetch<{
+    success: true;
+    data: {
+      ok: boolean;
+      message: string;
+    };
+  }>(
+    "/api/admin/mobile/bookings/new/discount/verify",
+    {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    },
+  );
+
+  if (!result.success) {
+    return {
+      success: false as const,
+      error:
+        result.error ||
+        "Could not verify discount password.",
+    };
+  }
+
+  if (!result.data?.data) {
+    return {
+      success: false as const,
+      error:
+        "Discount verification was not returned by the server.",
+    };
+  }
+
+  return {
+    success: true as const,
+    data: result.data.data,
+  };
+}
+
 export async function loadNewBookingPricingFromMobile(params: {
   setupAddress: string;
   setupCity: string;
   setupState: string;
   setupZip: string;
+  discountAmount?: number;
   products: Array<{
     productId: string;
     quantity: number;
@@ -413,10 +455,15 @@ export type MobileCreateBookingResult = {
   status: string;
   totalAmount: number;
   balanceDue: number;
+  stripeCheckoutUrl?: string | null;
 };
 
 export async function createNewBookingFromMobile(params: {
   bookingAttemptId: string;
+  completionStrategy?:
+    | "staff_send_to_customer"
+    | "staff_complete_now";
+  status?: string;
   existingCustomerId?: string | null;
   newCustomer?: {
     firstName: string;
@@ -441,6 +488,22 @@ export async function createNewBookingFromMobile(params: {
     optionId: string;
     quantity: number;
   }>;
+  contract?: {
+    accepted: boolean;
+    signerName: string;
+    manualSignature: string;
+    signatureDataUrl: string;
+  };
+  payment?: {
+    method: string;
+    amount: number;
+    reference?: string;
+    tipMode?: "percent" | "amount";
+    tipPercent?: number;
+    tipAmount?: number;
+    discountAmount?: number;
+    discountPassword?: string;
+  };
 }) {
   const result =
     await authenticatedFetch<{

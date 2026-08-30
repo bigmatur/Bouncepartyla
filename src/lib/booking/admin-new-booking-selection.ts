@@ -58,6 +58,7 @@ export async function prepareAdminNewBookingSelection(params: {
   setupCity: string;
   setupState: string;
   setupZip: string;
+  discountAmount?: number;
   products: AdminNewBookingRequestedProduct[];
   modifiers: AdminNewBookingRequestedModifier[];
 }) {
@@ -335,6 +336,7 @@ export async function prepareAdminNewBookingSelection(params: {
     setupState,
     setupZip,
     subtotal,
+    discountAmount: params.discountAmount,
     depositAmount: minimumDeposit,
   });
 

@@ -5,7 +5,7 @@ import {
   getUnifiedAccess,
   isStaffRole,
 } from "@/lib/auth/access";
-import { prepareAdminNewBookingSelection } from "@/lib/booking/admin-new-booking-selection";
+import { verifyBookingDiscountPassword } from "@/lib/booking/discount-password";
 
 export const dynamic = "force-dynamic";
 
@@ -20,13 +20,6 @@ function forbidden(message = "Access denied") {
   return NextResponse.json(
     { success: false, error: message },
     { status: 403 },
-  );
-}
-
-function badRequest(message: string) {
-  return NextResponse.json(
-    { success: false, error: message },
-    { status: 400 },
   );
 }
 
@@ -96,37 +89,31 @@ export async function POST(request: Request) {
   try {
     body = await request.json();
   } catch {
-    return badRequest("Invalid request body.");
+    return NextResponse.json(
+      { success: false, error: "Invalid request body." },
+      { status: 400 },
+    );
   }
 
   try {
-    const prepared = await prepareAdminNewBookingSelection({
+    const result = await verifyBookingDiscountPassword({
       supabase,
-      setupAddress: String(body.setupAddress || ""),
-      setupCity: String(body.setupCity || ""),
-      setupState: String(body.setupState || "CA"),
-      setupZip: String(body.setupZip || ""),
-      discountAmount: Number(body.discountAmount || 0),
-      products: Array.isArray(body.products)
-        ? (body.products as any)
-        : [],
-      modifiers: Array.isArray(body.modifiers)
-        ? (body.modifiers as any)
-        : [],
+      password: String(body.password || ""),
     });
 
     return NextResponse.json({
       success: true,
-      data: prepared.pricing,
+      data: result,
     });
   } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Could not calculate booking pricing.";
-
     return NextResponse.json(
-      { success: false, error: message },
+      {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Could not verify discount password.",
+      },
       { status: 400 },
     );
   }

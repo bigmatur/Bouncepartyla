@@ -1,14 +1,18 @@
 import DateTimePicker from "@react-native-community/datetimepicker";
+import SignatureCanvas from "react-native-signature-canvas";
+import { WebView } from "react-native-webview";
 import React, {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -33,7 +37,7 @@ import {
   type MobileNewBookingModifierOption,
   type MobileNewBookingPricing,
   type MobileNewBookingProduct,
-} from "../../lib/mobileApi";
+  verifyNewBookingDiscountPasswordFromMobile,} from "../../lib/mobileApi";
 
 type Props = {
   onClose?: () => void;
@@ -436,15 +440,66 @@ const [
   const [creatingBooking, setCreatingBooking] =
     useState(false);
 
+  const [completionStrategy, setCompletionStrategy] =
+    useState<"staff_send_to_customer" | "staff_complete_now">(
+      "staff_send_to_customer",
+    );
+  const [bookingStatus, setBookingStatus] =
+    useState("inventory_reserved");
+
   const [createBookingError, setCreateBookingError] =
+    useState("");
+
+  const [contractModalOpen, setContractModalOpen] =
+    useState(false);
+  const [paymentModalOpen, setPaymentModalOpen] =
+    useState(false);
+  const [contractAccepted, setContractAccepted] =
+    useState(false);
+  const [contractSignerName, setContractSignerName] =
+    useState("");
+  const [
+    contractSignatureDataUrl,
+    setContractSignatureDataUrl,
+  ] = useState("");
+  const signatureRef = useRef<any>(null);
+
+  const [paymentMethod, setPaymentMethod] =
+    useState("");
+  const [paymentAmount, setPaymentAmount] =
+    useState("");
+  const [paymentReference, setPaymentReference] =
+    useState("");
+  const [tipPercent, setTipPercent] =
+    useState("");
+  const [tipAmount, setTipAmount] =
+    useState("");
+  const [discountAmount, setDiscountAmount] =
+    useState("");
+  const [discountPassword, setDiscountPassword] =
+    useState("");
+  const [discountAuthorized, setDiscountAuthorized] =
+    useState(false);
+  const [discountAuthLoading, setDiscountAuthLoading] =
+    useState(false);
+  const [discountAuthMessage, setDiscountAuthMessage] =
     useState("");
 
   const [bookingAttemptId] =
     useState(
       () =>
-        `mobile-${Date.now()}-${Math.random()
-          .toString(36)
-          .slice(2, 12)}`,
+        "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
+          /[xy]/g,
+          (character) => {
+            const random = Math.floor(Math.random() * 16);
+            const value =
+              character === "x"
+                ? random
+                : (random & 0x3) | 0x8;
+
+            return value.toString(16);
+          },
+        ),
     );
 
   const selectedCustomer =
@@ -743,7 +798,6 @@ const [
     let cancelled = false;
     setPricingLoading(true);
     setPricingError("");
-    setPricing(null);
 
     const modifiers = Object.entries(selectedModifierQuantities).flatMap(
       ([key, quantities]) => {
@@ -770,6 +824,10 @@ const [
         setupCity: event.setupCity,
         setupState: event.setupState || "CA",
         setupZip: event.setupZip,
+        discountAmount: Math.max(
+          0,
+          Number(discountAmount || 0),
+        ),
         products: selectedProductIds.map((productId) => ({
           productId,
           quantity: 1,
@@ -799,6 +857,7 @@ const [
     event.setupCity,
     event.setupState,
     event.setupZip,
+    discountAmount,
     pricingRefreshKey,
     selectedModifierQuantities,
     selectedProductIds,
@@ -924,6 +983,531 @@ const [
     onClose?.();
   };
 
+  const selectedCustomerName =
+    customerMode === "existing"
+      ? String(selectedCustomer?.full_name || "").trim()
+      : `${newCustomer.firstName} ${newCustomer.lastName}`.trim();
+
+  const contractHtml = (() => {
+    const template =
+      String(
+        bootstrap?.contractSettings.template_html ||
+          "<h2>Rental Agreement</h2><p>Customer: {{customer_name}}</p><p>Event date: {{event_date}}</p><p>Total: {{total_amount}}</p><p>{{signature_label}}: {{signature_name}}</p><p>Date: {{signature_date}}</p>",
+      );
+
+    const customerEmail =
+      customerMode === "existing"
+        ? String(selectedCustomer?.email || "").trim()
+        : String(newCustomer.email || "").trim();
+
+    const money = (value: number) =>
+      `$${Number(value || 0).toFixed(2)}`;
+
+    const signatureMarkup = contractSignatureDataUrl
+      ? `<img src="${contractSignatureDataUrl}" alt="Manual signature" style="display:block;max-width:280px;height:auto;border-bottom:1px solid #d8cec0;padding-bottom:2px;" />`
+      : contractSignerName.trim();
+
+    const replacements: Record<string, string> = {
+      customer_name: selectedCustomerName || "Customer",
+      customer_email: customerEmail,
+      event_date: event.eventDate || "",
+      event_start_time: event.eventStartTime || "",
+      event_end_time: event.eventEndTime || "",
+      setup_address: event.setupAddress || "",
+      setup_city: event.setupCity || "",
+      setup_state: event.setupState || "",
+      setup_zip: event.setupZip || "",
+      subtotal: money(Number(pricing?.subtotal || 0)),
+      discount_amount: money(
+        Number(pricing?.discountAmount || 0),
+      ),
+      delivery_fee: money(
+        Number(pricing?.deliveryFee || 0),
+      ),
+      tax_amount: money(Number(pricing?.taxAmount || 0)),
+      total_amount: money(
+        Number(pricing?.totalAmount || 0),
+      ),
+      deposit_amount: money(
+        Number(pricing?.depositAmount || 0),
+      ),
+      balance_due: money(
+        Number(pricing?.balanceDue || 0),
+      ),
+      signature_label:
+        String(
+          bootstrap?.contractSettings.signature_label ||
+            "Client signature",
+        ),
+      signature_name: contractSignerName || "",
+      signature_manual: signatureMarkup,
+      signature_date: new Date().toISOString().slice(0, 10),
+    };
+
+    const renderedTemplate = template.replace(
+      /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g,
+      (_, key) => replacements[key] ?? "",
+    );
+
+    const productRows = (pricing?.products || [])
+      .map(
+        (item) =>
+          `<tr><td style="padding:6px 0;">${item.name || "Product"} x ${item.quantity}</td><td style="padding:6px 0;text-align:right;">${money(item.lineTotal)}</td></tr>`,
+      )
+      .join("");
+
+    const orderInfoBlock = `
+      <section style="border:1px solid #e7ddd0;border-radius:14px;padding:16px;margin-bottom:16px;background:#fcfaf7;">
+        <div style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#9a7a49;font-weight:700;">Order Summary</div>
+        <div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px;color:#4b4339;">
+          <div><strong>Customer:</strong> ${replacements.customer_name}</div>
+          <div><strong>Email:</strong> ${replacements.customer_email || "-"}</div>
+          <div><strong>Event date:</strong> ${replacements.event_date}</div>
+          <div><strong>Time:</strong> ${replacements.event_start_time} - ${replacements.event_end_time}</div>
+          <div style="grid-column:1 / -1;"><strong>Address:</strong> ${replacements.setup_address}, ${replacements.setup_city} ${replacements.setup_zip}</div>
+        </div>
+        <table style="width:100%;margin-top:10px;border-collapse:collapse;font-size:13px;color:#3f382f;">
+          <tbody>${productRows}</tbody>
+        </table>
+        <div style="margin-top:10px;border-top:1px solid #e7ddd0;padding-top:10px;display:grid;gap:4px;font-size:13px;color:#3f382f;">
+          <div style="display:flex;justify-content:space-between;"><span>Subtotal</span><strong>${replacements.subtotal}</strong></div>
+          <div style="display:flex;justify-content:space-between;"><span>Discount</span><strong>${replacements.discount_amount}</strong></div>
+          <div style="display:flex;justify-content:space-between;"><span>Delivery</span><strong>${replacements.delivery_fee}</strong></div>
+          <div style="display:flex;justify-content:space-between;"><span>Tax</span><strong>${replacements.tax_amount}</strong></div>
+          <div style="display:flex;justify-content:space-between;font-size:15px;"><span>Total</span><strong>${replacements.total_amount}</strong></div>
+          <div style="display:flex;justify-content:space-between;"><span>Deposit</span><strong>${replacements.deposit_amount}</strong></div>
+          <div style="display:flex;justify-content:space-between;"><span>Balance due</span><strong>${replacements.balance_due}</strong></div>
+        </div>
+      </section>
+    `;
+
+    return `${orderInfoBlock}${renderedTemplate}`;
+  })();
+
+  const openPaymentFlow = () => {
+    if (!pricing || !bootstrap) {
+      return;
+    }
+
+    const minimumDeposit =
+      Number(pricing.minimumDeposit || 0);
+
+    const defaultPaymentAmount =
+      Number(pricing.depositAmount || minimumDeposit);
+
+    const defaultMethod =
+      bootstrap.paymentMethods.find(
+        (item) => Boolean(item.method),
+      )?.method || "";
+
+    setPaymentMethod((current) => current || defaultMethod);
+    setPaymentAmount(
+      Number(pricing.depositAmount || minimumDeposit).toFixed(2),
+    );
+
+    if (bootstrap.tipSettings.tipsEnabled) {
+      const defaultPercent =
+        Number(bootstrap.tipSettings.defaultTipPercent || 0);
+      const defaultAmount =
+        Number(bootstrap.tipSettings.defaultTipAmount || 0);
+
+      if (bootstrap.tipSettings.tipMode === "amount") {
+        setTipAmount(defaultAmount.toFixed(2));
+        setTipPercent("0");
+      } else {
+        setTipPercent(defaultPercent.toFixed(2));
+        setTipAmount(
+          ((defaultPaymentAmount * defaultPercent) / 100).toFixed(2),
+        );
+      }
+    } else {
+      setTipPercent("0");
+      setTipAmount("0");
+    }
+
+    setContractModalOpen(false);
+    setPaymentModalOpen(true);
+  };
+
+  const buildSelectedModifiers = () =>
+    Object.entries(selectedModifierQuantities).flatMap(
+      ([key, quantities]) => {
+        const separator = key.indexOf(":");
+
+        if (separator <= 0) {
+          return [];
+        }
+
+        const productId = key.slice(0, separator);
+        const groupId = key.slice(separator + 1);
+
+        return Object.entries(quantities)
+          .filter(([, quantity]) => Number(quantity || 0) > 0)
+          .map(([optionId, quantity]) => ({
+            productId,
+            groupId,
+            optionId,
+            quantity: Math.max(
+              1,
+              Number(quantity || 1),
+            ),
+          }));
+      },
+    );
+
+  const submitTemporaryBooking = async () => {
+    if (creatingBooking || !pricing || !bootstrap) {
+      return;
+    }
+
+    setCreatingBooking(true);
+    setCreateBookingError("");
+
+    const result = await createNewBookingFromMobile({
+      bookingAttemptId,
+      completionStrategy: "staff_send_to_customer",
+      status: bookingStatus,
+      existingCustomerId:
+        customerMode === "existing"
+          ? selectedCustomerId
+          : null,
+      newCustomer:
+        customerMode === "new"
+          ? {
+              firstName: newCustomer.firstName,
+              lastName: newCustomer.lastName,
+              phone: newCustomer.phone,
+              email: newCustomer.email,
+            }
+          : null,
+      eventDate: event.eventDate,
+      eventStartTime: event.eventStartTime,
+      eventEndTime: event.eventEndTime,
+      setupAddress: event.setupAddress,
+      setupCity: event.setupCity,
+      setupState: event.setupState || "CA",
+      setupZip: event.setupZip,
+      products: selectedProductIds.map((productId) => ({
+        productId,
+        quantity: 1,
+      })),
+      modifiers: buildSelectedModifiers(),
+      payment: {
+        method: "",
+        amount: 0,
+        reference: "",
+        tipMode: bootstrap.tipSettings.tipMode,
+        tipPercent: 0,
+        tipAmount: 0,
+        discountAmount: Number(discountAmount || 0),
+        discountPassword,
+      },
+    });
+
+    setCreatingBooking(false);
+
+    if (!result.success) {
+      setCreateBookingError(
+        result.error || "Could not create booking.",
+      );
+      return;
+    }
+
+    Alert.alert(
+      "Temporary booking created",
+      result.data.completionEmailStatus === "failed"
+        ? `Booking #${result.data.bookingId.slice(-8)} was created, but the customer completion email failed.`
+        : `Booking #${result.data.bookingId.slice(-8)} was created successfully.`,
+      [
+        {
+          text: "Done",
+          onPress: () => onClose?.(),
+        },
+      ],
+    );
+  };
+
+  const openCompletionFlow = async () => {
+    if (!pricing || !bootstrap) {
+      return;
+    }
+
+    setCreateBookingError("");
+
+    if (pricingLoading) {
+      setCreateBookingError(
+        "Please wait for pricing to finish updating.",
+      );
+      return;
+    }
+
+    if (completionStrategy === "staff_send_to_customer") {
+      await submitTemporaryBooking();
+      return;
+    }
+
+    const discount = Number(discountAmount || 0);
+
+    if (!Number.isFinite(discount) || discount < 0) {
+      setCreateBookingError(
+        "Discount amount cannot be negative.",
+      );
+      return;
+    }
+
+    if (discount > Number(pricing.subtotal || 0)) {
+      setCreateBookingError(
+        "Discount cannot exceed products and options subtotal.",
+      );
+      return;
+    }
+
+    if (
+      discount > 0 &&
+      bootstrap.discountSecurity.discount_password_enabled
+    ) {
+      if (!discountPassword.trim()) {
+        setCreateBookingError(
+          "Enter the admin discount code before payment.",
+        );
+        return;
+      }
+
+      if (!discountAuthorized) {
+        setDiscountAuthLoading(true);
+        setDiscountAuthMessage("");
+
+        const verification =
+          await verifyNewBookingDiscountPasswordFromMobile(
+            discountPassword.trim(),
+          );
+
+        setDiscountAuthLoading(false);
+
+        if (!verification.success || !verification.data.ok) {
+          const message = verification.success
+            ? verification.data.message
+            : verification.error;
+
+          setDiscountAuthorized(false);
+          setDiscountAuthMessage(
+            message || "Invalid discount password.",
+          );
+          setCreateBookingError(
+            message || "Invalid discount password.",
+          );
+          return;
+        }
+
+        setDiscountAuthorized(true);
+        setDiscountAuthMessage(
+          verification.data.message || "Discount authorized.",
+        );
+      }
+    }
+
+    const requiresContract =
+      bootstrap.contractSettings
+        .require_contract_before_payment !== false;
+
+    if (!requiresContract) {
+      setContractAccepted(false);
+      setContractSignatureDataUrl("");
+      openPaymentFlow();
+      return;
+    }
+
+    setContractSignerName(selectedCustomerName);
+    setContractAccepted(false);
+    setContractSignatureDataUrl("");
+    setContractModalOpen(true);
+  };
+
+  const continueFromContract = () => {
+    const requiresTyped =
+      bootstrap?.contractSettings
+        .require_typed_signature !== false;
+
+    if (requiresTyped && !contractSignerName.trim()) {
+      setCreateBookingError("Enter the signer name.");
+      return;
+    }
+
+    if (!contractAccepted) {
+      setCreateBookingError(
+        "Accept the rental agreement before continuing.",
+      );
+      return;
+    }
+
+    setCreateBookingError("");
+    signatureRef.current?.readSignature();
+  };
+
+  const handleCapturedSignature = (signature: string) => {
+    if (!signature) {
+      setCreateBookingError(
+        "Draw the customer signature before continuing.",
+      );
+      return;
+    }
+
+    setContractSignatureDataUrl(signature);
+    setCreateBookingError("");
+    openPaymentFlow();
+  };
+
+  const submitCompletedBooking = async () => {
+    if (creatingBooking || !pricing || !bootstrap) {
+      return;
+    }
+
+    const amount = Number(paymentAmount || 0);
+    const discount = Number(discountAmount || 0);
+    const tip = bootstrap.tipSettings.tipsEnabled
+      ? Number(tipAmount || 0)
+      : 0;
+    const tipPct = bootstrap.tipSettings.tipsEnabled
+      ? Number(tipPercent || 0)
+      : 0;
+
+    if (!Number.isFinite(amount) || amount < 0) {
+      setCreateBookingError(
+        "Payment amount cannot be negative.",
+      );
+      return;
+    }
+
+    if (amount > Number(pricing.totalAmount || 0)) {
+      setCreateBookingError(
+        "Payment amount cannot exceed booking total.",
+      );
+      return;
+    }
+
+    if (amount > 0 && !paymentMethod) {
+      setCreateBookingError("Choose a payment method.");
+      return;
+    }
+
+    if (
+      !Number.isFinite(discount) ||
+      discount < 0 ||
+      discount > Number(pricing.subtotal || 0)
+    ) {
+      setCreateBookingError(
+        "Enter a valid discount amount.",
+      );
+      return;
+    }
+
+    if (
+      discount > 0 &&
+      bootstrap.discountSecurity.discount_password_enabled &&
+      !discountPassword.trim()
+    ) {
+      setCreateBookingError(
+        "Enter the admin discount code.",
+      );
+      return;
+    }
+
+    const modifiers = buildSelectedModifiers();
+
+    setCreatingBooking(true);
+    setCreateBookingError("");
+
+    const result =
+      await createNewBookingFromMobile({
+        bookingAttemptId,
+        completionStrategy: "staff_complete_now",
+        status: bookingStatus,
+        existingCustomerId:
+          customerMode === "existing"
+            ? selectedCustomerId
+            : null,
+        newCustomer:
+          customerMode === "new"
+            ? {
+                firstName: newCustomer.firstName,
+                lastName: newCustomer.lastName,
+                phone: newCustomer.phone,
+                email: newCustomer.email,
+              }
+            : null,
+        eventDate: event.eventDate,
+        eventStartTime: event.eventStartTime,
+        eventEndTime: event.eventEndTime,
+        setupAddress: event.setupAddress,
+        setupCity: event.setupCity,
+        setupState: event.setupState || "CA",
+        setupZip: event.setupZip,
+        products: selectedProductIds.map(
+          (productId) => ({
+            productId,
+            quantity: 1,
+          }),
+        ),
+        modifiers,
+        contract: {
+          accepted:
+            bootstrap.contractSettings
+              .require_contract_before_payment === false
+              ? false
+              : contractAccepted,
+          signerName: contractSignerName.trim(),
+          manualSignature: contractSignerName.trim(),
+          signatureDataUrl: contractSignatureDataUrl,
+        },
+        payment: {
+          method: paymentMethod,
+          amount,
+          reference: paymentReference.trim(),
+          tipMode: bootstrap.tipSettings.tipMode,
+          tipPercent: tipPct,
+          tipAmount: tip,
+          discountAmount: discount,
+          discountPassword,
+        },
+      });
+
+    setCreatingBooking(false);
+
+    if (!result.success) {
+      setCreateBookingError(
+        result.error || "Could not create booking.",
+      );
+      return;
+    }
+
+    setPaymentModalOpen(false);
+
+    const checkoutUrl = result.data.stripeCheckoutUrl;
+
+    if (checkoutUrl) {
+      try {
+        await Linking.openURL(checkoutUrl);
+      } catch {
+        setCreateBookingError(
+          "Booking was created, but Stripe checkout could not be opened.",
+        );
+      }
+    }
+
+    Alert.alert(
+      "Booking created",
+      checkoutUrl
+        ? `Booking #${result.data.bookingId.slice(-8)} was created. Complete the card payment in Stripe.`
+        : `Booking #${result.data.bookingId.slice(-8)} was created successfully.`,
+      [
+        {
+          text: "Done",
+          onPress: () => onClose?.(),
+        },
+      ],
+    );
+  };
+
   const handleContinue = async () => {
     if (!canContinue) {
       return;
@@ -954,124 +1538,8 @@ const [
       return;
     }
 
-    const modifiers =
-      Object.entries(
-        selectedModifierQuantities,
-      ).flatMap(
-        ([key, quantities]) => {
-          const separator =
-            key.indexOf(":");
-
-          if (separator <= 0) {
-            return [];
-          }
-
-          const productId =
-            key.slice(0, separator);
-
-          const groupId =
-            key.slice(separator + 1);
-
-          return Object.entries(
-            quantities,
-          )
-            .filter(
-              ([, quantity]) =>
-                Number(quantity || 0) > 0,
-            )
-            .map(
-              ([optionId, quantity]) => ({
-                productId,
-                groupId,
-                optionId,
-                quantity:
-                  Math.max(
-                    1,
-                    Number(quantity || 1),
-                  ),
-              }),
-            );
-        },
-      );
-
-    setCreatingBooking(true);
-    setCreateBookingError("");
-
-    const result =
-      await createNewBookingFromMobile({
-        bookingAttemptId,
-        existingCustomerId:
-          customerMode === "existing"
-            ? selectedCustomerId
-            : null,
-        newCustomer:
-          customerMode === "new"
-            ? {
-                firstName:
-                  newCustomer.firstName,
-                lastName:
-                  newCustomer.lastName,
-                phone:
-                  newCustomer.phone,
-                email:
-                  newCustomer.email,
-              }
-            : null,
-        eventDate: event.eventDate,
-        eventStartTime:
-          event.eventStartTime,
-        eventEndTime:
-          event.eventEndTime,
-        setupAddress:
-          event.setupAddress,
-        setupCity:
-          event.setupCity,
-        setupState:
-          event.setupState || "CA",
-        setupZip:
-          event.setupZip,
-        products:
-          selectedProductIds.map(
-            (productId) => ({
-              productId,
-              quantity: 1,
-            }),
-          ),
-        modifiers,
-      });
-
-    setCreatingBooking(false);
-
-    if (!result.success) {
-      setCreateBookingError(
-        result.error ||
-          "Could not create booking.",
-      );
-      return;
-    }
-
-    const emailMessage =
-      result.data.completionEmailStatus === "sent"
-        ? "Customer completion link was sent."
-        : result.data.completionEmailStatus === "failed"
-          ? "Booking was created, but the customer completion email failed."
-          : "Booking was created. Customer completion email is not configured.";
-
-    Alert.alert(
-      "Booking created",
-      `Booking #${result.data.bookingId.slice(
-        0,
-        8,
-      )}\n\n${emailMessage}`,
-      [
-        {
-          text: "Done",
-          onPress: () => {
-            onClose?.();
-          },
-        },
-      ],
-    );
+    await openCompletionFlow();
+    return;
   };
 
   if (loading) {
@@ -1342,6 +1810,275 @@ const [
             />
           ) : null}
 
+          {step === 5 ? (
+            <View
+              style={{
+                marginTop: 18,
+                padding: 16,
+                borderRadius: 18,
+                borderWidth: 1,
+                borderColor: COLORS.border,
+                backgroundColor: COLORS.white,
+              }}
+            >
+              <Text
+                style={{
+                  color: COLORS.navy,
+                  fontSize: 16,
+                  fontWeight: "900",
+                }}
+              >
+                Discount
+              </Text>
+              <Text
+                style={{
+                  marginTop: 4,
+                  color: COLORS.mutedText,
+                  fontSize: 13,
+                }}
+              >
+                Apply and authorize any discount before the contract is signed.
+              </Text>
+
+              <TextInput
+                value={discountAmount}
+                onChangeText={(value) => {
+                  setDiscountAmount(value);
+                  setDiscountAuthorized(false);
+                  setDiscountAuthMessage("");
+                  setCreateBookingError("");
+                }}
+                keyboardType="decimal-pad"
+                placeholder="0.00"
+                style={{
+                  marginTop: 12,
+                  minHeight: 50,
+                  paddingHorizontal: 14,
+                  borderRadius: 16,
+                  borderWidth: 1,
+                  borderColor: COLORS.border,
+                  backgroundColor: COLORS.background,
+                  color: COLORS.navy,
+                  fontSize: 16,
+                }}
+              />
+
+              {bootstrap?.discountSecurity
+                .discount_password_enabled &&
+              Number(discountAmount || 0) > 0 ? (
+                <>
+                  <TextInput
+                    value={discountPassword}
+                    onChangeText={(value) => {
+                      setDiscountPassword(value);
+                      setDiscountAuthorized(false);
+                      setDiscountAuthMessage("");
+                      setCreateBookingError("");
+                    }}
+                    secureTextEntry
+                    placeholder={
+                      bootstrap.discountSecurity
+                        .discount_password_hint ||
+                      "Admin discount code"
+                    }
+                    style={{
+                      marginTop: 10,
+                      minHeight: 50,
+                      paddingHorizontal: 14,
+                      borderRadius: 16,
+                      borderWidth: 1,
+                      borderColor: COLORS.border,
+                      backgroundColor: COLORS.background,
+                      color: COLORS.navy,
+                      fontSize: 16,
+                    }}
+                  />
+
+                  <Pressable
+                    disabled={discountAuthLoading}
+                    onPress={async () => {
+                      if (!discountPassword.trim()) {
+                        setDiscountAuthorized(false);
+                        setDiscountAuthMessage(
+                          "Enter admin code first.",
+                        );
+                        return;
+                      }
+
+                      setDiscountAuthLoading(true);
+                      setDiscountAuthMessage("");
+
+                      const result =
+                        await verifyNewBookingDiscountPasswordFromMobile(
+                          discountPassword.trim(),
+                        );
+
+                      setDiscountAuthLoading(false);
+
+                      if (!result.success || !result.data.ok) {
+                        setDiscountAuthorized(false);
+                        setDiscountAuthMessage(
+                          result.success
+                            ? result.data.message
+                            : result.error,
+                        );
+                        return;
+                      }
+
+                      setDiscountAuthorized(true);
+                      setDiscountAuthMessage(
+                        result.data.message ||
+                          "Discount authorized.",
+                      );
+                    }}
+                    style={{
+                      marginTop: 10,
+                      minHeight: 46,
+                      borderRadius: 14,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      backgroundColor: COLORS.lightGold,
+                      opacity: discountAuthLoading ? 0.6 : 1,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: COLORS.navy,
+                        fontWeight: "900",
+                      }}
+                    >
+                      {discountAuthLoading
+                        ? "Checking..."
+                        : discountAuthorized
+                          ? "Code accepted"
+                          : "Verify code"}
+                    </Text>
+                  </Pressable>
+
+                  {discountAuthMessage ? (
+                    <Text
+                      style={{
+                        marginTop: 8,
+                        color: discountAuthorized
+                          ? COLORS.success
+                          : COLORS.error,
+                        fontWeight: "700",
+                        fontSize: 13,
+                      }}
+                    >
+                      {discountAuthMessage}
+                    </Text>
+                  ) : null}
+                </>
+              ) : null}
+
+              {pricingLoading ? (
+                <Text
+                  style={{
+                    marginTop: 10,
+                    color: COLORS.mutedText,
+                    fontSize: 13,
+                  }}
+                >
+                  Updating total...
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+
+          {step === 5 ? (
+            <View style={{ marginTop: 18, gap: 12 }}>
+              <Text
+                style={{
+                  color: COLORS.navy,
+                  fontSize: 16,
+                  fontWeight: "900",
+                }}
+              >
+                How to finish this booking
+              </Text>
+
+              {[
+                {
+                  value: "staff_send_to_customer" as const,
+                  title: "Send to customer",
+                  description:
+                    "Create a temporary reservation. The customer signs the contract and pays the deposit.",
+                },
+                {
+                  value: "staff_complete_now" as const,
+                  title: "Complete now",
+                  description:
+                    "Use the current contract and payment flow for an in-person customer.",
+                },
+              ].map((option) => {
+                const active = completionStrategy === option.value;
+                return (
+                  <Pressable
+                    key={option.value}
+                    onPress={() => setCompletionStrategy(option.value)}
+                    style={{
+                      padding: 16,
+                      borderRadius: 18,
+                      borderWidth: 1,
+                      borderColor: active ? COLORS.gold : COLORS.border,
+                      backgroundColor: COLORS.white,
+                    }}
+                  >
+                    <Text style={{ color: COLORS.navy, fontSize: 15, fontWeight: "900" }}>
+                      {active ? "◉ " : "○ "}{option.title}
+                    </Text>
+                    <Text style={{ marginTop: 5, color: COLORS.mutedText, fontSize: 13, lineHeight: 19 }}>
+                      {option.description}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+
+              {completionStrategy === "staff_complete_now" ? (
+                <>
+                  <Text style={{ marginTop: 6, color: COLORS.navy, fontSize: 15, fontWeight: "900" }}>
+                    Booking status
+                  </Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                    {[
+                      ["draft", "Draft"],
+                      ["quote", "Quote"],
+                      ["pending_deposit", "Pending deposit"],
+                      ["booked", "Booked"],
+                      ["scheduled", "Scheduled"],
+                      ["inventory_reserved", "Inventory reserved"],
+                      ["out_for_delivery", "Out for delivery"],
+                      ["installed", "Installed"],
+                      ["closed", "Closed"],
+                      ["cancelled", "Cancelled"],
+                    ].map(([value, label]) => {
+                      const active = bookingStatus === value;
+                      return (
+                        <Pressable
+                          key={value}
+                          onPress={() => setBookingStatus(value)}
+                          style={{
+                            paddingHorizontal: 12,
+                            paddingVertical: 10,
+                            borderRadius: 14,
+                            borderWidth: 1,
+                            borderColor: active ? COLORS.gold : COLORS.border,
+                            backgroundColor: active ? COLORS.lightGold : COLORS.white,
+                          }}
+                        >
+                          <Text style={{ color: COLORS.navy, fontSize: 13, fontWeight: "800" }}>
+                            {label}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </>
+              ) : null}
+            </View>
+          ) : null}
+
           {step === 5 &&
           createBookingError ? (
             <View style={styles.errorCard}>
@@ -1359,6 +2096,642 @@ const [
             style={styles.bottomSpacer}
           />
         </ScrollView>
+
+        <Modal
+          visible={contractModalOpen}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={() =>
+            setContractModalOpen(false)
+          }
+        >
+          <SafeAreaView
+            style={{
+              flex: 1,
+              backgroundColor: COLORS.background,
+            }}
+          >
+            <View
+              style={{
+                paddingHorizontal: 20,
+                paddingTop: 14,
+                paddingBottom: 10,
+                borderBottomWidth: 1,
+                borderBottomColor: COLORS.border,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 28,
+                  fontWeight: "800",
+                  color: COLORS.navy,
+                }}
+              >
+                Contract
+              </Text>
+              <Text
+                style={{
+                  marginTop: 4,
+                  fontSize: 14,
+                  color: COLORS.mutedText,
+                }}
+              >
+                Review and sign before payment
+              </Text>
+            </View>
+
+            <ScrollView
+              contentContainerStyle={{
+                padding: 20,
+                paddingBottom: 40,
+              }}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View
+                style={{
+                  height: 320,
+                  overflow: "hidden",
+                  borderRadius: 20,
+                  borderWidth: 1,
+                  borderColor: COLORS.border,
+                  backgroundColor: COLORS.white,
+                }}
+              >
+                <WebView
+                  originWhitelist={["*"]}
+                  source={{
+                    html: `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:18px;color:#23313f;line-height:1.45}img{max-width:100%}</style></head><body>${contractHtml}</body></html>`,
+                  }}
+                />
+              </View>
+
+              <Text
+                style={{
+                  marginTop: 20,
+                  marginBottom: 8,
+                  fontSize: 14,
+                  fontWeight: "700",
+                  color: COLORS.navy,
+                }}
+              >
+                Signer name
+              </Text>
+              <TextInput
+                value={contractSignerName}
+                onChangeText={setContractSignerName}
+                placeholder="Customer name"
+                style={{
+                  minHeight: 50,
+                  paddingHorizontal: 14,
+                  borderRadius: 16,
+                  borderWidth: 1,
+                  borderColor: COLORS.border,
+                  backgroundColor: COLORS.white,
+                  color: COLORS.navy,
+                  fontSize: 16,
+                }}
+              />
+
+              <Text
+                style={{
+                  marginTop: 20,
+                  marginBottom: 8,
+                  fontSize: 14,
+                  fontWeight: "700",
+                  color: COLORS.navy,
+                }}
+              >
+                {bootstrap?.contractSettings.signature_label ||
+                  "Signature"}
+              </Text>
+
+              <View
+                style={{
+                  height: 210,
+                  overflow: "hidden",
+                  borderRadius: 18,
+                  borderWidth: 1,
+                  borderColor: COLORS.border,
+                  backgroundColor: COLORS.white,
+                }}
+              >
+                <SignatureCanvas
+                  ref={signatureRef}
+                  onOK={handleCapturedSignature}
+                  onBegin={() =>
+                    setCreateBookingError("")
+                  }
+                  descriptionText=""
+                  clearText="Clear"
+                  confirmText="Use signature"
+                  webStyle={`
+                    .m-signature-pad { box-shadow:none; border:0; }
+                    .m-signature-pad--body { border:0; }
+                    .m-signature-pad--footer { margin:8px; }
+                    body,html { width:100%; height:100%; }
+                  `}
+                />
+              </View>
+
+              <Pressable
+                onPress={() =>
+                  setContractAccepted(
+                    (current) => !current,
+                  )
+                }
+                style={{
+                  marginTop: 18,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: 14,
+                  borderRadius: 16,
+                  borderWidth: 1,
+                  borderColor: contractAccepted
+                    ? COLORS.gold
+                    : COLORS.border,
+                  backgroundColor: COLORS.white,
+                }}
+              >
+                <View
+                  style={{
+                    width: 24,
+                    height: 24,
+                    borderRadius: 7,
+                    borderWidth: 1,
+                    borderColor: contractAccepted
+                      ? COLORS.gold
+                      : COLORS.border,
+                    backgroundColor: contractAccepted
+                      ? COLORS.lightGold
+                      : COLORS.white,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: COLORS.navy,
+                      fontWeight: "900",
+                    }}
+                  >
+                    {contractAccepted ? "✓" : ""}
+                  </Text>
+                </View>
+                <Text
+                  style={{
+                    flex: 1,
+                    color: COLORS.navy,
+                    fontSize: 15,
+                    fontWeight: "700",
+                  }}
+                >
+                  I confirm the customer accepts the rental agreement.
+                </Text>
+              </Pressable>
+
+              {createBookingError ? (
+                <Text
+                  style={{
+                    marginTop: 14,
+                    color: COLORS.error,
+                    fontWeight: "700",
+                  }}
+                >
+                  {createBookingError}
+                </Text>
+              ) : null}
+
+              <View
+                style={{
+                  marginTop: 24,
+                  flexDirection: "row",
+                  gap: 12,
+                }}
+              >
+                <Pressable
+                  onPress={() =>
+                    setContractModalOpen(false)
+                  }
+                  style={{
+                    flex: 1,
+                    minHeight: 54,
+                    borderRadius: 18,
+                    borderWidth: 1,
+                    borderColor: COLORS.border,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: COLORS.white,
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: COLORS.navy,
+                      fontWeight: "800",
+                      fontSize: 16,
+                    }}
+                  >
+                    Cancel
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={continueFromContract}
+                  style={{
+                    flex: 1.35,
+                    minHeight: 54,
+                    borderRadius: 18,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: COLORS.navy,
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: COLORS.white,
+                      fontWeight: "800",
+                      fontSize: 16,
+                    }}
+                  >
+                    Payment
+                  </Text>
+                </Pressable>
+              </View>
+            </ScrollView>
+          </SafeAreaView>
+        </Modal>
+
+        <Modal
+          visible={paymentModalOpen}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={() =>
+            setPaymentModalOpen(false)
+          }
+        >
+          <SafeAreaView
+            style={{
+              flex: 1,
+              backgroundColor: COLORS.background,
+            }}
+          >
+            <ScrollView
+              contentContainerStyle={{
+                padding: 20,
+                paddingBottom: 44,
+              }}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text
+                style={{
+                  fontSize: 28,
+                  fontWeight: "800",
+                  color: COLORS.navy,
+                }}
+              >
+                Payment
+              </Text>
+
+              <View
+                style={{
+                  marginTop: 16,
+                  padding: 18,
+                  borderRadius: 20,
+                  borderWidth: 1,
+                  borderColor: COLORS.border,
+                  backgroundColor: COLORS.white,
+                }}
+              >
+                <Text style={{ color: COLORS.mutedText, fontSize: 14 }}>
+                  Booking total
+                </Text>
+                <Text
+                  style={{
+                    marginTop: 4,
+                    color: COLORS.navy,
+                    fontSize: 30,
+                    fontWeight: "900",
+                  }}
+                >
+                  ${Number(pricing?.totalAmount || 0).toFixed(2)}
+                </Text>
+                <Text
+                  style={{
+                    marginTop: 8,
+                    color: COLORS.mutedText,
+                    fontSize: 14,
+                  }}
+                >
+                  Minimum deposit: ${Number(pricing?.minimumDeposit || 0).toFixed(2)}
+                </Text>
+              </View>
+
+              <Text
+                style={{
+                  marginTop: 22,
+                  marginBottom: 10,
+                  color: COLORS.navy,
+                  fontSize: 16,
+                  fontWeight: "800",
+                }}
+              >
+                Payment method
+              </Text>
+
+              <View
+                style={{
+                  flexDirection: "row",
+                  flexWrap: "wrap",
+                  gap: 10,
+                }}
+              >
+                {(bootstrap?.paymentMethods || []).map(
+                  (method) => (
+                    <Pressable
+                      key={method.method}
+                      onPress={() =>
+                        setPaymentMethod(method.method)
+                      }
+                      style={{
+                        paddingHorizontal: 14,
+                        paddingVertical: 12,
+                        borderRadius: 16,
+                        borderWidth: 1,
+                        borderColor:
+                          paymentMethod === method.method
+                            ? COLORS.gold
+                            : COLORS.border,
+                        backgroundColor:
+                          paymentMethod === method.method
+                            ? COLORS.lightGold
+                            : COLORS.white,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: COLORS.navy,
+                          fontWeight: "800",
+                        }}
+                      >
+                        {method.displayName}
+                      </Text>
+                    </Pressable>
+                  ),
+                )}
+              </View>
+
+              <Text
+                style={{
+                  marginTop: 20,
+                  marginBottom: 8,
+                  color: COLORS.navy,
+                  fontSize: 14,
+                  fontWeight: "700",
+                }}
+              >
+                Charge now
+              </Text>
+              <TextInput
+                value={paymentAmount}
+                onChangeText={(value) => {
+                  setPaymentAmount(value);
+
+                  if (
+                    bootstrap?.tipSettings.tipsEnabled &&
+                    bootstrap.tipSettings.tipMode === "percent"
+                  ) {
+                    const amount = Number(value || 0);
+                    const percent = Number(tipPercent || 0);
+                    setTipAmount(
+                      ((amount * percent) / 100).toFixed(2),
+                    );
+                  }
+                }}
+                keyboardType="decimal-pad"
+                placeholder="0.00"
+                style={{
+                  minHeight: 50,
+                  paddingHorizontal: 14,
+                  borderRadius: 16,
+                  borderWidth: 1,
+                  borderColor: COLORS.border,
+                  backgroundColor: COLORS.white,
+                  color: COLORS.navy,
+                  fontSize: 18,
+                  fontWeight: "800",
+                }}
+              />
+
+              {bootstrap?.tipSettings.tipsEnabled ? (
+                <>
+                  <Text
+                    style={{
+                      marginTop: 20,
+                      marginBottom: 8,
+                      color: COLORS.navy,
+                      fontSize: 14,
+                      fontWeight: "700",
+                    }}
+                  >
+                    Tip
+                  </Text>
+
+                  {bootstrap.tipSettings.tipMode === "percent" ? (
+                    <>
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          flexWrap: "wrap",
+                          gap: 8,
+                        }}
+                      >
+                        {bootstrap.tipSettings.tipPercentOptions.map(
+                          (percent) => (
+                            <Pressable
+                              key={percent}
+                              onPress={() => {
+                                setTipPercent(String(percent));
+                                setTipAmount(
+                                  (
+                                    (Number(paymentAmount || 0) *
+                                      Number(percent)) /
+                                    100
+                                  ).toFixed(2),
+                                );
+                              }}
+                              style={{
+                                paddingHorizontal: 12,
+                                paddingVertical: 10,
+                                borderRadius: 14,
+                                borderWidth: 1,
+                                borderColor:
+                                  Number(tipPercent || 0) ===
+                                  Number(percent)
+                                    ? COLORS.gold
+                                    : COLORS.border,
+                                backgroundColor:
+                                  Number(tipPercent || 0) ===
+                                  Number(percent)
+                                    ? COLORS.lightGold
+                                    : COLORS.white,
+                              }}
+                            >
+                              <Text
+                                style={{
+                                  color: COLORS.navy,
+                                  fontWeight: "800",
+                                }}
+                              >
+                                {percent}%
+                              </Text>
+                            </Pressable>
+                          ),
+                        )}
+                      </View>
+                      <Text
+                        style={{
+                          marginTop: 8,
+                          color: COLORS.mutedText,
+                        }}
+                      >
+                        Tip amount: ${Number(tipAmount || 0).toFixed(2)}
+                      </Text>
+                    </>
+                  ) : (
+                    <TextInput
+                      value={tipAmount}
+                      onChangeText={setTipAmount}
+                      keyboardType="decimal-pad"
+                      placeholder="0.00"
+                      style={{
+                        minHeight: 50,
+                        paddingHorizontal: 14,
+                        borderRadius: 16,
+                        borderWidth: 1,
+                        borderColor: COLORS.border,
+                        backgroundColor: COLORS.white,
+                        color: COLORS.navy,
+                        fontSize: 16,
+                      }}
+                    />
+                  )}
+                </>
+              ) : null}
+
+              <Text
+                style={{
+                  marginTop: 20,
+                  marginBottom: 8,
+                  color: COLORS.navy,
+                  fontSize: 14,
+                  fontWeight: "700",
+                }}
+              >
+                Reference / note
+              </Text>
+              <TextInput
+                value={paymentReference}
+                onChangeText={setPaymentReference}
+                placeholder="Optional"
+                style={{
+                  minHeight: 50,
+                  paddingHorizontal: 14,
+                  borderRadius: 16,
+                  borderWidth: 1,
+                  borderColor: COLORS.border,
+                  backgroundColor: COLORS.white,
+                  color: COLORS.navy,
+                  fontSize: 16,
+                }}
+              />
+
+              {createBookingError ? (
+                <Text
+                  style={{
+                    marginTop: 14,
+                    color: COLORS.error,
+                    fontWeight: "700",
+                  }}
+                >
+                  {createBookingError}
+                </Text>
+              ) : null}
+
+              <View
+                style={{
+                  marginTop: 26,
+                  flexDirection: "row",
+                  gap: 12,
+                }}
+              >
+                <Pressable
+                  disabled={creatingBooking}
+                  onPress={() => {
+                    setPaymentModalOpen(false);
+
+                    if (
+                      bootstrap?.contractSettings
+                        .require_contract_before_payment !== false
+                    ) {
+                      setContractModalOpen(true);
+                    }
+                  }}
+                  style={{
+                    flex: 1,
+                    minHeight: 56,
+                    borderRadius: 18,
+                    borderWidth: 1,
+                    borderColor: COLORS.border,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: COLORS.white,
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: COLORS.navy,
+                      fontWeight: "800",
+                      fontSize: 16,
+                    }}
+                  >
+                    Back
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  disabled={creatingBooking}
+                  onPress={() => {
+                    void submitCompletedBooking();
+                  }}
+                  style={{
+                    flex: 2,
+                    minHeight: 56,
+                    borderRadius: 18,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: creatingBooking
+                      ? COLORS.border
+                      : COLORS.navy,
+                  }}
+                >
+                  {creatingBooking ? (
+                    <ActivityIndicator color={COLORS.white} />
+                  ) : (
+                    <Text
+                      style={{
+                        color: COLORS.white,
+                        fontWeight: "900",
+                        fontSize: 17,
+                      }}
+                    >
+                      Create Booking
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
+            </ScrollView>
+          </SafeAreaView>
+        </Modal>
 
         <View style={styles.footer}>
           {step > 1 ? (
@@ -1402,9 +2775,9 @@ const [
               ]}
             >
               {step === 5
-                ? creatingBooking
-                  ? "Creating..."
-                  : "Create Booking"
+                ? completionStrategy === "staff_send_to_customer"
+                  ? "Create temporary booking"
+                  : "Continue"
                 : "Continue"}
             </Text>
           </Pressable>
@@ -2615,11 +3988,6 @@ function ReviewStep({
         ) : null}
       </View>
 
-      <View style={styles.reviewReadOnlyNote}>
-        <Text style={styles.reviewMuted}>
-          Review is read-only for this checkpoint. Booking creation will be connected to the shared server workflow next.
-        </Text>
-      </View>
     </>
   );
 }

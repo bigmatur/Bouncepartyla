@@ -7,6 +7,7 @@ import { normalizeTaxRatePercent } from "@/lib/tax/normalize-tax-rate";
 export type CanonicalBookingPricingResult = {
   ok: boolean;
   subtotal: number;
+  discountAmount: number;
   deliveryFee: number;
   taxRate: number;
   taxAmount: number;
@@ -35,6 +36,7 @@ export async function calculateCanonicalBookingPricing(input: {
   setupState?: string | null;
   setupZip?: string | null;
   subtotal: number;
+  discountAmount?: number;
   depositAmount?: number;
   destinationLat?: number | null;
   destinationLng?: number | null;
@@ -45,6 +47,12 @@ export async function calculateCanonicalBookingPricing(input: {
   const setupState = String(input.setupState || "CA").trim() || "CA";
   const setupZip = String(input.setupZip || "").trim();
   const subtotal = money(input.subtotal);
+  const discountAmount = money(
+    Math.max(
+      0,
+      Math.min(money(input.discountAmount), subtotal),
+    ),
+  );
   const depositAmount = money(input.depositAmount);
 
   const { data: settingsRows, error: settingsError } = await input.supabase
@@ -148,14 +156,20 @@ export async function calculateCanonicalBookingPricing(input: {
     }
   }
 
-  const taxableAmount = money(subtotal + deliveryFee);
+  const taxableSubtotal = money(
+    Math.max(subtotal - discountAmount, 0),
+  );
+  const taxableAmount = money(taxableSubtotal + deliveryFee);
   const taxAmount = money(taxableAmount * (taxRate / 100));
-  const totalAmount = money(subtotal + deliveryFee + taxAmount);
+  const totalAmount = money(
+    taxableSubtotal + deliveryFee + taxAmount,
+  );
   const balanceDue = money(Math.max(totalAmount - depositAmount, 0));
 
   return {
     ok: !deliveryError && !taxError,
     subtotal,
+    discountAmount,
     deliveryFee,
     taxRate,
     taxAmount,

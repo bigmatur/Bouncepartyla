@@ -3964,6 +3964,23 @@ async function createBookingActionInternal(
         `/admin/bookings/${bookingId}`,
       );
 
+      if (
+        executionContext?.returnResult
+      ) {
+        return {
+          bookingId,
+          reusedExistingBooking: false,
+          completionUrl: null,
+          completionEmailStatus:
+            "not_configured" as const,
+          status,
+          totalAmount,
+          balanceDue,
+          stripeCheckoutUrl:
+            session.url,
+        };
+      }
+
       redirect(
         session.url,
       );
@@ -4230,6 +4247,52 @@ export async function createMobileBookingAction(
   const bookingAttemptId =
     String(body.bookingAttemptId || "").trim();
 
+  const completionStrategy =
+    body.completionStrategy ===
+    "staff_complete_now"
+      ? "staff_complete_now"
+      : "staff_send_to_customer";
+
+  const contractInput =
+    body.contract &&
+    typeof body.contract === "object"
+      ? (body.contract as Record<string, unknown>)
+      : {};
+
+  const paymentInput =
+    body.payment &&
+    typeof body.payment === "object"
+      ? (body.payment as Record<string, unknown>)
+      : {};
+
+  const paymentMethod =
+    String(paymentInput.method || "").trim();
+  const paymentAmount =
+    Number(paymentInput.amount || 0);
+  const paymentReference =
+    String(paymentInput.reference || "").trim();
+  const tipMode =
+    paymentInput.tipMode === "amount"
+      ? "amount"
+      : "percent";
+  const tipPercent =
+    Number(paymentInput.tipPercent || 0);
+  const tipAmount =
+    Number(paymentInput.tipAmount || 0);
+  const discountAmountInput =
+    Number(paymentInput.discountAmount || 0);
+  const discountPassword =
+    String(paymentInput.discountPassword || "");
+
+  const contractAccepted =
+    contractInput.accepted === true;
+  const contractSignerName =
+    String(contractInput.signerName || "").trim();
+  const contractManualSignature =
+    String(contractInput.manualSignature || "").trim();
+  const contractSignatureDataUrl =
+    String(contractInput.signatureDataUrl || "").trim();
+
   if (!bookingAttemptId) {
     throw new Error(
       "Booking attempt ID is required.",
@@ -4258,6 +4321,7 @@ export async function createMobileBookingAction(
       setupCity,
       setupState,
       setupZip,
+      discountAmount: discountAmountInput,
       products: Array.isArray(body.products)
         ? (body.products as any)
         : [],
@@ -4273,6 +4337,21 @@ export async function createMobileBookingAction(
         "Booking pricing is not ready.",
     );
   }
+
+  const safeMobileDiscountAmount =
+    prepared.pricing.discountAmount;
+
+  const trustedTaxableSubtotal =
+    prepared.pricing.taxableAmount;
+
+  const trustedTaxAmount =
+    prepared.pricing.taxAmount;
+
+  const trustedTotalAmount =
+    prepared.pricing.totalAmount;
+
+  const trustedBalanceDue =
+    prepared.pricing.balanceDue;
 
   const existingCustomerId =
     String(body.existingCustomerId || "").trim();
@@ -4371,10 +4450,17 @@ export async function createMobileBookingAction(
   formData.set("setupCity", setupCity);
   formData.set("setupState", setupState);
   formData.set("setupZip", setupZip);
-  formData.set("status", "inventory_reserved");
+  formData.set(
+    "status",
+    completionStrategy === "staff_complete_now"
+      ? normalizeBookingStatus(
+          String(body.status || "inventory_reserved"),
+        )
+      : "inventory_reserved",
+  );
   formData.set(
     "completionStrategy",
-    "staff_send_to_customer",
+    completionStrategy,
   );
   formData.set(
     "deliveryFee",
@@ -4388,11 +4474,30 @@ export async function createMobileBookingAction(
     "depositAmount",
     String(prepared.pricing.minimumDeposit),
   );
-  formData.set("paymentAmount", "0");
-  formData.set("tipAmount", "0");
-  formData.set("tipPercent", "0");
-  formData.set("discountAmount", "0");
-  formData.set("contractAccepted", "false");
+  formData.set("paymentMethod", paymentMethod);
+  formData.set("paymentAmount", String(paymentAmount));
+  formData.set("paymentReference", paymentReference);
+  formData.set("tipMode", tipMode);
+  formData.set("tipAmount", String(tipAmount));
+  formData.set("tipPercent", String(tipPercent));
+  formData.set(
+    "discountAmount",
+    String(safeMobileDiscountAmount),
+  );
+  formData.set("discountPassword", discountPassword);
+  formData.set(
+    "contractAccepted",
+    contractAccepted ? "true" : "false",
+  );
+  formData.set("contractSignerName", contractSignerName);
+  formData.set(
+    "contractManualSignature",
+    contractManualSignature,
+  );
+  formData.set(
+    "contractSignatureDataUrl",
+    contractSignatureDataUrl,
+  );
 
   prepared.trustedProducts.forEach(
     (item, index) => {
@@ -4476,13 +4581,13 @@ export async function createMobileBookingAction(
           prepared.pricing.deliveryFee,
         taxRate: prepared.pricing.taxRate,
         taxAmount:
-          prepared.pricing.taxAmount,
+          trustedTaxAmount,
         totalAmount:
-          prepared.pricing.totalAmount,
+          trustedTotalAmount,
         depositAmount:
           prepared.pricing.minimumDeposit,
         balanceDue:
-          prepared.pricing.balanceDue,
+          trustedBalanceDue,
       },
     },
     () => createBookingActionInternal(formData),
