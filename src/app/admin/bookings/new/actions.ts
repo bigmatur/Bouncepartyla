@@ -2528,6 +2528,7 @@ async function autoCreateRouteStopsForBooking({
   customerPhone,
   balanceDue,
   items,
+  supabaseClient,
 }: {
   bookingId: string;
   eventDate: string;
@@ -2541,8 +2542,10 @@ async function autoCreateRouteStopsForBooking({
   customerPhone: string;
   balanceDue: number;
   items: ParsedBookingItem[];
+  supabaseClient?: Awaited<ReturnType<typeof createClient>>;
 }) {
-  const supabase = createServiceClient();
+  const supabase =
+    supabaseClient ?? createServiceClient();
 
   const existingResult =
     await supabase
@@ -3903,6 +3906,10 @@ async function createBookingActionInternal(
         "",
       balanceDue,
       items,
+      supabaseClient:
+        executionContext?.supabase
+          ? supabase
+          : undefined,
     });
   }
 

@@ -452,6 +452,8 @@ const [
 
   const [contractModalOpen, setContractModalOpen] =
     useState(false);
+  const [contractSignatureActive, setContractSignatureActive] =
+    useState(false);
   const [paymentModalOpen, setPaymentModalOpen] =
     useState(false);
   const [contractAccepted, setContractAccepted] =
@@ -2141,6 +2143,7 @@ const [
             </View>
 
             <ScrollView
+              scrollEnabled={!contractSignatureActive}
               contentContainerStyle={{
                 padding: 20,
                 paddingBottom: 40,
@@ -2218,8 +2221,12 @@ const [
                 <SignatureCanvas
                   ref={signatureRef}
                   onOK={handleCapturedSignature}
-                  onBegin={() =>
-                    setCreateBookingError("")
+                  onBegin={() => {
+                    setContractSignatureActive(true);
+                    setCreateBookingError("");
+                  }}
+                  onEnd={() =>
+                    setContractSignatureActive(false)
                   }
                   descriptionText=""
                   clearText="Clear"
