@@ -15,7 +15,12 @@ import {
 } from "react-native";
 
 import { supabase } from "../../lib/supabase";
-import { cancelBookingFromMobile } from "../../lib/mobileApi";
+import {
+  addBookingPaymentFromMobile,
+  cancelBookingFromMobile,
+  loadBookingPaymentSettingsFromMobile,
+  type MobileBookingPaymentSettings,
+} from "../../lib/mobileApi";
 
 type BookingCustomer = {
   id?: string | null;
@@ -67,6 +72,15 @@ type MobileAdminBooking = {
   booking_items?: BookingItem[] | null;
 };
 
+type MobilePayment = {
+  id: string;
+  amount?: number | string | null;
+  method?: string | null;
+  status?: string | null;
+  paid_at?: string | null;
+  created_at?: string | null;
+};
+
 type BookingFilter = "active" | "today" | "upcoming" | "archived" | "all";
 
 function firstRelation<T>(value: T | T[] | null | undefined): T | null {
@@ -83,6 +97,21 @@ function localDateISO() {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "Date not available";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function formatDate(value: string | null | undefined) {
@@ -608,13 +637,213 @@ function BookingDetailsModal({
   onClose: () => void;
   onBookingChanged: (booking: MobileAdminBooking) => void;
 }) {
+  const [savingArchive, setSavingArchive] = useState(false);
+  const [savingCancel, setSavingCancel] = useState(false);
+  const [cancellationReason, setCancellationReason] = useState("");
+  const [payments, setPayments] = useState<MobilePayment[]>([]);
+  const [paymentsLoading, setPaymentsLoading] = useState(false);
+  const [paymentsError, setPaymentsError] = useState("");
+  const [paymentEditorOpen, setPaymentEditorOpen] = useState(false);
+  const [paymentSettings, setPaymentSettings] =
+    useState<MobileBookingPaymentSettings | null>(null);
+  const [paymentSettingsLoading, setPaymentSettingsLoading] = useState(false);
+  const [paymentSettingsError, setPaymentSettingsError] = useState("");
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("");
+  const [paymentNote, setPaymentNote] = useState("");
+  const [savingPayment, setSavingPayment] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const bookingId = booking?.id;
+
+    if (!bookingId) {
+      setPayments([]);
+      setPaymentsError("");
+      setPaymentsLoading(false);
+
+      return () => {
+        active = false;
+      };
+    }
+
+    const loadPayments = async () => {
+      setPaymentsLoading(true);
+      setPaymentsError("");
+
+      const result = await supabase
+        .from("payments")
+        .select("id, amount, method, status, paid_at, created_at")
+        .eq("booking_id", bookingId)
+        .order("created_at", { ascending: false });
+
+      if (!active) return;
+
+      if (result.error) {
+        setPayments([]);
+        setPaymentsError(result.error.message);
+      } else {
+        setPayments((result.data || []) as MobilePayment[]);
+      }
+
+      setPaymentsLoading(false);
+    };
+
+    void loadPayments();
+
+    return () => {
+      active = false;
+    };
+  }, [booking?.id]);
+
+  useEffect(() => {
+    setPaymentEditorOpen(false);
+    setPaymentSettings(null);
+    setPaymentSettingsError("");
+    setPaymentAmount("");
+    setPaymentMethod("");
+    setPaymentNote("");
+    setSavingPayment(false);
+  }, [booking?.id]);
+
   if (!booking) return null;
 
   const customer = firstRelation(booking.customers);
   const balanceDue = Number(booking.balance_due || 0);
-  const [savingArchive, setSavingArchive] = useState(false);
-  const [savingCancel, setSavingCancel] = useState(false);
-  const [cancellationReason, setCancellationReason] = useState("");
+  const totalPaid = payments.reduce((sum, payment) => {
+    if (String(payment.status || "") !== "paid") return sum;
+    return sum + Number(payment.amount || 0);
+  }, 0);
+
+  const openPaymentEditor = async () => {
+    if (savingPayment) return;
+
+    setPaymentEditorOpen(true);
+    setPaymentAmount(balanceDue.toFixed(2));
+    setPaymentNote("");
+    setPaymentSettingsError("");
+
+    if (paymentSettings) {
+      if (!paymentMethod && paymentSettings.paymentMethods[0]?.method) {
+        setPaymentMethod(paymentSettings.paymentMethods[0].method);
+      }
+      return;
+    }
+
+    setPaymentSettingsLoading(true);
+    const result = await loadBookingPaymentSettingsFromMobile();
+    setPaymentSettingsLoading(false);
+
+    if (!result.success || !result.data) {
+      setPaymentSettingsError(
+        result.error || "Could not load payment settings.",
+      );
+      return;
+    }
+
+    setPaymentSettings(result.data);
+
+    if (result.data.paymentMethods[0]?.method) {
+      setPaymentMethod(result.data.paymentMethods[0].method);
+    }
+  };
+
+  const submitPayment = async () => {
+    if (savingPayment) return;
+
+    const normalizedAmount = Number(
+      String(paymentAmount || "").replace(",", "."),
+    );
+
+    if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
+      Alert.alert(
+        "Invalid amount",
+        "Payment amount must be greater than 0.",
+      );
+      return;
+    }
+
+    if (!paymentMethod) {
+      Alert.alert(
+        "Payment method required",
+        "Choose a payment method.",
+      );
+      return;
+    }
+
+    setSavingPayment(true);
+
+    const result = await addBookingPaymentFromMobile({
+      bookingId: booking.id,
+      amount: normalizedAmount,
+      baseAmount: normalizedAmount,
+      tipAmount: 0,
+      method: paymentMethod,
+      note: paymentNote,
+      discountAmount: Number(booking.discount_amount || 0),
+    });
+
+    setSavingPayment(false);
+
+    if (!result.success || !result.data) {
+      Alert.alert(
+        "Payment not added",
+        result.error || "Could not add payment.",
+      );
+      return;
+    }
+
+    if (result.data.stripeCheckoutUrl) {
+      const url = result.data.stripeCheckoutUrl;
+
+      if (await Linking.canOpenURL(url)) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert(
+          "Stripe checkout",
+          "Could not open the Stripe checkout page.",
+        );
+      }
+
+      setPaymentEditorOpen(false);
+      return;
+    }
+
+    const nextBooking: MobileAdminBooking = {
+      ...booking,
+      balance_due: result.data.balanceDue,
+      discount_amount: result.data.discountAmount,
+      tax_amount: result.data.taxAmount,
+      total_amount: result.data.totalAmount,
+    };
+
+    onBookingChanged(nextBooking);
+
+    if (result.data.paymentId) {
+      setPayments((current) => [
+        {
+          id: result.data!.paymentId!,
+          amount: result.data!.amount,
+          method: result.data!.method,
+          status: "paid",
+          paid_at: result.data!.paidAt,
+          created_at: result.data!.paidAt,
+        },
+        ...current.filter(
+          (payment) => payment.id !== result.data!.paymentId,
+        ),
+      ]);
+    }
+
+    setPaymentEditorOpen(false);
+    setPaymentAmount("");
+    setPaymentNote("");
+
+    Alert.alert(
+      "Payment added",
+      `${money(result.data.amount)} was recorded. Remaining balance: ${money(result.data.balanceDue)}.`,
+    );
+  };
 
   const callCustomer = async () => {
     const phone = String(customer?.phone || "")
@@ -955,6 +1184,214 @@ function BookingDetailsModal({
                 strong
                 danger={balanceDue > 0}
               />
+              <View style={styles.detailDivider} />
+              <DetailRow
+                label="Paid"
+                value={paymentsLoading ? "Loading..." : money(totalPaid)}
+                strong
+              />
+
+              {balanceDue > 0 ? (
+                <>
+                  <View style={styles.detailDivider} />
+
+                  <Pressable
+                    disabled={savingPayment}
+                    onPress={() => void openPaymentEditor()}
+                    style={({ pressed }) => [
+                      styles.mobilePaymentPrimaryButton,
+                      savingPayment ? styles.disabledButton : null,
+                      pressed ? styles.pressed : null,
+                    ]}
+                  >
+                    {savingPayment ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <Text style={styles.mobilePaymentPrimaryButtonText}>
+                        PAY REMAINING BALANCE
+                      </Text>
+                    )}
+                  </Pressable>
+
+                  {paymentEditorOpen ? (
+                    <View style={styles.mobilePaymentEditor}>
+                      <Text style={styles.mobilePaymentEditorTitle}>
+                        Add payment
+                      </Text>
+                      <Text style={styles.mobilePaymentHint}>
+                        Balance due {money(balanceDue)}
+                      </Text>
+
+                      <View style={styles.mobilePaymentField}>
+                        <Text style={styles.mobilePaymentLabel}>AMOUNT</Text>
+                        <TextInput
+                          value={paymentAmount}
+                          onChangeText={setPaymentAmount}
+                          keyboardType="decimal-pad"
+                          placeholder="0.00"
+                          placeholderTextColor="#9c9184"
+                          style={styles.mobilePaymentInput}
+                        />
+                      </View>
+
+                      <View style={styles.mobilePaymentField}>
+                        <Text style={styles.mobilePaymentLabel}>
+                          PAYMENT METHOD
+                        </Text>
+
+                        {paymentSettingsLoading ? (
+                          <ActivityIndicator size="small" color="#23313f" />
+                        ) : paymentSettingsError ? (
+                          <View style={styles.mobilePaymentErrorBox}>
+                            <Text style={styles.mobilePaymentErrorText}>
+                              {paymentSettingsError}
+                            </Text>
+                            <Pressable
+                              onPress={() => {
+                                setPaymentSettings(null);
+                                void openPaymentEditor();
+                              }}
+                              style={({ pressed }) => [
+                                styles.mobilePaymentRetryButton,
+                                pressed ? styles.pressed : null,
+                              ]}
+                            >
+                              <Text style={styles.mobilePaymentRetryButtonText}>
+                                RETRY
+                              </Text>
+                            </Pressable>
+                          </View>
+                        ) : (
+                          <View style={styles.mobilePaymentMethodWrap}>
+                            {(paymentSettings?.paymentMethods || []).map(
+                              (method) => {
+                                const selected =
+                                  paymentMethod === method.method;
+
+                                return (
+                                  <Pressable
+                                    key={method.method}
+                                    onPress={() =>
+                                      setPaymentMethod(method.method)
+                                    }
+                                    style={({ pressed }) => [
+                                      styles.mobilePaymentMethodChip,
+                                      selected
+                                        ? styles.mobilePaymentMethodChipSelected
+                                        : null,
+                                      pressed ? styles.pressed : null,
+                                    ]}
+                                  >
+                                    <Text
+                                      style={[
+                                        styles.mobilePaymentMethodChipText,
+                                        selected
+                                          ? styles.mobilePaymentMethodChipTextSelected
+                                          : null,
+                                      ]}
+                                    >
+                                      {method.displayName}
+                                    </Text>
+                                  </Pressable>
+                                );
+                              },
+                            )}
+                          </View>
+                        )}
+                      </View>
+
+                      <View style={styles.mobilePaymentField}>
+                        <Text style={styles.mobilePaymentLabel}>NOTE</Text>
+                        <TextInput
+                          value={paymentNote}
+                          onChangeText={setPaymentNote}
+                          placeholder="Optional payment note"
+                          placeholderTextColor="#9c9184"
+                          style={styles.mobilePaymentInput}
+                        />
+                      </View>
+
+                      <View style={styles.mobilePaymentActions}>
+                        <Pressable
+                          disabled={savingPayment}
+                          onPress={() => setPaymentEditorOpen(false)}
+                          style={({ pressed }) => [
+                            styles.mobilePaymentSecondaryButton,
+                            pressed ? styles.pressed : null,
+                          ]}
+                        >
+                          <Text style={styles.mobilePaymentSecondaryButtonText}>
+                            CANCEL
+                          </Text>
+                        </Pressable>
+
+                        <Pressable
+                          disabled={
+                            savingPayment ||
+                            paymentSettingsLoading ||
+                            Boolean(paymentSettingsError) ||
+                            !paymentMethod
+                          }
+                          onPress={() => void submitPayment()}
+                          style={({ pressed }) => [
+                            styles.mobilePaymentSaveButton,
+                            savingPayment ||
+                            paymentSettingsLoading ||
+                            Boolean(paymentSettingsError) ||
+                            !paymentMethod
+                              ? styles.disabledButton
+                              : null,
+                            pressed ? styles.pressed : null,
+                          ]}
+                        >
+                          {savingPayment ? (
+                            <ActivityIndicator
+                              size="small"
+                              color="#ffffff"
+                            />
+                          ) : (
+                            <Text style={styles.mobilePaymentSaveButtonText}>
+                              {paymentMethod === "stripe"
+                                ? "OPEN STRIPE"
+                                : "RECORD PAYMENT"}
+                            </Text>
+                          )}
+                        </Pressable>
+                      </View>
+                    </View>
+                  ) : null}
+                </>
+              ) : null}
+
+              {paymentsError ? (
+                <>
+                  <View style={styles.detailDivider} />
+                  <Text style={styles.notesText}>Payment history unavailable: {paymentsError}</Text>
+                </>
+              ) : null}
+
+              {!paymentsLoading && !paymentsError && payments.length === 0 ? (
+                <>
+                  <View style={styles.detailDivider} />
+                  <Text style={styles.notesText}>No payment records yet.</Text>
+                </>
+              ) : null}
+
+              {!paymentsLoading && !paymentsError && payments.length > 0 ? (
+                <>
+                  <View style={styles.detailDivider} />
+                  <Text style={styles.detailSectionTitle}>Payment history</Text>
+                  {payments.map((payment) => (
+                    <View key={payment.id}>
+                      <View style={styles.detailDivider} />
+                      <DetailRow
+                        label={`${titleCase(payment.method)} · ${titleCase(payment.status)}\n${formatDateTime(payment.paid_at || payment.created_at)}`}
+                        value={money(payment.amount)}
+                      />
+                    </View>
+                  ))}
+                </>
+              ) : null}
             </View>
 
             <Text style={styles.detailSectionTitle}>Booking actions</Text>
@@ -1302,4 +1739,139 @@ const styles = StyleSheet.create({
   },
   notesCard: { backgroundColor: "#ffffff", borderRadius: 18, padding: 14 },
   notesText: { color: "#6c6258", fontSize: 11, lineHeight: 17 },
+  mobilePaymentPrimaryButton: {
+    minHeight: 48,
+    borderRadius: 14,
+    backgroundColor: "#23313f",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+    marginTop: 4,
+  },
+  mobilePaymentPrimaryButtonText: {
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+  },
+  mobilePaymentEditor: {
+    marginTop: 12,
+    borderRadius: 18,
+    backgroundColor: "#f5f1e8",
+    padding: 14,
+    gap: 12,
+  },
+  mobilePaymentEditorTitle: {
+    color: "#23313f",
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  mobilePaymentHint: {
+    color: "#6c6258",
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  mobilePaymentField: {
+    gap: 6,
+  },
+  mobilePaymentLabel: {
+    color: "#81766a",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  mobilePaymentInput: {
+    minHeight: 46,
+    borderRadius: 13,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e6dccf",
+    paddingHorizontal: 12,
+    color: "#23313f",
+    fontSize: 14,
+  },
+  mobilePaymentMethodWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  mobilePaymentMethodChip: {
+    minHeight: 38,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#ddd2c4",
+  },
+  mobilePaymentMethodChipSelected: {
+    backgroundColor: "#23313f",
+    borderColor: "#23313f",
+  },
+  mobilePaymentMethodChipText: {
+    color: "#23313f",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  mobilePaymentMethodChipTextSelected: {
+    color: "#ffffff",
+  },
+  mobilePaymentActions: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  mobilePaymentSecondaryButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 13,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#ddd2c4",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  mobilePaymentSecondaryButtonText: {
+    color: "#23313f",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  mobilePaymentSaveButton: {
+    flex: 1.4,
+    minHeight: 46,
+    borderRadius: 13,
+    backgroundColor: "#b88645",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  mobilePaymentSaveButtonText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  mobilePaymentErrorBox: {
+    gap: 8,
+  },
+  mobilePaymentErrorText: {
+    color: "#8c2e2a",
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  mobilePaymentRetryButton: {
+    alignSelf: "flex-start",
+    minHeight: 34,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#ddd2c4",
+  },
+  mobilePaymentRetryButtonText: {
+    color: "#23313f",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+
 });

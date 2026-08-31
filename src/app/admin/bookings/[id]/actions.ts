@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createStripeCheckoutSession } from "@/lib/payments/stripe";
 import { processNotificationQueueBestEffort } from "@/lib/notifications/engine";
+import { addBookingPaymentCore } from "@/lib/booking/admin-booking-payment";
 import { checkBookingItemAvailabilityAction } from "../new/availability-actions";
 import { scryptSync, timingSafeEqual } from "node:crypto";
 
@@ -1268,160 +1269,28 @@ export async function addPaymentAction(formData: FormData) {
   const note = getString(formData, "note");
   const discountAmountInput = getNumber(formData, "discountAmount", 0);
   const discountPassword = getString(formData, "discountPassword");
-
   const amount = Number(String(amountRaw || "").replace(",", "."));
 
-  if (!bookingId) {
-    throw new Error("Booking ID is required.");
-  }
-
-  if (!amount || amount <= 0) {
-    throw new Error("Payment amount must be greater than 0.");
-  }
-
-  if (!method) {
-    throw new Error("Payment method is required.");
-  }
-
-  let paymentId = "";
-
-  if (method !== "stripe") {
-    const result = await supabase
-      .from("payments")
-      .insert({
-        booking_id: bookingId,
-        amount,
-        method,
-        status: "paid",
-        tip_amount: Number(tipAmount.toFixed(2)),
-        note: note || null,
-        paid_at: new Date().toISOString(),
-      })
-      .select("id")
-      .single();
-
-    if (result.error) {
-      throw new Error(result.error.message);
-    }
-
-    paymentId = String((result.data as any)?.id || "");
-  }
-
-  const bookingResult = await supabase
-    .from("bookings")
-    .select("id, subtotal, discount_amount, delivery_fee, tax_rate, total_amount, balance_due, status")
-    .eq("id", bookingId)
-    .maybeSingle();
-
-  if (bookingResult.error) {
-    throw new Error(bookingResult.error.message);
-  }
-
-  const booking = bookingResult.data as any;
-  const subtotal = Number(booking?.subtotal || 0);
-  const currentDiscountAmount = Number(booking?.discount_amount || 0);
-  const deliveryFee = Number(booking?.delivery_fee || 0);
-  const taxRate = Number(booking?.tax_rate || 0);
-  const currentTotalAmount = Number(booking?.total_amount || 0);
-  const currentBalance = Number(booking?.balance_due || 0);
-
-  const discountAmount = Number(
-    Math.max(0, Math.min(discountAmountInput, subtotal)).toFixed(2)
-  );
-  const discountChanged = currentDiscountAmount.toFixed(2) !== discountAmount.toFixed(2);
-
-  if (discountChanged && discountAmount > 0) {
-    const discountSettings = await getDiscountSecuritySettings();
-
-    if (discountSettings.discount_password_enabled === true) {
-      const validPassword = isValidPasswordHash(
-        (discountSettings as any).discount_password_hash,
-        discountPassword
-      );
-
-      if (!validPassword) {
-        if (paymentId) {
-          await supabase.from("payments").delete().eq("id", paymentId);
-        }
-        throw new Error("Invalid discount password.");
-      }
-    }
-  }
-
-  const taxableSubtotal = Number((subtotal - discountAmount).toFixed(2));
-  const taxAmount = Number(((taxableSubtotal + deliveryFee) * (taxRate / 100)).toFixed(2));
-  const totalAmount = Number((taxableSubtotal + deliveryFee + taxAmount).toFixed(2));
-  const discountDelta = Number((currentTotalAmount - totalAmount).toFixed(2));
-  const balanceAfterDiscount = Number(Math.max(0, currentBalance - discountDelta).toFixed(2));
-  // Stripe has not been paid yet. Keep the balance until the verified webhook
-  // records the payment. Manual methods keep the existing immediate behavior.
-  const appliedBaseAmount = Number(
-    Math.max(0, baseAmount > 0 ? baseAmount : amount - tipAmount).toFixed(2)
-  );
-  const nextBalance = method === "stripe"
-    ? balanceAfterDiscount
-    : Number(Math.max(0, balanceAfterDiscount - appliedBaseAmount).toFixed(2));
-  const bookingUpdatePayload: Record<string, any> = {
-    balance_due: nextBalance,
-  };
-
-  if (discountChanged) {
-    bookingUpdatePayload.discount_amount = discountAmount;
-    bookingUpdatePayload.tax_amount = taxAmount;
-    bookingUpdatePayload.total_amount = totalAmount;
-  }
-
-  const bookingUpdateResult = await supabase
-    .from("bookings")
-    .update(bookingUpdatePayload)
-    .eq("id", bookingId);
-
-  if (bookingUpdateResult.error) {
-    if (paymentId) {
-      await supabase.from("payments").delete().eq("id", paymentId);
-    }
-    throw new Error(bookingUpdateResult.error.message);
-  }
-
-  const routeStopsUpdateResult = await supabase
-    .from("route_stops")
-    .update({ balance_due: nextBalance })
-    .eq("booking_id", bookingId)
-    .eq("stop_type", "delivery")
-    .not("status", "in", '(cancelled,failed)');
-
-  if (routeStopsUpdateResult.error) {
-    if (paymentId) {
-      await supabase.from("payments").delete().eq("id", paymentId);
-    }
-
-    await supabase
-      .from("bookings")
-      .update({ balance_due: currentBalance })
-      .eq("id", bookingId);
-
-    throw new Error(routeStopsUpdateResult.error.message);
-  }
-
-  if (method === "stripe") {
-    const session = await createStripeCheckoutSession({
-      bookingId,
-      amount,
-      baseAmount: baseAmount > 0 ? baseAmount : Math.max(0, amount - tipAmount),
-      tipAmount,
-      source: "admin_booking",
-      successPath: `/admin/bookings/${bookingId}`,
-      cancelPath: `/admin/bookings/${bookingId}`,
-      description: `Bounce Party LA booking payment`,
-    });
-
-    revalidatePath(`/admin/bookings/${bookingId}`);
-    redirect(session.url);
-  }
-
-  await processNotificationQueueBestEffort({ bookingId, limit: 20 });
+  const result = await addBookingPaymentCore({
+    supabase,
+    bookingId,
+    amount,
+    method,
+    baseAmount,
+    tipAmount,
+    note,
+    discountAmount: discountAmountInput,
+    discountPassword,
+    stripeSuccessPath: `/admin/bookings/${bookingId}`,
+    stripeCancelPath: `/admin/bookings/${bookingId}`,
+  });
 
   revalidatePath(`/admin/bookings/${bookingId}`);
+
+  if (result.stripeCheckoutUrl) {
+    redirect(result.stripeCheckoutUrl);
+  }
+
   revalidatePath("/admin/bookings");
   revalidatePath("/admin/routes");
 

@@ -539,3 +539,93 @@ export async function createNewBookingFromMobile(params: {
     data: result.data.data,
   };
 }
+
+
+export type MobileBookingPaymentSettings = {
+  paymentMethods: Array<{
+    method: string;
+    displayName: string;
+  }>;
+  tipSettings: {
+    tipsEnabled: boolean;
+    allowCustomTip: boolean;
+    tipMode: "percent" | "amount";
+    defaultTipPercent: number;
+    defaultTipAmount: number;
+    tipPercentOptions: number[];
+    tipAmountOptions: number[];
+  };
+};
+
+export type MobileAddBookingPaymentResult = {
+  bookingId: string;
+  paymentId: string | null;
+  method: string;
+  amount: number;
+  baseAmount: number;
+  tipAmount: number;
+  discountAmount: number;
+  taxAmount: number;
+  totalAmount: number;
+  balanceDue: number;
+  paidAt: string | null;
+  stripeCheckoutUrl: string | null;
+};
+
+export async function loadBookingPaymentSettingsFromMobile() {
+  const result = await authenticatedFetch<{
+    success: true;
+    data: MobileBookingPaymentSettings;
+  }>("/api/admin/mobile/bookings/payment", { method: "GET" });
+
+  if (!result.success) {
+    return {
+      success: false as const,
+      error: result.error || "Could not load payment settings.",
+    };
+  }
+
+  if (!result.data?.data) {
+    return {
+      success: false as const,
+      error: "Payment settings were not returned by the server.",
+    };
+  }
+
+  return { success: true as const, data: result.data.data };
+}
+
+export async function addBookingPaymentFromMobile(params: {
+  bookingId: string;
+  amount: number;
+  method: string;
+  baseAmount?: number;
+  tipAmount?: number;
+  note?: string;
+  discountAmount?: number;
+  discountPassword?: string;
+}) {
+  const result = await authenticatedFetch<{
+    success: true;
+    data: MobileAddBookingPaymentResult;
+  }>("/api/admin/mobile/bookings/payment", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+
+  if (!result.success) {
+    return {
+      success: false as const,
+      error: result.error || "Could not add payment.",
+    };
+  }
+
+  if (!result.data?.data) {
+    return {
+      success: false as const,
+      error: "Payment result was not returned by the server.",
+    };
+  }
+
+  return { success: true as const, data: result.data.data };
+}
