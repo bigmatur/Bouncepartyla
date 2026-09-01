@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -10,11 +10,14 @@ import {
 import { StatusBar } from "expo-status-bar";
 import type { Session } from "@supabase/supabase-js";
 
+import { AdminShell } from "./src/admin/AdminShell";
+
 import { LoginScreen } from "./src/auth/LoginScreen";
 import { DriverLocationTracker } from "./src/features/location/DriverLocationTracker";
 import { HomeScreen } from "./src/screens/HomeScreen";
 import { MoreScreen } from "./src/screens/MoreScreen";
 import { ShiftScreen } from "./src/screens/ShiftScreen";
+import { loadMobileAccess, type MobileAccess } from "./src/lib/mobileAccess";
 import { supabase } from "./src/lib/supabase";
 
 type AppTab = "route" | "shift" | "more";
@@ -144,22 +147,131 @@ export default function App() {
   const [session, setSession] =
     useState<Session | null>(null);
 
+  const [access, setAccess] =
+    useState<MobileAccess | null>(null);
+
   const [booting, setBooting] =
     useState(true);
 
-  useEffect(() => {
-    let mounted = true;
+  const [bootError, setBootError] =
+    useState("");
 
-    void supabase.auth
-      .getSession()
-      .then(({ data }) => {
-        if (!mounted) {
+  const bootAttemptRef = useRef(0);
+
+  const applySession = useCallback(
+    async (
+      nextSession: Session | null,
+      attempt: number,
+    ) => {
+      if (attempt !== bootAttemptRef.current) {
+        return;
+      }
+
+      setSession(nextSession);
+
+      if (!nextSession?.user) {
+        setAccess(null);
+        setBootError("");
+        setBooting(false);
+        return;
+      }
+
+      try {
+        const nextAccess =
+          await loadMobileAccess(
+            nextSession.user,
+          );
+
+        if (
+          attempt !==
+          bootAttemptRef.current
+        ) {
           return;
         }
 
-        setSession(data.session);
+        setAccess(nextAccess);
+        setBootError("");
+      } catch (accessError) {
+        if (
+          attempt !==
+          bootAttemptRef.current
+        ) {
+          return;
+        }
+
+        console.error(
+          "[App] Failed to load mobile access:",
+          accessError,
+        );
+
+        setAccess(null);
+        setBootError(
+          accessError instanceof Error
+            ? accessError.message
+            : "Could not load your staff access.",
+        );
+      } finally {
+        if (
+          attempt ===
+          bootAttemptRef.current
+        ) {
+          setBooting(false);
+        }
+      }
+    },
+    [],
+  );
+
+  const bootstrapSession =
+    useCallback(async () => {
+      const attempt =
+        ++bootAttemptRef.current;
+
+      setBooting(true);
+      setBootError("");
+
+      try {
+        const {
+          data,
+          error: sessionError,
+        } =
+          await supabase.auth.getSession();
+
+        if (sessionError) {
+          throw sessionError;
+        }
+
+        await applySession(
+          data.session,
+          attempt,
+        );
+      } catch (sessionError) {
+        if (
+          attempt !==
+          bootAttemptRef.current
+        ) {
+          return;
+        }
+
+        console.error(
+          "[App] Failed to restore session:",
+          sessionError,
+        );
+
+        setSession(null);
+        setAccess(null);
         setBooting(false);
-      });
+
+        setBootError(
+          sessionError instanceof Error
+            ? sessionError.message
+            : "Could not start the app.",
+        );
+      }
+    }, [applySession]);
+
+  useEffect(() => {
+    void bootstrapSession();
 
     const {
       data: { subscription },
@@ -169,16 +281,27 @@ export default function App() {
           _event,
           nextSession,
         ) => {
-          setSession(nextSession);
-          setBooting(false);
+          const attempt =
+            ++bootAttemptRef.current;
+
+          setBooting(true);
+          setBootError("");
+
+          void applySession(
+            nextSession,
+            attempt,
+          );
         },
       );
 
     return () => {
-      mounted = false;
+      ++bootAttemptRef.current;
       subscription.unsubscribe();
     };
-  }, []);
+  }, [
+    applySession,
+    bootstrapSession,
+  ]);
 
   if (booting) {
     return (
@@ -189,7 +312,52 @@ export default function App() {
           size="large"
           color="#23313f"
         />
+
+        <Text style={styles.loadingText}>
+          Starting app…
+        </Text>
       </View>
+    );
+  }
+
+  if (bootError) {
+    return (
+      <SafeAreaView
+        style={styles.bootErrorScreen}
+      >
+        <StatusBar style="dark" />
+
+        <View style={styles.bootErrorCard}>
+          <Text style={styles.bootErrorTitle}>
+            Could not start the app
+          </Text>
+
+          <Text style={styles.bootErrorText}>
+            {bootError}
+          </Text>
+
+          <Pressable
+            accessibilityRole="button"
+            onPress={() =>
+              void bootstrapSession()
+            }
+            style={({ pressed }) => [
+              styles.retryButton,
+              pressed
+                ? styles.pressed
+                : null,
+            ]}
+          >
+            <Text
+              style={
+                styles.retryButtonText
+              }
+            >
+              Try Again
+            </Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
     );
   }
 
@@ -198,10 +366,14 @@ export default function App() {
       <StatusBar style="dark" />
 
       {session ? (
-        <>
-          <DriverLocationTracker />
-          <AppShell />
-        </>
+        access?.interface === "admin" ? (
+          <AdminShell access={access} />
+        ) : (
+          <>
+            <DriverLocationTracker />
+            <AppShell />
+          </>
+        )
       ) : (
         <LoginScreen />
       )}
@@ -214,7 +386,56 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "#f5f1e8",
     flex: 1,
+    gap: 12,
     justifyContent: "center",
+  },
+
+  loadingText: {
+    color: "#6c6258",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+
+  bootErrorScreen: {
+    backgroundColor: "#f5f1e8",
+    flex: 1,
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+
+  bootErrorCard: {
+    backgroundColor: "#ffffff",
+    borderRadius: 20,
+    padding: 22,
+  },
+
+  bootErrorTitle: {
+    color: "#23313f",
+    fontSize: 20,
+    fontWeight: "900",
+  },
+
+  bootErrorText: {
+    color: "#6c6258",
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 8,
+  },
+
+  retryButton: {
+    alignItems: "center",
+    backgroundColor: "#23313f",
+    borderRadius: 14,
+    justifyContent: "center",
+    marginTop: 20,
+    minHeight: 48,
+    paddingHorizontal: 18,
+  },
+
+  retryButtonText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "900",
   },
 
   shell: {

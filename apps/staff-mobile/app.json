@@ -12,16 +12,28 @@
       "bundleIdentifier": "com.bouncepartyla.staff",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Bounce Party LA Staff uses your location to show your assigned route and support live driver navigation.",
-        "UIBackgroundModes": ["location", "audio"]
+        "UIBackgroundModes": [
+          "location",
+          "audio"
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "package": "com.bouncepartyla.staff",
-      "permissions": ["ACCESS_COARSE_LOCATION", "ACCESS_FINE_LOCATION"]
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ]
     },
     "extra": {
       "supabaseUrl": "${EXPO_PUBLIC_SUPABASE_URL}",
-      "supabaseAnonKey": "${EXPO_PUBLIC_SUPABASE_ANON_KEY}"
-    }
+      "supabaseAnonKey": "${EXPO_PUBLIC_SUPABASE_ANON_KEY}",
+      "googleNavigationConfigured": false,
+      "eas": {
+        "projectId": "19be6ae1-98f7-4d57-a7c5-0107dbbf90e6"
+      }
+    },
+    "owner": "bouncepartyla"
   }
 }

@@ -18,7 +18,11 @@ import { supabase } from "../../lib/supabase";
 import {
   addBookingPaymentFromMobile,
   cancelBookingFromMobile,
+  loadBookingDiscountSettingsFromMobile,
   loadBookingPaymentSettingsFromMobile,
+  setBookingArchivedFromMobile,
+  updateBookingDiscountFromMobile,
+  type MobileBookingDiscountSettings,
   type MobileBookingPaymentSettings,
 } from "../../lib/mobileApi";
 
@@ -653,6 +657,15 @@ function BookingDetailsModal({
   const [paymentNote, setPaymentNote] = useState("");
   const [savingPayment, setSavingPayment] = useState(false);
 
+  const [discountEditorOpen, setDiscountEditorOpen] = useState(false);
+  const [discountSettings, setDiscountSettings] =
+    useState<MobileBookingDiscountSettings | null>(null);
+  const [discountSettingsLoading, setDiscountSettingsLoading] = useState(false);
+  const [discountSettingsError, setDiscountSettingsError] = useState("");
+  const [discountAmount, setDiscountAmount] = useState("");
+  const [discountPassword, setDiscountPassword] = useState("");
+  const [savingDiscount, setSavingDiscount] = useState(false);
+
   useEffect(() => {
     let active = true;
     const bookingId = booking?.id;
@@ -704,6 +717,13 @@ function BookingDetailsModal({
     setPaymentMethod("");
     setPaymentNote("");
     setSavingPayment(false);
+
+    setDiscountEditorOpen(false);
+    setDiscountSettings(null);
+    setDiscountSettingsError("");
+    setDiscountAmount("");
+    setDiscountPassword("");
+    setSavingDiscount(false);
   }, [booking?.id]);
 
   if (!booking) return null;
@@ -714,6 +734,109 @@ function BookingDetailsModal({
     if (String(payment.status || "") !== "paid") return sum;
     return sum + Number(payment.amount || 0);
   }, 0);
+
+  const openDiscountEditor = async () => {
+    if (savingDiscount) return;
+
+    setDiscountEditorOpen(true);
+    setDiscountAmount(Number(booking.discount_amount || 0).toFixed(2));
+    setDiscountPassword("");
+    setDiscountSettingsError("");
+
+    if (discountSettings) {
+      return;
+    }
+
+    setDiscountSettingsLoading(true);
+
+    const result = await loadBookingDiscountSettingsFromMobile();
+
+    setDiscountSettingsLoading(false);
+
+    if (!result.success || !result.data) {
+      setDiscountSettingsError(
+        result.error || "Could not load discount settings.",
+      );
+      return;
+    }
+
+    setDiscountSettings(result.data);
+  };
+
+  const submitDiscount = async () => {
+    if (savingDiscount) return;
+
+    const normalizedAmount = Number(
+      String(discountAmount || "").replace(",", "."),
+    );
+    const subtotal = Number(booking.subtotal || 0);
+
+    if (
+      !Number.isFinite(normalizedAmount) ||
+      normalizedAmount < 0 ||
+      normalizedAmount > subtotal
+    ) {
+      Alert.alert(
+        "Invalid discount",
+        `Discount must be between ${money(0)} and ${money(subtotal)}.`,
+      );
+      return;
+    }
+
+    const currentDiscount = Number(booking.discount_amount || 0);
+    const changed =
+      normalizedAmount.toFixed(2) !== currentDiscount.toFixed(2);
+
+    if (!changed) {
+      setDiscountEditorOpen(false);
+      return;
+    }
+
+    if (
+      discountSettings?.passwordEnabled &&
+      !String(discountPassword || "").trim()
+    ) {
+      Alert.alert(
+        "Authorization required",
+        "Enter the discount authorization password.",
+      );
+      return;
+    }
+
+    setSavingDiscount(true);
+
+    const result = await updateBookingDiscountFromMobile({
+      bookingId: booking.id,
+      discountAmount: normalizedAmount,
+      discountPassword,
+    });
+
+    setSavingDiscount(false);
+
+    if (!result.success || !result.data) {
+      Alert.alert(
+        "Discount not updated",
+        result.error || "Could not update discount.",
+      );
+      return;
+    }
+
+    onBookingChanged({
+      ...booking,
+      discount_amount: result.data.discountAmount,
+      tax_amount: result.data.taxAmount,
+      total_amount: result.data.totalAmount,
+      balance_due: result.data.balanceDue,
+    });
+
+    setDiscountEditorOpen(false);
+    setDiscountPassword("");
+
+    Alert.alert(
+      "Discount updated",
+      `Discount is now ${money(result.data.discountAmount)}. Remaining balance: ${money(result.data.balanceDue)}.`,
+    );
+  };
 
   const openPaymentEditor = async () => {
     if (savingPayment) return;
@@ -896,36 +1019,24 @@ function BookingDetailsModal({
 
     setSavingArchive(true);
 
-    const now = new Date().toISOString();
-    const payload = archived
-      ? {
-          archived_at: now,
-          archive_reason: "Archived from mobile Admin",
-          updated_at: now,
-        }
-      : {
-          archived_at: null,
-          archive_reason: null,
-          updated_at: now,
-        };
+    const result = await setBookingArchivedFromMobile({
+      bookingId: booking.id,
+      archived,
+      archiveReason: "Archived from mobile Admin",
+    });
 
-    const result = await supabase
-      .from("bookings")
-      .update(payload)
-      .eq("id", booking.id);
-
-    if (result.error) {
+    if (!result.success) {
       setSavingArchive(false);
       Alert.alert(
         archived ? "Booking not archived" : "Booking not restored",
-        result.error.message,
+        result.error || "Could not update booking archive state.",
       );
       return;
     }
 
     const nextBooking: MobileAdminBooking = {
       ...booking,
-      archived_at: archived ? now : null,
+      archived_at: result.data.archivedAt,
     };
 
     onBookingChanged(nextBooking);
@@ -1170,7 +1281,153 @@ function BookingDetailsModal({
             <View style={styles.detailCard}>
               <DetailRow label="Subtotal" value={money(booking.subtotal)} />
               <View style={styles.detailDivider} />
-              <DetailRow label="Discount" value={`-${money(booking.discount_amount)}`} />
+              <View style={styles.productDetailRow}>
+                <Text style={styles.detailRowLabel}>Discount</Text>
+
+                <View style={styles.balanceCopy}>
+                  <Text style={styles.detailRowValue}>
+                    -{money(booking.discount_amount)}
+                  </Text>
+
+                  {!discountEditorOpen ? (
+                    <Pressable
+                      disabled={savingDiscount}
+                      onPress={() => void openDiscountEditor()}
+                      style={({ pressed }) => [
+                        styles.mobilePaymentRetryButton,
+                        pressed ? styles.pressed : null,
+                      ]}
+                    >
+                      <Text style={styles.mobilePaymentRetryButtonText}>
+                        EDIT
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              </View>
+
+              {discountEditorOpen ? (
+                <View style={styles.mobilePaymentEditor}>
+                  <Text style={styles.mobilePaymentEditorTitle}>
+                    Edit discount
+                  </Text>
+
+                  <Text style={styles.mobilePaymentHint}>
+                    Subtotal {money(booking.subtotal)}
+                  </Text>
+
+                  <View style={styles.mobilePaymentField}>
+                    <Text style={styles.mobilePaymentLabel}>
+                      DISCOUNT AMOUNT
+                    </Text>
+
+                    <TextInput
+                      value={discountAmount}
+                      onChangeText={setDiscountAmount}
+                      keyboardType="decimal-pad"
+                      placeholder="0.00"
+                      placeholderTextColor="#9c9184"
+                      style={styles.mobilePaymentInput}
+                    />
+                  </View>
+
+                  {discountSettingsLoading ? (
+                    <ActivityIndicator size="small" color="#23313f" />
+                  ) : discountSettingsError ? (
+                    <View style={styles.mobilePaymentErrorBox}>
+                      <Text style={styles.mobilePaymentErrorText}>
+                        {discountSettingsError}
+                      </Text>
+
+                      <Pressable
+                        onPress={() => {
+                          setDiscountSettings(null);
+                          void openDiscountEditor();
+                        }}
+                        style={({ pressed }) => [
+                          styles.mobilePaymentRetryButton,
+                          pressed ? styles.pressed : null,
+                        ]}
+                      >
+                        <Text style={styles.mobilePaymentRetryButtonText}>
+                          RETRY
+                        </Text>
+                      </Pressable>
+                    </View>
+                  ) : discountSettings?.passwordEnabled &&
+                    Number(discountAmount || 0).toFixed(2) !==
+                      Number(booking.discount_amount || 0).toFixed(2) ? (
+                    <View style={styles.mobilePaymentField}>
+                      <Text style={styles.mobilePaymentLabel}>
+                        AUTHORIZATION PASSWORD
+                      </Text>
+
+                      <TextInput
+                        value={discountPassword}
+                        onChangeText={setDiscountPassword}
+                        secureTextEntry
+                        placeholder={
+                          discountSettings.passwordHint || "Enter password"
+                        }
+                        placeholderTextColor="#9c9184"
+                        style={styles.mobilePaymentInput}
+                      />
+                    </View>
+                  ) : null}
+
+                  <View style={styles.mobilePaymentActions}>
+                    <Pressable
+                      disabled={savingDiscount}
+                      onPress={() => {
+                        setDiscountEditorOpen(false);
+                        setDiscountAmount(
+                          Number(booking.discount_amount || 0).toFixed(2),
+                        );
+                        setDiscountPassword("");
+                      }}
+                      style={({ pressed }) => [
+                        styles.mobilePaymentSecondaryButton,
+                        pressed ? styles.pressed : null,
+                      ]}
+                    >
+                      <Text style={styles.mobilePaymentSecondaryButtonText}>
+                        CANCEL
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      disabled={
+                        savingDiscount ||
+                        discountSettingsLoading ||
+                        Boolean(discountSettingsError) ||
+                        Number(discountAmount || 0).toFixed(2) ===
+                          Number(booking.discount_amount || 0).toFixed(2)
+                      }
+                      onPress={() => void submitDiscount()}
+                      style={({ pressed }) => [
+                        styles.mobilePaymentSaveButton,
+                        savingDiscount ||
+                        discountSettingsLoading ||
+                        Boolean(discountSettingsError) ||
+                        Number(discountAmount || 0).toFixed(2) ===
+                          Number(booking.discount_amount || 0).toFixed(2)
+                          ? styles.disabledButton
+                          : null,
+                        pressed ? styles.pressed : null,
+                      ]}
+                    >
+                      {savingDiscount ? (
+                        <ActivityIndicator size="small" color="#ffffff" />
+                      ) : (
+                        <Text style={styles.mobilePaymentSaveButtonText}>
+                          SAVE DISCOUNT
+                        </Text>
+                      )}
+                    </Pressable>
+                  </View>
+                </View>
+              ) : null}
+
               <View style={styles.detailDivider} />
               <DetailRow label="Delivery" value={money(booking.delivery_fee)} />
               <View style={styles.detailDivider} />
@@ -1491,7 +1748,7 @@ function BookingDetailsModal({
               <>
                 <Text style={styles.detailSectionTitle}>Internal notes</Text>
                 <View style={styles.notesCard}>
-                  <Text style={styles.notesText}>{booking.internal_notes}</Text>
+                  <Text style={styles.notesText}>{booking.internal_notes.replace(/\s*\[marker_color:\s*#[0-9a-fA-F]{6}\s*\]\s*/gi, " ").replace(/\s{2,}/g, " ").trim()}</Text>
                 </View>
               </>
             ) : null}

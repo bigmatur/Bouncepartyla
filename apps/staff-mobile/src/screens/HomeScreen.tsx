@@ -21,12 +21,14 @@ import {
   isCompletedStop,
   loadDriverRoute,
   loadMobileChecklistForBooking,
-  loadMyDriverRouteDates,
+  loadMyDriverRouteCalendar,
   localDateISO,
   type MobileChecklistItem,
+  type MobileDriverRouteDateSummary,
   type MobileRouteStop,
   type TodayDriverRoute,
 } from "../features/routes/driverRoutes";
+
 
 
 import {
@@ -35,7 +37,6 @@ import {
   nextRouteAction,
   resumeMyStaffWork,
   saveMyRouteStopNotes,
-  startMyDriverShift,
   startMyStaffBreak,
   toggleMyChecklistItem,
   updateMyRouteStopStatus,
@@ -44,6 +45,8 @@ import {
 } from "../features/routes/routeActions";
 
 import { supabase } from "../lib/supabase";
+import { HandoverModal } from "./HandoverModal";
+import { RouteCalendarModal } from "./RouteCalendarModal";
 
 
 function formatRouteDate(value: string) {
@@ -80,15 +83,57 @@ function formatTime(value: string | null) {
 }
 
 function stopLabel(stop: MobileRouteStop) {
-  return String(stop.stop_type || "stop").toLowerCase() === "pickup"
-    ? "Pickup"
-    : "Delivery";
+  const type = String(
+    stop.stop_type || "",
+  ).toLowerCase();
+
+  if (type === "pickup") {
+    return "Pickup";
+  }
+
+  if (type === "break") {
+    return "Break";
+  }
+
+  return "Delivery";
+}
+
+function isBreakStop(stop: MobileRouteStop) {
+  return (
+    String(
+      stop.stop_type || "",
+    ).toLowerCase() === "break"
+  );
 }
 
 function addressText(stop: MobileRouteStop) {
   return [stop.address, stop.city, stop.state, stop.zip]
     .filter(Boolean)
     .join(", ");
+}
+
+function privateDriverNote(stop: MobileRouteStop) {
+  const type = String(
+    stop.stop_type || "",
+  ).toLowerCase();
+
+  if (type === "pickup") {
+    return (
+      String(
+        stop.pickup_notes ||
+          stop.setup_notes ||
+          "",
+      ).trim() || null
+    );
+  }
+
+  return (
+    String(
+      stop.setup_notes ||
+        stop.pickup_notes ||
+        "",
+    ).trim() || null
+  );
 }
 
 type StaffTimeBreak = {
@@ -240,8 +285,17 @@ export function HomeScreen({
   const [selectedDate, setSelectedDate] =
     useState(today);
 
-  const [routeDates, setRouteDates] =
-    useState<string[]>([]);
+ const [
+  routeCalendar,
+  setRouteCalendar,
+] = useState<
+  MobileDriverRouteDateSummary[]
+>([]);
+
+const [
+  routeCalendarOpen,
+  setRouteCalendarOpen,
+] = useState(false);
 
   const [selectedStopId, setSelectedStopId] =
     useState<string | null>(null);
@@ -309,6 +363,9 @@ export function HomeScreen({
     setChecklistOpen,
   ] = useState(false);
 
+  const [handoverOpen, setHandoverOpen] =
+    useState(false);
+
   const loadRoute = useCallback(
     async (
       mode: "initial" | "refresh" = "initial",
@@ -339,19 +396,19 @@ export function HomeScreen({
     [selectedDate],
   );
 
-  const loadRouteDates =
-    useCallback(async () => {
-      try {
-        setRouteDates(
-          await loadMyDriverRouteDates(),
-        );
-      } catch (datesError) {
-        console.warn(
-          "[Route] Could not load assigned route dates:",
-          datesError,
-        );
-      }
-    }, []);
+  const loadRouteCalendar =
+  useCallback(async () => {
+    try {
+      setRouteCalendar(
+        await loadMyDriverRouteCalendar(),
+      );
+    } catch (calendarError) {
+      console.warn(
+        "[Route] Could not load driver route calendar:",
+        calendarError,
+      );
+    }
+  }, []);
 
   const loadShiftDashboard =
     useCallback(async () => {
@@ -375,22 +432,22 @@ export function HomeScreen({
     }, []);
 
   useEffect(() => {
-    void loadRoute();
-    void loadRouteDates();
+  void loadRoute();
+  void loadRouteCalendar();
 
-    void loadShiftDashboard().catch(
-      (shiftError) => {
-        console.warn(
-          "[StaffTime] Could not load shift dashboard:",
-          shiftError,
-        );
-      },
-    );
-  }, [
-    loadRoute,
-    loadRouteDates,
-    loadShiftDashboard,
-  ]);
+  void loadShiftDashboard().catch(
+    (shiftError) => {
+      console.warn(
+        "[StaffTime] Could not load shift dashboard:",
+        shiftError,
+      );
+    },
+  );
+}, [
+  loadRoute,
+  loadRouteCalendar,
+  loadShiftDashboard,
+]);
 
   useEffect(() => {
     setSelectedStopId(null);
@@ -419,12 +476,44 @@ export function HomeScreen({
     onImmersiveChange,
   ]);
 
-  const completedCount = useMemo(
+  const deliveryPointStops = useMemo(
     () =>
-      route?.stops.filter(isCompletedStop)
-        .length || 0,
+      route?.stops.filter(
+        (stop) =>
+          !isBreakStop(stop),
+      ) || [],
     [route],
   );
+
+  const deliveryPointCount =
+    deliveryPointStops.length;
+
+  const completedCount = useMemo(
+    () =>
+      deliveryPointStops.filter(
+        isCompletedStop,
+      ).length,
+    [deliveryPointStops],
+  );
+
+  const deliverySequenceByStopId =
+    useMemo(() => {
+      const sequence = new Map<
+        string,
+        number
+      >();
+
+      deliveryPointStops.forEach(
+        (stop, index) => {
+          sequence.set(
+            stop.id,
+            index + 1,
+          );
+        },
+      );
+
+      return sequence;
+    }, [deliveryPointStops]);
 
   const nextScheduledStop = useMemo(
     () =>
@@ -457,15 +546,22 @@ export function HomeScreen({
     selectedStopId,
   ]);
 
-  const isManualStopSelection =
-    Boolean(
-      activeStop &&
-        nextScheduledStop &&
-        activeStop.id !==
-          nextScheduledStop.id,
-    );
+ const isManualStopSelection =
+  Boolean(
+    activeStop &&
+      nextScheduledStop &&
+      activeStop.id !==
+        nextScheduledStop.id,
+  );
 
-   useEffect(() => {
+const activeStopPosition =
+  activeStop
+    ? deliverySequenceByStopId.get(
+        activeStop.id,
+      ) || null
+    : null;
+
+useEffect(() => {
     setDriverNotesDraft(
       String(
         activeStop?.driver_notes || "",
@@ -526,21 +622,6 @@ export function HomeScreen({
     };
   }, [activeStop?.booking_id]);
 
-  const availableRouteDates = useMemo(
-    () =>
-      Array.from(
-        new Set([
-          ...routeDates,
-          today,
-          selectedDate,
-        ]),
-      ).sort(),
-    [
-      routeDates,
-      selectedDate,
-      today,
-    ],
-  );
 
   const activeAction = activeStop
     ? nextRouteAction(activeStop)
@@ -612,6 +693,11 @@ export function HomeScreen({
     checklistCompletedCount ===
       checklistItems.length;
 
+  const handoverAvailable =
+    Boolean(activeStop?.booking_id) &&
+    String(activeStop?.stop_type || "").toLowerCase() ===
+      "delivery";
+
   const openBreak =
     currentOpenBreak(
       shiftDashboard,
@@ -649,14 +735,6 @@ export function HomeScreen({
       setError("");
 
       try {
-        if (
-          activeAction.status ===
-          "on_the_way"
-        ) {
-          await startMyDriverShift();
-          await loadShiftDashboard();
-        }
-
         await updateMyRouteStopStatus(
           activeStop.id,
           activeAction.status,
@@ -666,6 +744,8 @@ export function HomeScreen({
           activeAction.status ===
           "on_the_way"
         ) {
+          await loadShiftDashboard();
+
           setNavigationStop({
             ...activeStop,
             status: "on_the_way",
@@ -1240,11 +1320,12 @@ export function HomeScreen({
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
-          onRefresh={() =>
+          onRefresh={() => {
             void loadRoute(
               "refresh",
-            )
-          }
+            );
+            void loadRouteCalendar();
+          }}
         />
       }
     >
@@ -1303,130 +1384,108 @@ export function HomeScreen({
         </Pressable>
       </View>
 
-      <View
+      <View style={styles.dateToolbar}>
+  <Pressable
+    onPress={() =>
+      setRouteCalendarOpen(true)
+    }
+    style={({ pressed }) => [
+      styles.calendarButton,
+      pressed
+        ? styles.pressed
+        : null,
+    ]}
+  >
+    <View
+      style={
+        styles.calendarIconBox
+      }
+    >
+      <Text
         style={
-          styles.dateSection
+          styles.calendarIconText
         }
       >
-        <View
-          style={
-            styles.dateSectionHeader
-          }
-        >
-          <Text
-            style={
-              styles.dateSectionLabel
-            }
-          >
-            ROUTE DATE
-          </Text>
+        31
+      </Text>
+    </View>
 
-          {selectedDate !==
-          today ? (
-            <Pressable
-              onPress={() =>
-                setSelectedDate(
-                  today,
-                )
-              }
-              style={({
-                pressed,
-              }) => [
-                styles.todayButton,
-                pressed
-                  ? styles.pressed
-                  : null,
-              ]}
-            >
-              <Text
-                style={
-                  styles.todayButtonText
-                }
-              >
-                Today
-              </Text>
-            </Pressable>
-          ) : null}
-        </View>
+    <View
+      style={
+        styles.calendarButtonCopy
+      }
+    >
+      <Text
+        style={
+          styles.calendarButtonLabel
+        }
+      >
+        CALENDAR
+      </Text>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={
-            false
-          }
-          contentContainerStyle={
-            styles.dateChips
-          }
-        >
-          {availableRouteDates.map(
-            (date) => {
-              const selected =
-                date ===
-                selectedDate;
+      <Text
+        style={
+          styles.calendarButtonValue
+        }
+      >
+        {selectedDate === today
+          ? "Choose route date"
+          : formatRouteDate(
+              selectedDate,
+            )}
+      </Text>
+    </View>
 
-              const assigned =
-                routeDates.includes(
-                  date,
-                );
+    <Text
+      style={
+        styles.calendarChevron
+      }
+    >
+      ›
+    </Text>
+  </Pressable>
 
-              return (
-                <Pressable
-                  key={date}
-                  onPress={() =>
-                    setSelectedDate(
-                      date,
-                    )
-                  }
-                  style={({
-                    pressed,
-                  }) => [
-                    styles.dateChip,
+  <Pressable
+    onPress={() => {
+      if (
+        selectedDate !== today
+      ) {
+        setSelectedDate(today);
+      }
+    }}
+    style={({ pressed }) => [
+      styles.todayDateButton,
+      pressed
+        ? styles.pressed
+        : null,
+    ]}
+  >
+    <Text
+      style={
+        styles.todayDateLabel
+      }
+    >
+      TODAY
+    </Text>
 
-                    selected
-                      ? styles.dateChipSelected
-                      : null,
-
-                    pressed
-                      ? styles.pressed
-                      : null,
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.dateChipText,
-
-                      selected
-                        ? styles.dateChipTextSelected
-                        : null,
-                    ]}
-                  >
-                    {formatRouteDate(
-                      date,
-                    )}
-                  </Text>
-
-                  <Text
-                    style={[
-                      styles.dateChipMeta,
-
-                      selected
-                        ? styles.dateChipMetaSelected
-                        : null,
-                    ]}
-                  >
-                    {date === today
-                      ? "Today"
-                      : assigned
-                        ? "Assigned"
-                        : "No stops"}
-                  </Text>
-                </Pressable>
-              );
-            },
-          )}
-        </ScrollView>
-      </View>
-
+    <Text
+      style={
+        styles.todayDateValue
+      }
+    >
+      {formatRouteDate(today)}
+    </Text>
+    {selectedDate !== today ? (
+      <Text
+        style={
+          styles.todayDateHint
+        }
+      >
+        Return to today
+      </Text>
+    ) : null}
+  </Pressable>
+</View>
       {error ? (
         <View
           style={styles.errorCard}
@@ -1577,7 +1636,7 @@ export function HomeScreen({
                   styles.statValue
                 }
               >
-                {route.stops.length}
+                {deliveryPointCount}
               </Text>
 
               <Text
@@ -1618,7 +1677,7 @@ export function HomeScreen({
                 }
               >
                 {Math.max(
-                  route.stops.length -
+                  deliveryPointCount -
                     completedCount,
                   0,
                 )}
@@ -1646,24 +1705,33 @@ export function HomeScreen({
                 }
               >
                 <Text
-                  style={
-                    styles.cardLabel
-                  }
-                >
-                  {isManualStopSelection
-                    ? "SELECTED STOP"
-                    : "CURRENT STOP"}
-                </Text>
-
+  style={
+    styles.cardLabel
+  }
+>
+  {isManualStopSelection
+    ? activeStopPosition
+      ? `SELECTED STOP · ${activeStopPosition} OF ${deliveryPointCount}`
+      : isBreakStop(
+            activeStop,
+          )
+        ? "SELECTED BREAK"
+        : "SELECTED STOP"
+    : "CURRENT STOP"}
+</Text>
                 <Text
                   style={[
                     styles.typePill,
 
-                    String(
-                      activeStop.stop_type ||
-                        "",
-                    ).toLowerCase() ===
-                    "pickup"
+                    isBreakStop(
+                      activeStop,
+                    )
+                      ? styles.typePillBreak
+                      : String(
+                            activeStop.stop_type ||
+                              "",
+                          ).toLowerCase() ===
+                          "pickup"
                       ? styles.typePillPickup
                       : styles.typePillDelivery,
                   ]}
@@ -1758,7 +1826,7 @@ export function HomeScreen({
                 </View>
               ) : null}
 
-              {activeStop.setup_notes ? (
+              {privateDriverNote(activeStop) ? (
                 <View
                   style={
                     styles.detailBlock
@@ -1769,7 +1837,7 @@ export function HomeScreen({
                       styles.detailLabel
                     }
                   >
-                    NOTES
+                    DRIVER NOTES
                   </Text>
 
                   <Text
@@ -1777,9 +1845,7 @@ export function HomeScreen({
                       styles.detailText
                     }
                   >
-                    {
-                      activeStop.setup_notes
-                    }
+                    {privateDriverNote(activeStop)}
                   </Text>
                 </View>
               ) : null}
@@ -1808,7 +1874,11 @@ export function HomeScreen({
                     }
                   >
                     {activeStop.payment_collected
-                      ? "Paid"
+                      ? `Paid${
+                          activeStop.payment_collected_amount
+                            ? ` · ${moneyText(activeStop.payment_collected_amount)}`
+                            : ""
+                        }`
                       : moneyText(
                           activeStop.balance_due,
                         )}
@@ -1875,6 +1945,10 @@ export function HomeScreen({
                     >
                       {activeStop.payment_collected
                         ? `Collected${
+                            activeStop.payment_collected_amount
+                              ? ` ${moneyText(activeStop.payment_collected_amount)}`
+                              : ""
+                          }${
                             activeStop.payment_collected_method
                               ? ` · ${String(
                                   activeStop.payment_collected_method,
@@ -2122,6 +2196,30 @@ export function HomeScreen({
                   </View>
                 </Pressable>
               </View>
+
+              {handoverAvailable ? (
+                <View style={styles.operationBlock}>
+                  <Pressable
+                    onPress={() => setHandoverOpen(true)}
+                    style={({ pressed }) => [
+                      styles.checklistSummary,
+                      pressed ? styles.pressed : null,
+                    ]}
+                  >
+                    <View style={styles.checklistSummaryCopy}>
+                      <Text style={styles.operationLabel}>CUSTOMER SIGNATURE</Text>
+                      <Text style={styles.operationStatus}>
+                        Open handover and sign delivery acceptance
+                      </Text>
+                    </View>
+
+                    <View style={styles.checklistOpenButton}>
+                      <Text style={styles.checklistOpenButtonText}>Open</Text>
+                      <Text style={styles.checklistChevron}>›</Text>
+                    </View>
+                  </Pressable>
+                </View>
+              ) : null}
 
               {/* DRIVER NOTES */}
 
@@ -2411,12 +2509,20 @@ export function HomeScreen({
                       stop,
                     );
 
+                  const isBreak =
+                    isBreakStop(stop);
+
                   const isPickup =
                     String(
                       stop.stop_type ||
                         "",
                     ).toLowerCase() ===
                     "pickup";
+
+                  const sequenceNumber =
+                    deliverySequenceByStopId.get(
+                      stop.id,
+                    );
 
                   return (
                     <Pressable
@@ -2445,7 +2551,9 @@ export function HomeScreen({
                         style={[
                           styles.sequence,
 
-                          isPickup
+                          isBreak
+                            ? styles.sequenceBreak
+                            : isPickup
                             ? styles.sequencePickup
                             : styles.sequenceDelivery,
 
@@ -2458,12 +2566,17 @@ export function HomeScreen({
                           style={[
                             styles.sequenceText,
 
-                            isPickup
+                            isBreak
+                              ? styles.sequenceTextBreak
+                              : isPickup
                               ? styles.sequenceTextPickup
                               : styles.sequenceTextDelivery,
                           ]}
                         >
-                          {index + 1}
+                          {isBreak
+                            ? "B"
+                            : sequenceNumber ||
+                              index + 1}
                         </Text>
                       </View>
 
@@ -2511,7 +2624,9 @@ export function HomeScreen({
                             style={[
                               styles.stopTypeText,
 
-                              isPickup
+                              isBreak
+                                ? styles.stopTypeBreak
+                                : isPickup
                                 ? styles.stopTypePickup
                                 : styles.stopTypeDelivery,
                             ]}
@@ -2579,7 +2694,33 @@ export function HomeScreen({
           ) : null}
         </>
       ) : null}
-            <Modal
+
+      <RouteCalendarModal
+        visible={routeCalendarOpen}
+
+        days={routeCalendar}
+        selectedDate={selectedDate}
+        today={today}
+        onClose={() =>
+          setRouteCalendarOpen(false)
+        }
+        onSelectDate={(date) => {
+          setSelectedDate(date);
+          setRouteCalendarOpen(false);
+        }}
+      />
+
+      <HandoverModal
+        visible={handoverOpen}
+        bookingId={
+          handoverAvailable
+            ? String(activeStop?.booking_id || "")
+            : null
+        }
+        onClose={() => setHandoverOpen(false)}
+      />
+
+      <Modal
         visible={checklistOpen}
         transparent
         animationType="slide"
@@ -2989,6 +3130,101 @@ const styles = StyleSheet.create({
     opacity: 0.68,
   },
 
+  dateToolbar: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 16,
+  },
+
+  calendarButton: {
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderColor: "#ded6cb",
+    borderRadius: 18,
+    borderWidth: 1,
+    flex: 1.35,
+    flexDirection: "row",
+    minHeight: 64,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+
+  calendarIconBox: {
+    alignItems: "center",
+    backgroundColor: "#23313f",
+    borderRadius: 11,
+    height: 38,
+    justifyContent: "center",
+    width: 38,
+  },
+
+  calendarIconText: {
+    color: "#f0c987",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+
+  calendarButtonCopy: {
+    flex: 1,
+    marginLeft: 10,
+    minWidth: 0,
+  },
+
+  calendarButtonLabel: {
+    color: "#b88645",
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+  },
+
+  calendarButtonValue: {
+    color: "#23313f",
+    fontSize: 12,
+    fontWeight: "900",
+    marginTop: 3,
+  },
+
+  calendarChevron: {
+    color: "#9a8d7e",
+    fontSize: 24,
+    fontWeight: "700",
+    marginLeft: 4,
+  },
+
+  todayDateButton: {
+    alignItems: "flex-start",
+    backgroundColor: "#ffffff",
+    borderColor: "#ded6cb",
+    borderRadius: 18,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 64,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+
+  todayDateLabel: {
+    color: "#b88645",
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+  },
+
+  todayDateValue: {
+    color: "#23313f",
+    fontSize: 11,
+    fontWeight: "900",
+    marginTop: 3,
+  },
+
+  todayDateHint: {
+    color: "#81766a",
+    fontSize: 9,
+    fontWeight: "700",
+    marginTop: 3,
+  },
+
   dateSection: {
     marginTop: 16,
   },
@@ -3298,6 +3534,11 @@ const styles = StyleSheet.create({
     color: "#a9d2e8",
   },
 
+  typePillBreak: {
+    backgroundColor: "rgba(153,163,173,0.25)",
+    color: "#d6dde3",
+  },
+
   currentTime: {
     color: "#f0c987",
     fontSize: 17,
@@ -3471,6 +3712,12 @@ const styles = StyleSheet.create({
     borderWidth: 2,
   },
 
+  sequenceBreak: {
+    backgroundColor: "#23313f",
+    borderColor: "#8d9ba8",
+    borderWidth: 2,
+  },
+
   sequenceDone: {
     backgroundColor: "#82927e",
   },
@@ -3486,6 +3733,10 @@ const styles = StyleSheet.create({
 
   sequenceTextPickup: {
     color: "#9fc7df",
+  },
+
+  sequenceTextBreak: {
+    color: "#d3dde5",
   },
 
   stopCopy: {
@@ -3531,6 +3782,10 @@ const styles = StyleSheet.create({
 
   stopTypePickup: {
     color: "#5f8faa",
+  },
+
+  stopTypeBreak: {
+    color: "#73808c",
   },
 
   stopAddressText: {

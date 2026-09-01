@@ -170,54 +170,20 @@ export async function markMyRouteStopPaymentCollected(
     );
   }
 
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
-
-  if (userError) {
-    throw new Error(userError.message);
-  }
-
-  let collectedBy: string | null = null;
-
-  if (user) {
-    const driverResult = await supabase
-      .from("route_drivers")
-      .select("name")
-      .eq("auth_user_id", user.id)
-      .eq("active", true)
-      .is("deleted_at", null)
-      .order("sort_order", {
-        ascending: true,
-      })
-      .limit(1)
-      .maybeSingle();
-
-    if (!driverResult.error) {
-      collectedBy =
-        String(driverResult.data?.name || "").trim() ||
-        null;
-    }
-  }
-
-  const now = new Date().toISOString();
-
-  const result = await supabase
-    .from("route_stops")
-    .update({
-      payment_collected: true,
-      payment_collected_amount: amount,
-      payment_collected_method: method,
-      payment_collected_by: collectedBy,
-      payment_collected_at: now,
-      updated_at: now,
-    })
-    .eq("id", stopId);
+  const result = await supabase.rpc(
+    "mark_my_route_stop_payment_collected",
+    {
+      p_stop_id: stopId,
+      p_amount: amount,
+      p_method: method,
+    },
+  );
 
   if (result.error) {
     throw new Error(result.error.message);
   }
+
+  return result.data;
 }
 
 type UploadMyRouteStopProofPhotoInput = {

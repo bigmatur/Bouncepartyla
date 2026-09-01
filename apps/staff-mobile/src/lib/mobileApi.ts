@@ -629,3 +629,151 @@ export async function addBookingPaymentFromMobile(params: {
 
   return { success: true as const, data: result.data.data };
 }
+
+export type MobileUpdateBookingDiscountResult = {
+  bookingId: string;
+  discountAmount: number;
+  taxAmount: number;
+  totalAmount: number;
+  balanceDue: number;
+};
+
+export async function updateBookingDiscountFromMobile(params: {
+  bookingId: string;
+  discountAmount: number;
+  discountPassword?: string;
+}) {
+  const result = await authenticatedFetch<{
+    success: true;
+    data: MobileUpdateBookingDiscountResult;
+  }>("/api/admin/mobile/bookings/discount", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+
+  if (!result.success) {
+    return {
+      success: false as const,
+      error: result.error || "Could not update discount.",
+    };
+  }
+
+  if (!result.data?.data) {
+    return {
+      success: false as const,
+      error: "Discount result was not returned by the server.",
+    };
+  }
+
+  return {
+    success: true as const,
+    data: result.data.data,
+  };
+}
+
+export type MobileBookingDiscountSettings = {
+  passwordEnabled: boolean;
+  passwordHint: string;
+};
+
+export async function loadBookingDiscountSettingsFromMobile() {
+  const result = await authenticatedFetch<{
+    success: true;
+    data: MobileBookingDiscountSettings;
+  }>("/api/admin/mobile/bookings/discount", {
+    method: "GET",
+  });
+
+  if (!result.success) {
+    return {
+      success: false as const,
+      error:
+        result.error ||
+        "Could not load discount settings.",
+    };
+  }
+
+  if (!result.data?.data) {
+    return {
+      success: false as const,
+      error:
+        "Discount settings were not returned by the server.",
+    };
+  }
+
+  return {
+    success: true as const,
+    data: result.data.data,
+  };
+}
+
+export type MobileBookingArchiveResult = {
+  bookingId: string;
+  archived: boolean;
+  archivedAt: string | null;
+};
+
+export async function setBookingArchivedFromMobile(params: {
+  bookingId: string;
+  archived: boolean;
+  archiveReason?: string;
+}) {
+  const result = await authenticatedFetch<{
+    success: true;
+    data: MobileBookingArchiveResult;
+  }>("/api/admin/mobile/bookings/archive", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+
+  if (!result.success) {
+    return {
+      success: false as const,
+      error: result.error || "Could not update booking archive state.",
+    };
+  }
+
+  if (!result.data?.data) {
+    return {
+      success: false as const,
+      error: "Booking archive result was not returned by the server.",
+    };
+  }
+
+  return { success: true as const, data: result.data.data };
+}
+
+export type MobileTaskStatusResult = {
+  taskId: string;
+  status: "open" | "completed";
+  completedAt: string | null;
+};
+
+export async function setTaskCompletedFromMobile(params: {
+  taskId: string;
+  completed: boolean;
+}) {
+  const result = await authenticatedFetch<{
+    success: true;
+    data: MobileTaskStatusResult;
+  }>("/api/admin/mobile/tasks/status", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+
+  if (!result.success) {
+    return {
+      success: false as const,
+      error: result.error || "Could not update task status.",
+    };
+  }
+
+  if (!result.data?.data) {
+    return {
+      success: false as const,
+      error: "Task status result was not returned by the server.",
+    };
+  }
+
+  return { success: true as const, data: result.data.data };
+}

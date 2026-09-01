@@ -133,6 +133,7 @@ export function NavigationScreen({ stop, onClose, onArrived }: Props) {
   const routeStartedRef = useRef(false);
   const mountedRef = useRef(true);
   const navigatorLocationReceivedRef = useRef(false);
+  const cleanupStartedRef = useRef(false);
 
   const address = useMemo(() => destinationAddress(stop), [stop]);
 
@@ -158,13 +159,52 @@ export function NavigationScreen({ stop, onClose, onArrived }: Props) {
     }
   }, [navigationController]);
 
+  const cleanupNavigation = useCallback(async () => {
+    if (cleanupStartedRef.current) {
+      return;
+    }
+
+    cleanupStartedRef.current = true;
+
+    try {
+      removeAllListeners();
+    } catch (listenerError) {
+      console.warn(
+        "[Navigation] Could not remove navigation listeners:",
+        listenerError,
+      );
+    }
+
+    try {
+      await navigationController.stopGuidance();
+    } catch {
+      // Guidance may not have started yet.
+    }
+
+    try {
+      navigationController.stopUpdatingLocation();
+    } catch {
+      // Location updates may not have started yet.
+    }
+
+    try {
+      await navigationController.cleanup();
+    } catch (cleanupError) {
+      console.warn(
+        "[Navigation] Could not clean up Navigation SDK:",
+        cleanupError,
+      );
+    }
+  }, [navigationController, removeAllListeners]);
+
   useEffect(() => {
     mountedRef.current = true;
 
     return () => {
       mountedRef.current = false;
+      void cleanupNavigation();
     };
-  }, []);
+  }, [cleanupNavigation]);
 
   useEffect(() => {
     let cancelled = false;
@@ -277,9 +317,7 @@ export function NavigationScreen({ stop, onClose, onArrived }: Props) {
       void refreshTripProgress();
     });
 
-    return () => {
-      removeAllListeners();
-    };
+    return undefined;
   }, [
     navigationController,
     refreshTripProgress,
@@ -461,21 +499,10 @@ export function NavigationScreen({ stop, onClose, onArrived }: Props) {
 
   const closeNavigation = useCallback(() => {
     void (async () => {
-      try {
-        await navigationController.stopGuidance();
-      } catch {
-        // Guidance may not have started yet.
-      }
-
-      try {
-        navigationController.stopUpdatingLocation();
-      } catch {
-        // Safe cleanup only.
-      }
-
+      await cleanupNavigation();
       onClose();
     })();
-  }, [navigationController, onClose]);
+  }, [cleanupNavigation, onClose]);
 
   const confirmArrival = useCallback(async () => {
     if (arrivalPending) return;
@@ -486,17 +513,7 @@ export function NavigationScreen({ stop, onClose, onArrived }: Props) {
     try {
       await onArrived();
 
-      try {
-        await navigationController.stopGuidance();
-      } catch {
-        // Guidance may already be stopped after native arrival detection.
-      }
-
-      try {
-        navigationController.stopUpdatingLocation();
-      } catch {
-        // Safe cleanup only.
-      }
+      await cleanupNavigation();
 
       onClose();
     } catch (arrivalError) {
@@ -510,7 +527,7 @@ export function NavigationScreen({ stop, onClose, onArrived }: Props) {
         setArrivalPending(false);
       }
     }
-  }, [arrivalPending, navigationController, onArrived, onClose]);
+  }, [arrivalPending, cleanupNavigation, onArrived, onClose]);
 
   return (
     <View style={styles.screen}>

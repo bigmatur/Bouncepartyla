@@ -51,6 +51,11 @@ type StaffTimeDashboard = {
   }> | null;
 };
 
+function toNumber(value: number | string | null | undefined) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function currentOpenBreak(dashboard: StaffTimeDashboard | null) {
   const breaks = dashboard?.current?.staff_time_breaks || [];
   return (
@@ -433,6 +438,16 @@ export function ShiftScreen() {
               </View>
 
               <View style={styles.historyRight}>
+                <Text style={styles.historyWorked}>
+                  {formatDuration(
+                    Math.max(
+                      0,
+                      durationMinutes(item.clock_in_at, item.clock_out_at, nowMs) -
+                        toNumber(item.break_minutes),
+                    ),
+                  )}{" "}
+                  worked
+                </Text>
                 <Text style={styles.historyBreak}>
                   {formatDuration(Number(item.break_minutes || 0))} break
                 </Text>
@@ -652,6 +667,12 @@ const styles = StyleSheet.create({
 
   historyRight: {
     alignItems: "flex-end",
+  },
+
+  historyWorked: {
+    color: "#23313f",
+    fontSize: 13,
+    fontWeight: "900",
   },
 
   historyBreak: {

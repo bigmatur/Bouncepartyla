@@ -29,6 +29,8 @@ export function DriverLocationTracker() {
     let lastUploadedAt = 0;
     let driverName = "";
     let permissionGranted = false;
+    let watchStarting = false;
+    let reconcileRunning = false;
 
     async function stopWatching() {
       subscription?.remove();
@@ -62,45 +64,108 @@ export function DriverLocationTracker() {
     }
 
     async function ensureWatching() {
-      if (cancelled || subscription || !driverName) return;
-
-      if (!permissionGranted) {
-        const permission = await Location.requestForegroundPermissionsAsync();
-
-        if (cancelled || permission.status !== "granted") return;
-        permissionGranted = true;
+      if (
+        cancelled ||
+        subscription ||
+        watchStarting ||
+        !driverName
+      ) {
+        return;
       }
 
-      subscription = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 5000,
-          distanceInterval: 10,
-        },
-        (position) => {
-          void uploadPosition(position);
-        },
-      );
+      watchStarting = true;
+
+      try {
+        if (!permissionGranted) {
+          const permission =
+            await Location.requestForegroundPermissionsAsync();
+
+          if (
+            cancelled ||
+            permission.status !== "granted"
+          ) {
+            return;
+          }
+
+          permissionGranted = true;
+        }
+
+        const nextSubscription =
+          await Location.watchPositionAsync(
+            {
+              accuracy: Location.Accuracy.High,
+              timeInterval: 5000,
+              distanceInterval: 10,
+            },
+            (position) => {
+              void uploadPosition(position);
+            },
+          );
+
+        if (cancelled) {
+          nextSubscription.remove();
+          return;
+        }
+
+        subscription = nextSubscription;
+      } catch (error) {
+        console.warn(
+          "Driver GPS watcher failed",
+          error,
+        );
+      } finally {
+        watchStarting = false;
+      }
     }
 
     async function reconcileTrackingState() {
-      if (cancelled || !driverName) return;
+      if (
+        cancelled ||
+        !driverName ||
+        reconcileRunning
+      ) {
+        return;
+      }
 
-      const dashboardResult = await supabase.rpc("get_my_staff_time_dashboard", {
-        p_limit: 1,
-      });
+      reconcileRunning = true;
 
-      if (cancelled || dashboardResult.error) return;
+      try {
+        const dashboardResult =
+          await supabase.rpc(
+            "get_my_staff_time_dashboard",
+            {
+              p_limit: 1,
+            },
+          );
 
-      const dashboard = (dashboardResult.data || null) as StaffTimeDashboard | null;
-      const hasOpenShift = Boolean(
-        dashboard?.current?.id && !dashboard.current.clock_out_at,
-      );
+        if (
+          cancelled ||
+          dashboardResult.error
+        ) {
+          return;
+        }
 
-      if (hasOpenShift) {
-        await ensureWatching();
-      } else {
-        await stopWatching();
+        const dashboard =
+          (dashboardResult.data ||
+            null) as StaffTimeDashboard | null;
+
+        const hasOpenShift = Boolean(
+          dashboard?.current?.id &&
+            !dashboard.current.clock_out_at,
+        );
+
+        if (hasOpenShift) {
+          await ensureWatching();
+        } else {
+          await stopWatching();
+        }
+      } catch (error) {
+        console.warn(
+          "Driver GPS reconcile failed",
+          error,
+        );
+      } finally {
+        reconcileRunning = false;
       }
     }
 
@@ -132,7 +197,12 @@ export function DriverLocationTracker() {
       }, 15000);
     }
 
-    void start();
+    void start().catch((error) => {
+      console.warn(
+        "Driver GPS startup failed",
+        error,
+      );
+    });
 
     return () => {
       cancelled = true;

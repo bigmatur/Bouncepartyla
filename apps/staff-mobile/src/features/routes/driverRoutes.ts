@@ -25,6 +25,7 @@ export type MobileRouteStop = {
   truck_name: string | null;
   items_summary: string | null;
   setup_notes: string | null;
+  pickup_notes?: string | null;
   balance_due: number | string | null;
   payment_collected: boolean | null;
   payment_collected_amount?: number | string | null;
@@ -351,12 +352,16 @@ export async function loadMobileChecklistForBooking(
 
       source:
         row.source
-          ? String(row.source)
+          ? String(
+              row.source,
+            )
           : null,
 
       quantity:
         Number.isFinite(
-          Number(row.quantity),
+          Number(
+            row.quantity,
+          ),
         )
           ? Number(
               row.quantity,
@@ -364,7 +369,9 @@ export async function loadMobileChecklistForBooking(
           : 1,
 
       loaded:
-        Boolean(row.loaded),
+        Boolean(
+          row.loaded,
+        ),
 
       installed:
         Boolean(
@@ -405,7 +412,9 @@ export async function loadMobileChecklistForBooking(
 
       notes:
         row.notes
-          ? String(row.notes)
+          ? String(
+              row.notes,
+            )
           : null,
 
       sort_order:
@@ -494,7 +503,9 @@ export async function loadMobileChecklistForBooking(
           item.booking_item_id,
         ) || [];
 
-      children.push(item);
+      children.push(
+        item,
+      );
 
       inventoryChildrenByBookingItemId.set(
         item.booking_item_id,
@@ -871,7 +882,7 @@ export async function loadDriverRoute(
         "route_stops",
       )
       .select(
-        "id, booking_id, stop_date, stop_type, status, customer_name, customer_phone, address, city, state, zip, scheduled_start_time, scheduled_end_time, driver_name, truck_name, items_summary, setup_notes, balance_due, payment_collected, payment_collected_amount, payment_collected_method, payment_collected_at, payment_collected_by, proof_photo_required, proof_photo_uploaded, driver_notes, sort_order",
+        "id, booking_id, stop_date, stop_type, status, customer_name, customer_phone, address, city, state, zip, scheduled_start_time, scheduled_end_time, driver_name, truck_name, items_summary, setup_notes, pickup_notes, balance_due, payment_collected, payment_collected_amount, payment_collected_method, payment_collected_at, payment_collected_by, proof_photo_required, proof_photo_uploaded, driver_notes, sort_order",
       )
       .eq(
         "stop_date",
@@ -928,8 +939,8 @@ export async function loadTodayDriverRoute(): Promise<TodayDriverRoute> {
 /**
  * Existing simple date list.
  *
- * Keep this for compatibility with the current mobile UI
- * while the new calendar UI is being introduced.
+ * Keep this for compatibility with the current
+ * mobile route UI.
  */
 export async function loadMyDriverRouteDates(): Promise<
   string[]
@@ -1110,9 +1121,10 @@ export async function loadMyDriverRouteCalendar(): Promise<
 
   return Array.from(
     byDate.values(),
-  ).sort((a, b) =>
-    a.date.localeCompare(
-      b.date,
-    ),
+  ).sort(
+    (a, b) =>
+      a.date.localeCompare(
+        b.date,
+      ),
   );
 }
