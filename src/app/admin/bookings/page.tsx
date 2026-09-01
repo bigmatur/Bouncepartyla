@@ -3,7 +3,7 @@ import { getBookingMarkerColor } from "@/lib/booking/marker-color";
 import { getUnifiedAccess } from "@/lib/auth/access";
 import { redirect } from "next/navigation";
 import { archiveSelectedBookingsAction } from "./actions";
-import { restoreArchivedBookingAction } from "./[id]/booking-admin-actions";
+import { restoreArchivedBookingFromListAction } from "./[id]/booking-admin-actions";
 import {
   formatTime as formatSystemTime,
   type TimeFormat,
@@ -842,9 +842,10 @@ export default async function AdminBookingsPage({
                     {isArchived ? (
                       <button
                         type="submit"
-                        name="bookingId"
-                        value={booking.id}
-                        formAction={restoreArchivedBookingAction}
+                        formAction={restoreArchivedBookingFromListAction.bind(
+                          null,
+                          String(booking.id)
+                        )}
                         className="inline-flex min-h-10 items-center justify-center rounded-xl bg-[#23313f] px-3 py-2 text-center text-xs font-semibold text-white transition hover:bg-[#18222d] sm:rounded-full sm:px-4 sm:text-sm"
                       >
                         Restore

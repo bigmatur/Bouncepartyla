@@ -348,6 +348,14 @@ export async function restoreArchivedBookingAction(formData: FormData) {
   redirect(restoreRedirect);
 }
 
+export async function restoreArchivedBookingFromListAction(
+  bookingId: string,
+  formData: FormData
+) {
+  formData.set("bookingId", bookingId);
+  return restoreArchivedBookingAction(formData);
+}
+
 /**
  * Отменяет заказ, но не удаляет историю.
  *
