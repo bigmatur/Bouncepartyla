@@ -298,10 +298,16 @@ export async function restoreArchivedBookingAction(formData: FormData) {
   await assertBookingPermission(supabase, "bookings.restore");
 
   const bookingId = getString(formData, "bookingId");
+  const returnTo = getString(formData, "returnTo");
 
   if (!bookingId) {
     throw new Error("Booking ID is required.");
   }
+
+  const restoreRedirect =
+    returnTo.startsWith("/admin/bookings")
+      ? returnTo
+      : `/admin/bookings/${bookingId}?saved=booking-restored`;
 
   const result = await supabase
     .from("bookings")
@@ -330,7 +336,7 @@ export async function restoreArchivedBookingAction(formData: FormData) {
     }
 
     await revalidateBookingPages(bookingId);
-    redirect(`/admin/bookings/${bookingId}?saved=booking-restored`);
+    redirect(restoreRedirect);
   }
 
   if (result.error) {
@@ -339,7 +345,7 @@ export async function restoreArchivedBookingAction(formData: FormData) {
 
   await revalidateBookingPages(bookingId);
 
-  redirect(`/admin/bookings/${bookingId}?saved=booking-restored`);
+  redirect(restoreRedirect);
 }
 
 /**

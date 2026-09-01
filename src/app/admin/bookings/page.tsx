@@ -3,6 +3,7 @@ import { getBookingMarkerColor } from "@/lib/booking/marker-color";
 import { getUnifiedAccess } from "@/lib/auth/access";
 import { redirect } from "next/navigation";
 import { archiveSelectedBookingsAction } from "./actions";
+import { restoreArchivedBookingAction } from "./[id]/booking-admin-actions";
 import {
   formatTime as formatSystemTime,
   type TimeFormat,
@@ -15,6 +16,17 @@ function isMissingArchivedAtError(error: any) {
   return (
     code === "42703" ||
     (message.includes("archived_at") && message.includes("bookings"))
+  );
+}
+
+function isMissingArchiveReasonError(error: any) {
+  const message = String(error?.message || "").toLowerCase();
+  const code = String(error?.code || "").toLowerCase();
+
+  return (
+    (code === "pgrst204" && message.includes("archive_reason")) ||
+    (code === "42703" && message.includes("archive_reason")) ||
+    message.includes("archive_reason")
   );
 }
 
@@ -245,9 +257,10 @@ export default async function AdminBookingsPage({
         created_at
       )
     `;
-  const bookingSelectWithoutArchive = bookingSelectWithArchive
-    .replace(",\n      archived_at", "")
+  const bookingSelectWithoutArchiveReason = bookingSelectWithArchive
     .replace(",\n      archive_reason", "");
+  const bookingSelectWithoutArchive = bookingSelectWithoutArchiveReason
+    .replace(",\n      archived_at", "");
 
   function buildBookingsRequest(selectClause: string) {
     let request = supabase
@@ -274,6 +287,10 @@ export default async function AdminBookingsPage({
   ]);
 
   let bookingsResult = firstBookingsResult;
+
+  if (bookingsResult.error && isMissingArchiveReasonError(bookingsResult.error)) {
+    bookingsResult = await buildBookingsRequest(bookingSelectWithoutArchiveReason);
+  }
 
   if (bookingsResult.error && isMissingArchivedAtError(bookingsResult.error)) {
     bookingsResult = await buildBookingsRequest(bookingSelectWithoutArchive);
@@ -435,7 +452,7 @@ export default async function AdminBookingsPage({
             <a href="/admin/bookings/new" className="inline-flex min-h-11 items-center justify-center rounded-xl bg-[#c9964f] px-3 py-2.5 text-center text-xs font-semibold text-white transition hover:bg-[#b78744] sm:rounded-full sm:px-5 sm:py-3 sm:text-sm">
               + New
             </a>
-            <a href="/admin/bookings/archive" className="inline-flex min-h-11 items-center justify-center rounded-xl border border-[#d8cec0] bg-white px-3 py-2.5 text-center text-xs font-semibold text-[#2b2a28] transition hover:bg-[#faf8f5] sm:rounded-full sm:px-5 sm:py-3 sm:text-sm">
+            <a href="/admin/bookings?view=archived" className="inline-flex min-h-11 items-center justify-center rounded-xl border border-[#d8cec0] bg-white px-3 py-2.5 text-center text-xs font-semibold text-[#2b2a28] transition hover:bg-[#faf8f5] sm:rounded-full sm:px-5 sm:py-3 sm:text-sm">
               Archive
             </a>
             <a href="/admin/calendar" className="inline-flex min-h-11 items-center justify-center rounded-xl border border-[#d8cec0] bg-white px-3 py-2.5 text-center text-xs font-semibold text-[#2b2a28] transition hover:bg-[#faf8f5] sm:rounded-full sm:px-5 sm:py-3 sm:text-sm">
@@ -536,29 +553,35 @@ export default async function AdminBookingsPage({
         )}
 
         <form action={archiveSelectedBookingsAction} className="pb-2">
-          <input type="hidden" name="returnTo" value={returnTo} />
+          <input
+            type="hidden"
+            name="returnTo"
+            value={selectedView === "archived" ? "/admin/bookings?view=archived" : returnTo}
+          />
 
-          <div className="mx-3 mt-3 flex flex-col gap-2 rounded-2xl border border-[#e7ddd1] bg-[#fcfaf7] p-3 sm:mx-6 sm:flex-row sm:items-center sm:justify-between sm:px-4">
-            <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#9a723e]">
-              Bulk actions
+          {selectedView !== "archived" ? (
+            <div className="mx-3 mt-3 flex flex-col gap-2 rounded-2xl border border-[#e7ddd1] bg-[#fcfaf7] p-3 sm:mx-6 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#9a723e]">
+                Bulk actions
+              </div>
+
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <input
+                  name="archiveReason"
+                  defaultValue="Archived from bookings list"
+                  placeholder="Archive reason"
+                  className="w-full min-w-0 rounded-xl border border-[#d8cec0] bg-white px-3 py-2 text-xs outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7] sm:w-64"
+                />
+
+                <button
+                  type="submit"
+                  className="inline-flex min-h-10 items-center justify-center rounded-xl bg-[#23313f] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#18222d]"
+                >
+                  Archive selected
+                </button>
+              </div>
             </div>
-
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <input
-                name="archiveReason"
-                defaultValue="Archived from bookings list"
-                placeholder="Archive reason"
-                className="w-full min-w-0 rounded-xl border border-[#d8cec0] bg-white px-3 py-2 text-xs outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7] sm:w-64"
-              />
-
-              <button
-                type="submit"
-                className="inline-flex min-h-10 items-center justify-center rounded-xl bg-[#23313f] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#18222d]"
-              >
-                Archive selected
-              </button>
-            </div>
-          </div>
+          ) : null}
 
         <div className="divide-y divide-[#eee5d9]">
           {bookings.map((booking: any) => {
@@ -816,16 +839,28 @@ export default async function AdminBookingsPage({
                       Open booking
                     </a>
 
-                    <a
-                      href={hasBalance ? `/admin/bookings/${booking.id}?pos=1#payment` : "#"}
-                      className={[
-                        "inline-flex min-h-10 items-center justify-center rounded-xl px-3 py-2 text-center text-xs font-semibold text-white transition sm:rounded-full sm:px-4 sm:text-sm",
-                        hasBalance ? "bg-[#23313f] hover:bg-[#18222d]" : "cursor-not-allowed bg-[#9ca3af]",
-                      ].join(" ")}
-                      aria-disabled={!hasBalance}
-                    >
-                      Pay (POS)
-                    </a>
+                    {isArchived ? (
+                      <button
+                        type="submit"
+                        name="bookingId"
+                        value={booking.id}
+                        formAction={restoreArchivedBookingAction}
+                        className="inline-flex min-h-10 items-center justify-center rounded-xl bg-[#23313f] px-3 py-2 text-center text-xs font-semibold text-white transition hover:bg-[#18222d] sm:rounded-full sm:px-4 sm:text-sm"
+                      >
+                        Restore
+                      </button>
+                    ) : (
+                      <a
+                        href={hasBalance ? `/admin/bookings/${booking.id}?pos=1#payment` : "#"}
+                        className={[
+                          "inline-flex min-h-10 items-center justify-center rounded-xl px-3 py-2 text-center text-xs font-semibold text-white transition sm:rounded-full sm:px-4 sm:text-sm",
+                          hasBalance ? "bg-[#23313f] hover:bg-[#18222d]" : "cursor-not-allowed bg-[#9ca3af]",
+                        ].join(" ")}
+                        aria-disabled={!hasBalance}
+                      >
+                        Pay (POS)
+                      </a>
+                    )}
                   </div>
                 </div>
               </details>
