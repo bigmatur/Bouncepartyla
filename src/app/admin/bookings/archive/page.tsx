@@ -225,9 +225,10 @@ export default async function AdminBookingsArchivePage({
     const directoryResult = await supabase.rpc("admin_access_user_directory");
 
     if (directoryResult.error) {
-      if (!isMissingFunctionError(directoryResult.error, "admin_access_user_directory")) {
-        throw new Error(directoryResult.error.message);
-      }
+      console.warn(
+        "[booking archive] Unable to load archived-by directory:",
+        directoryResult.error.message
+      );
     } else {
       for (const row of directoryResult.data || []) {
         if (!row?.auth_user_id) continue;
