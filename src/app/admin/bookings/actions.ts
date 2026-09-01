@@ -1,7 +1,9 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getUnifiedAccess } from "@/lib/auth/access";
 import { createBooking } from "@/lib/booking/createBooking";
 
 function getString(formData: FormData, key: string) {
@@ -24,6 +26,30 @@ function addMinutes(date: Date, minutes: number) {
 
 function toLaDateTime(date: string, time: string) {
   return new Date(`${date}T${time}:00-07:00`);
+}
+
+function isMissingArchivedAtError(error: any) {
+  const message = String(error?.message || "").toLowerCase();
+  const code = String(error?.code || "").toLowerCase();
+
+  return (
+    code === "42703" ||
+    (message.includes("archived_at") && message.includes("bookings"))
+  );
+}
+
+function sanitizeReturnTo(value: string) {
+  if (!value.startsWith("/admin/bookings")) {
+    return "/admin/bookings";
+  }
+
+  return value;
+}
+
+function withSavedCode(path: string, saved: string) {
+  const url = new URL(path, "http://localhost");
+  url.searchParams.set("saved", saved);
+  return `${url.pathname}${url.search}`;
 }
 
 async function getReservedWindow(params: {
@@ -142,4 +168,58 @@ export async function createBookingAction(formData: FormData) {
   });
 
   redirect(`/admin/bookings/${result.booking.id}`);
+}
+
+export async function archiveSelectedBookingsAction(formData: FormData) {
+  const supabase = await createClient();
+  const access = await getUnifiedAccess(supabase);
+
+  if (!access.user) {
+    redirect("/login");
+  }
+
+  if (!access.isActive || !access.can("bookings.edit")) {
+    redirect("/unauthorized");
+  }
+
+  const returnTo = sanitizeReturnTo(getString(formData, "returnTo") || "/admin/bookings");
+  const archiveReasonRaw = getString(formData, "archiveReason");
+  const archiveReason = archiveReasonRaw || "Archived from bookings list";
+
+  const bookingIds = Array.from(
+    new Set(
+      formData
+        .getAll("bookingIds")
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+    )
+  );
+
+  if (bookingIds.length === 0) {
+    redirect(withSavedCode(returnTo, "bulk-archive-empty"));
+  }
+
+  let archiveResult = await supabase
+    .from("bookings")
+    .update({
+      archived_at: new Date().toISOString(),
+      archive_reason: archiveReason,
+    })
+    .in("id", bookingIds);
+
+  if (archiveResult.error && isMissingArchivedAtError(archiveResult.error)) {
+    archiveResult = await supabase
+      .from("bookings")
+      .update({ status: "closed" })
+      .in("id", bookingIds);
+  }
+
+  if (archiveResult.error) {
+    redirect(withSavedCode(returnTo, "bulk-archive-error"));
+  }
+
+  revalidatePath("/admin/bookings");
+  revalidatePath("/admin/bookings/archive");
+
+  redirect(withSavedCode(returnTo, "bulk-archived"));
 }

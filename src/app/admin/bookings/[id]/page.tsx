@@ -6,6 +6,7 @@ import {
   updateBookingDiscountAction,
   resendUpdatedContractManualAction,
   updateBookingCustomerAction,
+  updateBookingPrivateNotesAction,
   updateBookingScheduleQuickAction,
 } from "./actions";
 import CustomerTypeahead from "./CustomerTypeahead";
@@ -221,6 +222,7 @@ export default async function BookingDetailsPage(props: PageProps) {
 
   const [
     bookingResult,
+    routeStopNotesResult,
     bookingModifiersResult,
     reservationsResult,
     movementsResult,
@@ -282,6 +284,12 @@ export default async function BookingDetailsPage(props: PageProps) {
       )
       .eq("id", bookingId)
       .single(),
+
+    supabase
+      .from("route_stops")
+      .select("id, stop_type, driver_notes")
+      .eq("booking_id", bookingId)
+      .in("stop_type", ["delivery", "pickup"]),
 
     supabase
       .from("booking_modifiers")
@@ -409,6 +417,10 @@ export default async function BookingDetailsPage(props: PageProps) {
     throw new Error(reservationsResult.error.message);
   }
 
+  if (routeStopNotesResult.error && !isMissingTableError(routeStopNotesResult.error)) {
+    throw new Error(routeStopNotesResult.error.message);
+  }
+
   if (bookingModifiersResult.error) {
     throw new Error(bookingModifiersResult.error.message);
   }
@@ -447,6 +459,7 @@ export default async function BookingDetailsPage(props: PageProps) {
   const bookingModifiers = bookingModifiersResult.data || [];
   const markerColor = getBookingMarkerColor(booking, bookingModifiers);
   const markerLabel = getBookingMarkerLabel(booking, bookingModifiers);
+  const routeStopNotes = (routeStopNotesResult.data || []) as any[];
   const reservations = reservationsResult.data || [];
   const movements = movementsResult.data || [];
   const latestContract = (contractsResult.data || [])[0] || null;
@@ -751,6 +764,16 @@ export default async function BookingDetailsPage(props: PageProps) {
   }
 
   const rawAddress = String(booking.setup_address || "").trim();
+
+  const firstRouteStopWithDriverNote = routeStopNotes.find((stop) => {
+    return String((stop as any).driver_notes || "").trim().length > 0;
+  });
+
+  const driverNoteDraft = String(
+    (firstRouteStopWithDriverNote as any)?.driver_notes || ""
+  ).trim();
+
+  const officeNoteDraft = String(booking.internal_notes || "").trim();
   const hasExpandedAddressParts =
     rawAddress.includes(String(booking.setup_city || "")) ||
     rawAddress.includes(String(booking.setup_zip || ""));
@@ -879,6 +902,55 @@ export default async function BookingDetailsPage(props: PageProps) {
               className="w-full rounded-xl bg-[#23313f] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#18222d] sm:rounded-full sm:px-5 sm:py-3"
             >
               Save time only
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section className="min-w-0 rounded-[20px] border border-black/5 bg-white p-3.5 shadow-[0_8px_26px_rgba(0,0,0,0.035)] sm:rounded-[30px] sm:p-5 sm:shadow-[0_12px_40px_rgba(0,0,0,0.04)]">
+        <h3 className="text-base font-bold tracking-tight text-[#1f1e1b] sm:text-lg sm:font-semibold">
+          Private notes by role
+        </h3>
+
+        <p className="mt-1 text-sm text-[#6c6258]">
+          Эти заметки не показываются клиенту. Driver notes видит только водитель в приложении.
+        </p>
+
+        <form action={updateBookingPrivateNotesAction} className="mt-3 grid gap-3 sm:mt-4 sm:gap-4">
+          <input type="hidden" name="bookingId" value={booking.id} />
+
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.12em] text-[#9a7a49]">
+              Driver notes
+            </span>
+            <textarea
+              name="driverNotes"
+              rows={4}
+              defaultValue={driverNoteDraft}
+              placeholder="Notes visible to the driver only (access details, setup priorities, customer specifics)."
+              className="w-full rounded-2xl border border-[#d8cec0] bg-white px-4 py-3 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]"
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.12em] text-[#9a7a49]">
+              Office notes (cashier/admin/manager)
+            </span>
+            <textarea
+              name="officeNotes"
+              rows={4}
+              defaultValue={officeNoteDraft}
+              placeholder="Internal back-office notes for cashier/admin/manager."
+              className="w-full rounded-2xl border border-[#d8cec0] bg-white px-4 py-3 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]"
+            />
+          </label>
+
+          <div>
+            <button
+              type="submit"
+              className="w-full rounded-xl bg-[#23313f] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#18222d] sm:w-auto sm:rounded-full sm:px-5 sm:py-2"
+            >
+              Save private notes
             </button>
           </div>
         </form>

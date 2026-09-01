@@ -5,7 +5,9 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createStripeCheckoutSession } from "@/lib/payments/stripe";
 import { processNotificationQueueBestEffort } from "@/lib/notifications/engine";
+import { verifyBookingDiscountPassword } from "@/lib/booking/discount-password";
 import { addBookingPaymentCore } from "@/lib/booking/admin-booking-payment";
+import { updateBookingDiscountCore } from "@/lib/booking/admin-booking-discount";
 import { checkBookingItemAvailabilityAction } from "../new/availability-actions";
 import { scryptSync, timingSafeEqual } from "node:crypto";
 
@@ -1199,59 +1201,17 @@ async function insertBookingModifiersWithFallback(params: {
 
 export async function updateBookingDiscountAction(formData: FormData) {
   const supabase = await createClient();
+
   const bookingId = getString(formData, "bookingId");
-  const discountInput = getNumber(formData, "discountAmount", 0);
+  const discountAmount = getNumber(formData, "discountAmount", 0);
   const discountPassword = getString(formData, "discountPassword");
 
-  if (!bookingId) throw new Error("Booking ID is required.");
-
-  const bookingResult = await supabase
-    .from("bookings")
-    .select("id, subtotal, discount_amount, delivery_fee, tax_rate")
-    .eq("id", bookingId)
-    .maybeSingle();
-  if (bookingResult.error) throw new Error(bookingResult.error.message);
-  if (!bookingResult.data) throw new Error("Booking not found.");
-
-  const booking = bookingResult.data as any;
-  const subtotal = Number(booking.subtotal || 0);
-  const currentDiscount = Number(booking.discount_amount || 0);
-  const discountAmount = Number(Math.max(0, Math.min(discountInput, subtotal)).toFixed(2));
-
-  if (discountAmount.toFixed(2) !== currentDiscount.toFixed(2)) {
-    const settings = await getDiscountSecuritySettings();
-    if (settings.discount_password_enabled === true) {
-      const valid = isValidPasswordHash((settings as any).discount_password_hash, discountPassword);
-      if (!valid) throw new Error("Invalid discount password.");
-    }
-  }
-
-  const deliveryFee = Number(booking.delivery_fee || 0);
-  const taxRate = Number(booking.tax_rate || 0);
-  const taxableSubtotal = Number(Math.max(0, subtotal - discountAmount).toFixed(2));
-  const taxAmount = Number(((taxableSubtotal + deliveryFee) * (taxRate / 100)).toFixed(2));
-  const totalAmount = Number((taxableSubtotal + deliveryFee + taxAmount).toFixed(2));
-
-  const paymentsResult = await supabase
-    .from("payments")
-    .select("amount, status")
-    .eq("booking_id", bookingId);
-  if (paymentsResult.error) throw new Error(paymentsResult.error.message);
-  const paidAmount = (paymentsResult.data || []).reduce((sum: number, row: any) => {
-    const status = String(row.status || "paid").toLowerCase();
-    return status === "paid" || status === "completed" || status === "succeeded"
-      ? sum + Number(row.amount || 0)
-      : sum;
-  }, 0);
-  const balanceDue = Number(Math.max(0, totalAmount - paidAmount).toFixed(2));
-
-  const updateResult = await supabase.from("bookings").update({
-    discount_amount: discountAmount,
-    tax_amount: taxAmount,
-    total_amount: totalAmount,
-    balance_due: balanceDue,
-  }).eq("id", bookingId);
-  if (updateResult.error) throw new Error(updateResult.error.message);
+  await updateBookingDiscountCore({
+    supabase,
+    bookingId,
+    discountAmount,
+    discountPassword,
+  });
 
   revalidatePath(`/admin/bookings/${bookingId}`);
   revalidatePath("/admin/bookings");
@@ -1588,20 +1548,15 @@ export async function updateBookingItemsAction(formData: FormData) {
   const discountChanged =
     existingDiscountAmount.toFixed(2) !== discountAmount.toFixed(2);
 
-  const discountSettings = await getDiscountSecuritySettings();
+  if (discountChanged && discountAmount > 0) {
+    const discountAuthorization =
+      await verifyBookingDiscountPassword({
+        supabase,
+        password: discountPassword,
+      });
 
-  if (
-    discountChanged &&
-    discountSettings.discount_password_enabled === true &&
-    discountAmount > 0
-  ) {
-    const validPassword = isValidPasswordHash(
-      (discountSettings as any).discount_password_hash,
-      discountPassword
-    );
-
-    if (!validPassword) {
-      throw new Error("Invalid discount password.");
+    if (!discountAuthorization.ok) {
+      throw new Error(discountAuthorization.message);
     }
   }
 
@@ -1848,4 +1803,55 @@ export async function updateBookingCustomerAction(formData: FormData) {
   revalidatePath("/admin/bookings");
 
   redirect(`/admin/bookings/${bookingId}?saved=customer-updated`);
+}
+
+export async function updateBookingPrivateNotesAction(formData: FormData) {
+  const supabase = await createClient();
+
+  const bookingId = getString(formData, "bookingId");
+  const driverNotesRaw = getString(formData, "driverNotes");
+  const officeNotesRaw = getString(formData, "officeNotes");
+
+  if (!bookingId) {
+    throw new Error("Booking ID is required.");
+  }
+
+  const driverNotes = driverNotesRaw || null;
+  const officeNotes = officeNotesRaw || null;
+
+  const bookingUpdateResult = await supabase
+    .from("bookings")
+    .update({
+      internal_notes: officeNotes,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", bookingId);
+
+  if (bookingUpdateResult.error) {
+    throw new Error(bookingUpdateResult.error.message);
+  }
+
+  // Keep driver-private notes separate from stop-specific setup/pickup notes.
+  const routeStopUpdateResult = await supabase
+    .from("route_stops")
+    .update({
+      driver_notes: driverNotes,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("booking_id", bookingId)
+    .in("stop_type", ["delivery", "pickup"]);
+
+  if (
+    routeStopUpdateResult.error &&
+    !isMissingTableError(routeStopUpdateResult.error)
+  ) {
+    throw new Error(routeStopUpdateResult.error.message);
+  }
+
+  revalidatePath(`/admin/bookings/${bookingId}`);
+  revalidatePath(`/admin/bookings/${bookingId}/routes`);
+  revalidatePath("/admin/bookings");
+  revalidatePath("/admin/routes");
+
+  redirect(`/admin/bookings/${bookingId}?saved=private-notes-updated`);
 }

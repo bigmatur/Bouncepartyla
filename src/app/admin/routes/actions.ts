@@ -48,11 +48,27 @@ function cleanTime(value: string | null) {
 
   const cleanValue = value.trim();
 
-  if (!/^\d{2}:\d{2}$/.test(cleanValue)) {
+  const match = cleanValue.match(/^(\d{1,2}):(\d{2})$/);
+
+  if (!match) {
     return null;
   }
 
-  return cleanValue;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+
+  if (
+    !Number.isFinite(hours) ||
+    !Number.isFinite(minutes) ||
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return null;
+  }
+
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
 function cleanJsonWindows(value: FormDataEntryValue | null) {
@@ -86,14 +102,23 @@ function cleanJsonWindows(value: FormDataEntryValue | null) {
 function toMinutes(value: string | null | undefined) {
   if (!value) return null;
 
-  const match = String(value).match(/^(\d{2}):(\d{2})/);
+  const match = String(value).match(/^(\d{1,2}):(\d{2})/);
 
   if (!match) return null;
 
   const hours = Number(match[1]);
   const minutes = Number(match[2]);
 
-  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  if (
+    !Number.isFinite(hours) ||
+    !Number.isFinite(minutes) ||
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return null;
+  }
 
   return hours * 60 + minutes;
 }
@@ -527,83 +552,98 @@ async function cascadeRouteTimesForChain(
     return Math.ceil((eventEnd - routeDayStart) / 60000);
   }
 
+  const anchorGlobalPos =
+    globalPosById.get(String(anchorStop.id)) ?? -1;
+  let previousGlobalStop: any = null;
+
+  for (let index = anchorGlobalPos - 1; index >= 0; index -= 1) {
+    const candidate = allStops[index];
+
+    if (!candidate || isBreakRouteStop(candidate)) {
+      continue;
+    }
+
+    previousGlobalStop = candidate;
+    break;
+  }
+
   let previousStop = anchorStop;
   let previousGeoStop = isBreakRouteStop(anchorStop) ? null : anchorStop;
   let previousEndMinutes = toMinutes(anchorStop.scheduled_end_time);
 
   {
-  const originalStartMinutes = toMinutes(anchorStop.scheduled_start_time);
-  const currentEndMinutes = toMinutes(anchorStop.scheduled_end_time);
-  const minimumStart = minimumPickupStartMinutes(anchorStop);
+    const originalStartMinutes = toMinutes(anchorStop.scheduled_start_time);
+    const currentEndMinutes = toMinutes(anchorStop.scheduled_end_time);
+    const minimumStart = minimumPickupStartMinutes(anchorStop);
 
-  const startMinutes =
-    originalStartMinutes == null
-      ? minimumStart
-      : minimumStart == null
-        ? originalStartMinutes
-        : Math.max(originalStartMinutes, minimumStart);
+    let startMinutes =
+      originalStartMinutes == null
+        ? minimumStart
+        : minimumStart == null
+          ? originalStartMinutes
+          : Math.max(originalStartMinutes, minimumStart);
 
-  const savedLockedDuration =
-    anchorStop.time_locked &&
-    originalStartMinutes != null &&
-    currentEndMinutes != null &&
-    currentEndMinutes >= originalStartMinutes
-      ? currentEndMinutes - originalStartMinutes
-      : null;
+    if (!anchorStop.time_locked && previousGlobalStop) {
+      const previousEnd = toMinutes(previousGlobalStop.scheduled_end_time);
 
-  const serviceDuration =
-    savedLockedDuration ?? stopServiceDurationMinutes(anchorStop);
+      if (previousEnd != null) {
+        const departureTime = buildDepartureDateTime(stopDate, previousEnd);
+        const driveMinutes = await travelMinutesBetweenStops(
+          previousGlobalStop,
+          anchorStop,
+          departureTime,
+        );
 
-  const expectedEndMinutes =
-    startMinutes == null ? null : startMinutes + serviceDuration;
+        const calculatedStart = previousEnd + driveMinutes;
 
-  if (startMinutes == null || expectedEndMinutes == null) return;
-
-  const startChanged = originalStartMinutes !== startMinutes;
-
-  if (startChanged || currentEndMinutes !== expectedEndMinutes) {
-    previousEndMinutes = expectedEndMinutes;
-
-    const { error: anchorUpdateError } = await supabase
-      .from("route_stops")
-      .update({
-        scheduled_start_time: toTime(startMinutes),
-        scheduled_end_time: toTime(expectedEndMinutes),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", anchorStop.id);
-
-    if (anchorUpdateError) {
-      throw new Error(anchorUpdateError.message);
+        startMinutes =
+          minimumStart == null
+            ? calculatedStart
+            : Math.max(calculatedStart, minimumStart);
+      }
     }
-  } else {
-    previousEndMinutes = currentEndMinutes;
+
+    const savedLockedDuration =
+      anchorStop.time_locked &&
+      originalStartMinutes != null &&
+      currentEndMinutes != null &&
+      currentEndMinutes >= originalStartMinutes
+        ? currentEndMinutes - originalStartMinutes
+        : null;
+
+    const serviceDuration =
+      savedLockedDuration ?? stopServiceDurationMinutes(anchorStop);
+
+    const expectedEndMinutes =
+      startMinutes == null ? null : startMinutes + serviceDuration;
+
+    if (startMinutes == null || expectedEndMinutes == null) return;
+
+    const startChanged = originalStartMinutes !== startMinutes;
+
+    if (startChanged || currentEndMinutes !== expectedEndMinutes) {
+      previousEndMinutes = expectedEndMinutes;
+
+      const { error: anchorUpdateError } = await supabase
+        .from("route_stops")
+        .update({
+          scheduled_start_time: toTime(startMinutes),
+          scheduled_end_time: toTime(expectedEndMinutes),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", anchorStop.id);
+
+      if (anchorUpdateError) {
+        throw new Error(anchorUpdateError.message);
+      }
+    } else {
+      previousEndMinutes = currentEndMinutes;
+    }
   }
-}
 
   if (!previousGeoStop) {
-
-  const anchorGlobalPos =
-
-    globalPosById.get(String(anchorStop.id)) ?? -1;
-
-  for (let index = anchorGlobalPos - 1; index >= 0; index -= 1) {
-
-    const candidate = allStops[index];
-
-    if (!candidate || isBreakRouteStop(candidate)) {
-
-      continue;
-
-    }
-
-    previousGeoStop = candidate;
-
-    break;
-
+    previousGeoStop = previousGlobalStop;
   }
-
-}
 
   for (let index = anchorIndex + 1; index < stops.length; index += 1) {
     const currentStop = stops[index];
@@ -641,6 +681,7 @@ async function cascadeRouteTimesForChain(
   previousGeoStop = between;
   break;
 }
+
     }
 
    if (currentStop.time_locked && lockedStart != null) {
@@ -715,6 +756,48 @@ async function cascadeRouteTimesForChain(
     if (!isBreakRouteStop(currentStop)) previousGeoStop = currentStop;
     previousEndMinutes = nextEndMinutes;
   }
+}
+
+async function previousStopIdInChain(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  params: {
+    stopDate: string;
+    driverName: string | null;
+    stopType: string;
+    stopId: string;
+  },
+) {
+  let query = supabase
+    .from("route_stops")
+    .select("id")
+    .eq("stop_date", params.stopDate)
+    .eq("stop_type", params.stopType)
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  query = params.driverName
+    ? query.eq("driver_name", params.driverName)
+    : query.is("driver_name", null);
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const chain = Array.isArray(data) ? data : [];
+  const currentIndex = chain.findIndex(
+    (item: any) => String(item?.id || "") === params.stopId,
+  );
+
+  if (currentIndex <= 0) {
+    return null;
+  }
+
+  const previous = chain[currentIndex - 1];
+  const previousId = String(previous?.id || "").trim();
+
+  return previousId || null;
 }
 
 function revalidateRoutes() {
@@ -1183,10 +1266,13 @@ async function updateCanonicalBookingStop(
   supabase: Awaited<ReturnType<typeof createClient>>,
   stopId: string,
   updateData: Record<string, unknown>,
+  options?: {
+    scopeToSourceStopDate?: boolean;
+  },
 ) {
   const { data: sourceStop, error: sourceError } = await supabase
     .from("route_stops")
-    .select("id, booking_id, stop_type")
+    .select("id, booking_id, stop_type, stop_date")
     .eq("id", stopId)
     .maybeSingle();
 
@@ -1204,6 +1290,10 @@ async function updateCanonicalBookingStop(
     query = query
       .eq("booking_id", sourceStop.booking_id)
       .eq("stop_type", sourceStop.stop_type);
+
+    if (options?.scopeToSourceStopDate) {
+      query = query.eq("stop_date", sourceStop.stop_date || null);
+    }
   } else {
     query = query.eq("id", stopId);
   }
@@ -1229,6 +1319,8 @@ export async function updateRouteStopDriverAction(formData: FormData) {
   await updateCanonicalBookingStop(supabase, stopId, {
     driver_name: driverName,
     updated_at: new Date().toISOString(),
+  }, {
+    scopeToSourceStopDate: true,
   });
 
   revalidateRoutes();
@@ -1236,6 +1328,7 @@ export async function updateRouteStopDriverAction(formData: FormData) {
 
 export async function updateRouteStopCompactAction(formData: FormData) {
   const supabase = await createClient();
+  const orderedIdsRaw = getString(formData, "orderedIds");
 
   const deliveryStopId =
     getNullableString(formData, "deliveryStopId") ||
@@ -1309,22 +1402,25 @@ export async function updateRouteStopCompactAction(formData: FormData) {
   await validateBookingRouteBoundaries(supabase, {
     deliveryStopId,
     deliveryDate: deliveryStopDate,
-    deliveryEndTime: deliveryScheduledEndTime,
+    deliveryEndTime: deliveryTimeLocked ? deliveryScheduledEndTime : null,
     pickupStopId,
     pickupDate: pickupStopDate,
-    pickupStartTime: pickupScheduledStartTime,
+    pickupStartTime: pickupTimeLocked ? pickupScheduledStartTime : null,
   });
 
   const now = new Date().toISOString();
 
   const deliveryUpdate: Record<string, any> = {
     stop_date: deliveryStopDate,
-    scheduled_start_time: deliveryScheduledStartTime,
-    scheduled_end_time: deliveryScheduledEndTime,
     time_locked: deliveryTimeLocked,
     driver_name: deliveryDriverName,
     updated_at: now,
   };
+
+  if (deliveryTimeLocked || isBreakCard) {
+    deliveryUpdate.scheduled_start_time = deliveryScheduledStartTime;
+    deliveryUpdate.scheduled_end_time = deliveryScheduledEndTime;
+  }
 
   if (isBreakCard) {
     if (breakStopType) {
@@ -1353,6 +1449,9 @@ export async function updateRouteStopCompactAction(formData: FormData) {
     supabase,
     deliveryStopId,
     deliveryUpdate,
+    {
+      scopeToSourceStopDate: true,
+    },
   );
 
   if (isBreakCard) {
@@ -1374,12 +1473,15 @@ export async function updateRouteStopCompactAction(formData: FormData) {
   if (pickupStopId) {
     const pickupUpdate: Record<string, any> = {
       stop_date: pickupStopDate,
-      scheduled_start_time: pickupScheduledStartTime,
-      scheduled_end_time: pickupScheduledEndTime,
       time_locked: pickupTimeLocked,
       driver_name: pickupDriverName,
       updated_at: now,
     };
+
+    if (pickupTimeLocked) {
+      pickupUpdate.scheduled_start_time = pickupScheduledStartTime;
+      pickupUpdate.scheduled_end_time = pickupScheduledEndTime;
+    }
 
     if (formData.has("clientPickupWindows")) {
       pickupUpdate.client_pickup_windows = cleanJsonWindows(
@@ -1391,25 +1493,86 @@ export async function updateRouteStopCompactAction(formData: FormData) {
       supabase,
       pickupStopId,
       pickupUpdate,
+      {
+        scopeToSourceStopDate: true,
+      },
     );
   }
 
-  if (!isBreakCard && deliveryTimeLocked) {
+  if (!isBreakCard) {
+    let deliveryAnchorStopId = deliveryStopId;
+
+    if (!deliveryTimeLocked) {
+      const previousDeliveryStopId = await previousStopIdInChain(supabase, {
+        stopDate: deliveryStopDate,
+        driverName: deliveryDriverName,
+        stopType: effectiveStopType,
+        stopId: deliveryStopId,
+      });
+
+      if (previousDeliveryStopId) {
+        deliveryAnchorStopId = previousDeliveryStopId;
+      }
+    }
+
     await cascadeRouteTimesForChain(supabase, {
       stopDate: deliveryStopDate,
       driverName: deliveryDriverName,
       stopType: effectiveStopType,
-      anchorStopId: deliveryStopId,
+      anchorStopId: deliveryAnchorStopId,
     });
   }
 
-  if (pickupStopId && pickupStopDate && pickupTimeLocked) {
+  if (pickupStopId && pickupStopDate) {
+    let pickupAnchorStopId = pickupStopId;
+
+    if (!pickupTimeLocked) {
+      const previousPickupStopId = await previousStopIdInChain(supabase, {
+        stopDate: pickupStopDate,
+        driverName: pickupDriverName,
+        stopType: "pickup",
+        stopId: pickupStopId,
+      });
+
+      if (previousPickupStopId) {
+        pickupAnchorStopId = previousPickupStopId;
+      }
+    }
+
     await cascadeRouteTimesForChain(supabase, {
       stopDate: pickupStopDate,
       driverName: pickupDriverName,
       stopType: "pickup",
-      anchorStopId: pickupStopId,
+      anchorStopId: pickupAnchorStopId,
     });
+  }
+
+  if (orderedIdsRaw) {
+    let orderedIds: string[] = [];
+
+    try {
+      const parsed = JSON.parse(orderedIdsRaw);
+
+      if (Array.isArray(parsed)) {
+        orderedIds = Array.from(
+          new Set(parsed.map((value) => String(value || "").trim()).filter(Boolean)),
+        );
+      }
+    } catch {
+      orderedIds = [];
+    }
+
+    for (let index = 0; index < orderedIds.length; index += 1) {
+      const id = orderedIds[index];
+      const sortOrder = (index + 1) * 10;
+
+      await updateCanonicalBookingStop(supabase, id, {
+        sort_order: sortOrder,
+        updated_at: now,
+      }, {
+        scopeToSourceStopDate: true,
+      });
+    }
   }
 
   revalidateRoutes();
@@ -1601,14 +1764,9 @@ const now = new Date().toISOString();
       }
     }
 
-    const { error } = await supabase
-      .from("route_stops")
-      .update(updateData)
-      .eq("id", id);
-
-    if (error) {
-      throw new Error(error.message);
-    }
+    await updateCanonicalBookingStop(supabase, id, updateData, {
+      scopeToSourceStopDate: true,
+    });
   }
 
   revalidateRoutes();

@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getBookingMarkerColor } from "@/lib/booking/marker-color";
 import { getUnifiedAccess } from "@/lib/auth/access";
 import { redirect } from "next/navigation";
+import { archiveSelectedBookingsAction } from "./actions";
 import {
   formatTime as formatSystemTime,
   type TimeFormat,
@@ -159,7 +160,7 @@ function SummaryCard({ label, value, hint }: { label: string; value: string | nu
 export default async function AdminBookingsPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ q?: string; status?: string; date?: string; view?: string }>;
+  searchParams?: Promise<{ q?: string; status?: string; date?: string; view?: string; saved?: string }>;
 }) {
   const resolvedSearchParams = searchParams ? await searchParams : {};
 
@@ -167,6 +168,16 @@ export default async function AdminBookingsPage({
   const selectedStatus = String(resolvedSearchParams?.status || "all");
   const selectedDate = String(resolvedSearchParams?.date || "").trim();
   const selectedView = String(resolvedSearchParams?.view || "active").trim();
+  const saved = String(resolvedSearchParams?.saved || "").trim();
+
+  const returnParams = new URLSearchParams();
+
+  if (query) returnParams.set("q", query);
+  if (selectedStatus && selectedStatus !== "all") returnParams.set("status", selectedStatus);
+  if (selectedDate) returnParams.set("date", selectedDate);
+  if (selectedView && selectedView !== "active") returnParams.set("view", selectedView);
+
+  const returnTo = `/admin/bookings${returnParams.toString() ? `?${returnParams.toString()}` : ""}`;
 
   const supabase = await createClient();
   const access = await getUnifiedAccess(supabase);
@@ -506,6 +517,49 @@ export default async function AdminBookingsPage({
           </form>
         </div>
 
+        {saved === "bulk-archived" && (
+          <div className="mx-3 mt-3 rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-200 sm:mx-6">
+            Selected bookings were archived.
+          </div>
+        )}
+
+        {saved === "bulk-archive-empty" && (
+          <div className="mx-3 mt-3 rounded-2xl bg-[#fff4d8] px-4 py-3 text-sm font-semibold text-[#8a6b20] ring-1 ring-[#efd582] sm:mx-6">
+            Select at least one booking to archive.
+          </div>
+        )}
+
+        {saved === "bulk-archive-error" && (
+          <div className="mx-3 mt-3 rounded-2xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 ring-1 ring-red-200 sm:mx-6">
+            Could not archive selected bookings. Try again.
+          </div>
+        )}
+
+        <form action={archiveSelectedBookingsAction} className="pb-2">
+          <input type="hidden" name="returnTo" value={returnTo} />
+
+          <div className="mx-3 mt-3 flex flex-col gap-2 rounded-2xl border border-[#e7ddd1] bg-[#fcfaf7] p-3 sm:mx-6 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+            <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#9a723e]">
+              Bulk actions
+            </div>
+
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <input
+                name="archiveReason"
+                defaultValue="Archived from bookings list"
+                placeholder="Archive reason"
+                className="w-full min-w-0 rounded-xl border border-[#d8cec0] bg-white px-3 py-2 text-xs outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7] sm:w-64"
+              />
+
+              <button
+                type="submit"
+                className="inline-flex min-h-10 items-center justify-center rounded-xl bg-[#23313f] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[#18222d]"
+              >
+                Archive selected
+              </button>
+            </div>
+          </div>
+
         <div className="divide-y divide-[#eee5d9]">
           {bookings.map((booking: any) => {
             const customer = getOne(booking.customers);
@@ -552,9 +606,22 @@ export default async function AdminBookingsPage({
                     remainingProductNames > 0 ? ` +${remainingProductNames} more` : ""
                   }`
                 : "Booking";
+            const isArchived = Boolean(booking.archived_at);
 
             return (
-              <details key={booking.id} className="group px-2.5 py-1 sm:px-6">
+              <div key={booking.id} className="flex items-start gap-2 px-2.5 py-1 sm:gap-3 sm:px-6">
+                <div className="pt-4 sm:pt-5">
+                  <input
+                    type="checkbox"
+                    name="bookingIds"
+                    value={booking.id}
+                    disabled={isArchived}
+                    aria-label={`Select booking ${booking.booking_number || booking.id.slice(0, 8)}`}
+                    className="h-4 w-4 rounded border-[#cbb69d] text-[#23313f] focus:ring-[#d8e8f7] disabled:cursor-not-allowed disabled:opacity-40"
+                  />
+                </div>
+
+              <details className="group w-full">
                 <summary
                   className="list-none cursor-pointer rounded-[18px] border px-3 py-3 transition [&::-webkit-details-marker]:hidden sm:rounded-2xl sm:py-4"
                   style={{
@@ -762,6 +829,7 @@ export default async function AdminBookingsPage({
                   </div>
                 </div>
               </details>
+              </div>
             );
           })}
 
@@ -772,6 +840,7 @@ export default async function AdminBookingsPage({
             </div>
           )}
         </div>
+        </form>
       </section>
     </div>
   );

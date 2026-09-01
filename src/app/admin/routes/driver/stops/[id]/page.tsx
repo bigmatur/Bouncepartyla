@@ -608,9 +608,10 @@ export default async function DriverStopPage({
 
   let checklistItems: any[] = [];
   let modifiers: any[] = [];
+  let proofPhotos: any[] = [];
 
   if (stop.booking_id) {
-    const [checklistResult, modifiersResult] = await Promise.all([
+    const [checklistResult, modifiersResult, proofPhotosResult] = await Promise.all([
       supabase
         .from("booking_checklist_items")
         .select(
@@ -654,6 +655,14 @@ export default async function DriverStopPage({
         .order("created_at", { ascending: true }),
 
       supabase.from("booking_modifiers").select("*").eq("booking_id", stop.booking_id),
+
+      supabase
+        .from("booking_photos")
+        .select("id, booking_id, route_stop_id, photo_url, caption, taken_by, created_at")
+        .eq("booking_id", stop.booking_id)
+        .eq("route_stop_id", stop.id)
+        .order("created_at", { ascending: false })
+        .limit(8),
     ]);
 
     if (!checklistResult.error) {
@@ -662,6 +671,10 @@ export default async function DriverStopPage({
 
     if (!modifiersResult.error) {
       modifiers = modifiersResult.data || [];
+    }
+
+    if (!proofPhotosResult.error) {
+      proofPhotos = proofPhotosResult.data || [];
     }
   }
 
@@ -918,6 +931,60 @@ export default async function DriverStopPage({
 
               <CompactPaymentForm stop={stopWithFreshBalance} />
             </div>
+
+            {proofPhotos.length > 0 && (
+              <div className="rounded-2xl bg-white p-4 ring-1 ring-[#eee5d9]">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#9a723e]">
+                      Uploaded proof photos
+                    </div>
+                    <div className="mt-1 text-sm text-[#6c6258]">
+                      Linked to this stop and booking.
+                    </div>
+                  </div>
+
+                  {stop.booking_id && (
+                    <a
+                      href={`/admin/bookings/${stop.booking_id}/photos`}
+                      className="rounded-full border border-[#d8cec0] bg-white px-3 py-1.5 text-xs font-semibold text-[#23313f]"
+                    >
+                      Open booking photos
+                    </a>
+                  )}
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {proofPhotos.map((photo: any) => (
+                    <a
+                      key={photo.id}
+                      href={photo.photo_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="overflow-hidden rounded-xl bg-[#fcfaf7] ring-1 ring-[#eee5d9]"
+                    >
+                      <img
+                        src={photo.photo_url}
+                        alt={photo.caption || "Proof photo"}
+                        className="h-28 w-full object-cover"
+                      />
+
+                      <div className="space-y-1 px-2.5 py-2 text-[11px] text-[#6c6258]">
+                        <div className="line-clamp-2 font-semibold text-[#1f1e1b]">
+                          {photo.caption || "Driver proof photo"}
+                        </div>
+                        <div>
+                          {photo.taken_by || "Driver"}
+                        </div>
+                        <div>
+                          {formatDateTime(photo.created_at)}
+                        </div>
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {!completeOk && (
               <div className="rounded-[24px] bg-red-50 p-4 text-sm font-semibold text-red-700 ring-1 ring-red-100">

@@ -365,6 +365,52 @@ function isContractsAuditColumnError(error: any) {
   );
 }
 
+async function insertInventoryReservationsCompat(params: {
+  supabase: any;
+  payload: Record<string, any> | Array<Record<string, any>>;
+}) {
+  const { supabase, payload } = params;
+
+  let result = await supabase
+    .from("inventory_reservations")
+    .insert(payload);
+
+  if (
+    result.error &&
+    isMissingColumnError(
+      result.error,
+      "inventory_reservations",
+      "inventory_behavior",
+    )
+  ) {
+    const stripInventoryBehavior = (
+      row: Record<string, any>,
+    ) => {
+      const {
+        inventory_behavior,
+        ...legacyRow
+      } = row;
+
+      void inventory_behavior;
+
+      return legacyRow;
+    };
+
+    const fallbackPayload =
+      Array.isArray(payload)
+        ? payload.map(
+            stripInventoryBehavior,
+          )
+        : stripInventoryBehavior(payload);
+
+    result = await supabase
+      .from("inventory_reservations")
+      .insert(fallbackPayload);
+  }
+
+  return result;
+}
+
 function isValidPasswordHash(
   stored: string | null | undefined,
   candidate: string,
@@ -1406,9 +1452,10 @@ async function reserveProductComponentsInventory({
         trackingType === "quantity" ||
         trackingType === "consumable"
       ) {
-        const { error } = await supabase
-          .from("inventory_reservations")
-          .insert({
+        const reservationResult =
+          await insertInventoryReservationsCompat({
+            supabase,
+            payload: {
             booking_id: bookingId,
             booking_item_id:
               bookingItem.id,
@@ -1426,10 +1473,13 @@ async function reserveProductComponentsInventory({
               component?.componentName ||
               "item"
             }`,
+            },
           });
 
-        if (error) {
-          throw new Error(error.message);
+        if (reservationResult.error) {
+          throw new Error(
+            reservationResult.error.message,
+          );
         }
 
         insertedReservationsForItem += 1;
@@ -1482,12 +1532,17 @@ async function reserveProductComponentsInventory({
           }),
         );
 
-      const { error } = await supabase
-        .from("inventory_reservations")
-        .insert(reservationRows);
+      const reservationResult =
+        await insertInventoryReservationsCompat({
+          supabase,
+          payload:
+            reservationRows,
+        });
 
-      if (error) {
-        throw new Error(error.message);
+      if (reservationResult.error) {
+        throw new Error(
+          reservationResult.error.message,
+        );
       }
 
       insertedReservationsForItem +=
@@ -2249,14 +2304,10 @@ async function reserveModifierInventory({
         );
       }
 
-      const {
-        error:
-          reservationError,
-      } = await supabase
-        .from(
-          "inventory_reservations",
-        )
-        .insert({
+      const reservationResult =
+        await insertInventoryReservationsCompat({
+          supabase,
+          payload: {
           booking_id:
             bookingId,
           inventory_item_id:
@@ -2273,11 +2324,12 @@ async function reserveModifierInventory({
             window.reservedUntil,
           notes:
             `Modifier option: ${modifier.modifierOptionName}`,
+          },
         });
 
-      if (reservationError) {
+      if (reservationResult.error) {
         throw new Error(
-          reservationError.message,
+          reservationResult.error.message,
         );
       }
 
@@ -2400,20 +2452,16 @@ async function reserveModifierInventory({
         }),
       );
 
-    const {
-      error:
-        reservationError,
-    } = await supabase
-      .from(
-        "inventory_reservations",
-      )
-      .insert(
-        reservationRows,
-      );
+    const reservationResult =
+      await insertInventoryReservationsCompat({
+        supabase,
+        payload:
+          reservationRows,
+      });
 
-    if (reservationError) {
+    if (reservationResult.error) {
       throw new Error(
-        reservationError.message,
+        reservationResult.error.message,
       );
     }
 
@@ -3466,10 +3514,6 @@ async function createBookingActionInternal(
     );
   }
 
-  let renderedContractForEmail =
-    contractRenderedHtmlFromForm ||
-    "";
-
   if (
     !isStaffSendToCustomer &&
     contractSettings
@@ -3586,9 +3630,6 @@ async function createBookingActionInternal(
 
     const documentHashSha256 =
       toSha256(renderedContract);
-
-    renderedContractForEmail =
-      renderedContract;
 
     const {
       error:
@@ -3915,6 +3956,33 @@ async function createBookingActionInternal(
 
   if (
     !isStaffSendToCustomer &&
+    status === "booked"
+  ) {
+    try {
+      await enqueueBookingNotification({
+        eventCode:
+          "booking_confirmed",
+        bookingId,
+        dedupeSuffix:
+          "admin-created",
+      });
+    } catch (
+      notificationError
+    ) {
+      console.error(
+        "Booking confirmed notification enqueue failed",
+        notificationError,
+      );
+    }
+
+    await processNotificationQueueBestEffort({
+      bookingId,
+      limit: 20,
+    });
+  }
+
+  if (
+    !isStaffSendToCustomer &&
     paymentAmount > 0 &&
     paymentMethod
   ) {
@@ -4036,33 +4104,6 @@ async function createBookingActionInternal(
     if (paymentInsertResult.error) {
       throw new Error(
         paymentInsertResult.error.message,
-      );
-    }
-
-    await processNotificationQueueBestEffort({
-      bookingId,
-      limit: 20,
-    });
-  }
-
-  if (
-    !isStaffSendToCustomer &&
-    status === "booked"
-  ) {
-    try {
-      await enqueueBookingNotification({
-        eventCode:
-          "booking_confirmed",
-        bookingId,
-        dedupeSuffix:
-          "admin-created",
-      });
-    } catch (
-      notificationError
-    ) {
-      console.error(
-        "Booking confirmed notification enqueue failed",
-        notificationError,
       );
     }
 

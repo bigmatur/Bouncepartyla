@@ -3,6 +3,7 @@ import "server-only";
 import { createServiceClient } from "@/lib/supabase/service";
 import { sendSmtpEmail } from "@/lib/email/smtp";
 import { buildPaymentReceiptPdfBuffer } from "@/lib/email/receipt-pdf";
+import { buildSignedContractPdfAttachment } from "@/lib/email/signed-contract-pdf";
 
 function appOrigin() {
   return String(process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3001")
@@ -236,6 +237,39 @@ async function processOneDelivery(delivery: any) {
     if (!to) throw new Error("recipient_email_missing");
 
     let attachments: Array<{ filename: string; content: Buffer; contentType?: string }> | undefined;
+
+    if (delivery.event_code === "contract_signed") {
+      try {
+        let contractId = String(payload.contract_id || "").trim();
+
+        if (!contractId && bookingId) {
+          const contractResult = await supabase
+            .from("contracts")
+            .select("id")
+            .eq("booking_id", bookingId)
+            .eq("status", "signed")
+            .order("signed_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (!contractResult.error) {
+            contractId = String(contractResult.data?.id || "").trim();
+          }
+        }
+
+        if (contractId) {
+          attachments = [
+            await buildSignedContractPdfAttachment({
+              supabase,
+              contractId,
+              bookingNumber,
+            }),
+          ];
+        }
+      } catch (error) {
+        console.error("Signed contract PDF generation failed", error);
+      }
+    }
 
     if (delivery.event_code === "payment_received" || delivery.event_code === "deposit_paid") {
       try {

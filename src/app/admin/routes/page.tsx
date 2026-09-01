@@ -532,7 +532,68 @@ export default async function AdminRoutesPage({
 
             return map;
           }, new Map<string, any>()),
-        ).map(([, stop]) => stop)
+        )
+          .map(([, stop]) => stop)
+          .sort((a: any, b: any) => {
+            const sortA = Number(a?.sort_order || 999999);
+            const sortB = Number(b?.sort_order || 999999);
+
+            if (sortA !== sortB) {
+              return sortA - sortB;
+            }
+
+            const timeToMinutes = (value: unknown) => {
+              const match = String(value || "").trim().match(/^(\d{1,2}):(\d{2})/);
+
+              if (!match) return null;
+
+              const hours = Number(match[1]);
+              const minutes = Number(match[2]);
+
+              if (
+                !Number.isFinite(hours) ||
+                !Number.isFinite(minutes) ||
+                hours < 0 ||
+                hours > 23 ||
+                minutes < 0 ||
+                minutes > 59
+              ) {
+                return null;
+              }
+
+              return hours * 60 + minutes;
+            };
+
+            const startA = timeToMinutes(a?.scheduled_start_time);
+            const startB = timeToMinutes(b?.scheduled_start_time);
+
+            if (startA != null && startB != null && startA !== startB) {
+              return startA - startB;
+            }
+
+            if (startA != null && startB == null) return -1;
+            if (startA == null && startB != null) return 1;
+
+            const updatedA = new Date(
+              String(a?.updated_at || a?.created_at || 0),
+            ).getTime();
+            const updatedB = new Date(
+              String(b?.updated_at || b?.created_at || 0),
+            ).getTime();
+
+            if (Number.isFinite(updatedA) && Number.isFinite(updatedB) && updatedA !== updatedB) {
+              return updatedB - updatedA;
+            }
+
+            const createdA = new Date(String(a?.created_at || 0)).getTime();
+            const createdB = new Date(String(b?.created_at || 0)).getTime();
+
+            if (Number.isFinite(createdA) && Number.isFinite(createdB) && createdA !== createdB) {
+              return createdA - createdB;
+            }
+
+            return String(a?.id || "").localeCompare(String(b?.id || ""));
+          })
       : filteredStops;
 
   const bookingIds = Array.from(
@@ -799,6 +860,44 @@ export default async function AdminRoutesPage({
     0,
   );
 
+
+  const driverPingsResult = await supabase
+    .from("driver_location_pings")
+    .select(
+      `
+      id,
+      driver_name,
+      route_date,
+      latitude,
+      longitude,
+      accuracy,
+      heading,
+      speed,
+      created_at
+      `,
+    )
+    .eq("route_date", selectedDate)
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  const latestDriverLocationByName = new Map<string, any>();
+
+  for (const ping of driverPingsResult.data || []) {
+    const driverName = String(ping.driver_name || "").trim();
+    if (!driverName) continue;
+
+    const key = driverName.toLowerCase();
+
+    if (!latestDriverLocationByName.has(key)) {
+      latestDriverLocationByName.set(key, ping);
+    }
+  }
+
+  const liveDriverLocations = Array.from(
+    latestDriverLocationByName.values(),
+  );
+
+
   return (
     <div className="space-y-3 sm:space-y-6">
       <section className="hidden rounded-[22px] sm:rounded-[30px] border border-black/5 bg-white p-3.5 sm:p-6 shadow-[0_8px_24px_rgba(0,0,0,0.03)] sm:shadow-[0_10px_35px_rgba(0,0,0,0.035)] sm:block">
@@ -899,6 +998,7 @@ export default async function AdminRoutesPage({
         warehouseOriginAddress={warehouseOriginAddress}
         bookingRouteStops={bookingRouteStops}
         supportsRouteStopWindows={supportsRouteStopWindows}
+        liveDriverLocations={liveDriverLocations}
       />
     </div>
   );

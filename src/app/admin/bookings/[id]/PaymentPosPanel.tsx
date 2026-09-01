@@ -195,6 +195,26 @@ export default function PaymentPosPanel({
     setTipAmountEdited(false);
   }
 
+  function handlePaymentSubmit() {
+    // After submit, allow server-refreshed balance to drive amount/tip again.
+    setPaymentAmountEdited(false);
+    setTipAmountEdited(false);
+  }
+
+  useEffect(() => {
+    if (!open || liveBalanceDue > 0) {
+      return;
+    }
+
+    // Payment is fully applied on the backend; close stale modal state.
+    setOpen(false);
+    setPaymentAmount(0);
+    setPaymentAmountEdited(false);
+    setTipPercent(0);
+    setTipAmount(0);
+    setTipAmountEdited(false);
+  }, [open, liveBalanceDue]);
+
   return (
     <>
       <div className="mt-2 border-t border-[#eee5d9] pt-4">
@@ -224,7 +244,11 @@ export default function PaymentPosPanel({
               </div>
             </div>
 
-            <form action={paymentAction} className="relative space-y-4 overflow-y-auto p-4 sm:p-6">
+            <form
+              action={paymentAction}
+              onSubmit={handlePaymentSubmit}
+              className="relative space-y-4 overflow-y-auto p-4 sm:p-6"
+            >
               <input type="hidden" name="bookingId" value={bookingId} />
               <input type="hidden" name="method" value={paymentMethod || defaultMethod} />
               <input type="hidden" name="discountAmount" value={safeDiscountAmount.toFixed(2)} />
