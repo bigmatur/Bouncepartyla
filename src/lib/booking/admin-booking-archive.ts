@@ -10,6 +10,17 @@ function isMissingArchivedAtError(error: any) {
   );
 }
 
+function isMissingArchiveReasonError(error: any) {
+  const message = String(error?.message || "").toLowerCase();
+  const code = String(error?.code || "").toLowerCase();
+
+  return (
+    code === "42703" ||
+    code === "pgrst204" ||
+    message.includes("archive_reason")
+  );
+}
+
 export async function setBookingArchivedCore(params: {
   supabase: any;
   bookingId: string;
@@ -74,6 +85,23 @@ export async function setBookingArchivedCore(params: {
           },
     )
     .eq("id", bookingId);
+
+  if (updateResult.error && isMissingArchiveReasonError(updateResult.error)) {
+    updateResult = await params.supabase
+      .from("bookings")
+      .update(
+        params.archived
+          ? {
+              archived_at: now,
+              updated_at: now,
+            }
+          : {
+              archived_at: null,
+              updated_at: now,
+            },
+      )
+      .eq("id", bookingId);
+  }
 
   if (updateResult.error && isMissingArchivedAtError(updateResult.error)) {
     if (!params.archived) {

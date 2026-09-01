@@ -38,6 +38,17 @@ function isMissingArchivedAtError(error: any) {
   );
 }
 
+function isMissingArchiveReasonError(error: any) {
+  const message = String(error?.message || "").toLowerCase();
+  const code = String(error?.code || "").toLowerCase();
+
+  return (
+    code === "42703" ||
+    code === "pgrst204" ||
+    message.includes("archive_reason")
+  );
+}
+
 function sanitizeReturnTo(value: string) {
   if (!value.startsWith("/admin/bookings")) {
     return "/admin/bookings";
@@ -206,6 +217,15 @@ export async function archiveSelectedBookingsAction(formData: FormData) {
       archive_reason: archiveReason,
     })
     .in("id", bookingIds);
+
+  if (archiveResult.error && isMissingArchiveReasonError(archiveResult.error)) {
+    archiveResult = await supabase
+      .from("bookings")
+      .update({
+        archived_at: new Date().toISOString(),
+      })
+      .in("id", bookingIds);
+  }
 
   if (archiveResult.error && isMissingArchivedAtError(archiveResult.error)) {
     archiveResult = await supabase
