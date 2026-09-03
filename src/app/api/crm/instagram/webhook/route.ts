@@ -75,6 +75,116 @@ function stringValue(value: unknown) {
     : "";
 }
 
+function safeMetadataObject(
+  value: unknown,
+  maxSerializedLength = 20000,
+) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value)
+  ) {
+    return null;
+  }
+
+  try {
+    const serialized =
+      JSON.stringify(value);
+
+    if (
+      !serialized ||
+      serialized.length >
+        maxSerializedLength
+    ) {
+      return null;
+    }
+
+    const parsed =
+      JSON.parse(serialized);
+
+    return parsed &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed)
+      ? (parsed as Record<
+          string,
+          unknown
+        >)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function getMetaReferralAttribution(
+  event: any,
+  message: any,
+) {
+  const eventReferral =
+    safeMetadataObject(
+      event?.referral,
+    );
+
+  const messageReferral =
+    safeMetadataObject(
+      message?.referral,
+    );
+
+  const referral =
+    eventReferral ||
+    messageReferral;
+
+  if (!referral) {
+    return {
+      eventReferral: null,
+      messageReferral: null,
+      attribution: null,
+    };
+  }
+
+  const adsContext =
+    safeMetadataObject(
+      referral.ads_context_data,
+    );
+
+  const source =
+    stringValue(
+      referral.source,
+    );
+
+  const type =
+    stringValue(
+      referral.type,
+    );
+
+  const ref =
+    stringValue(
+      referral.ref,
+    );
+
+  const adId =
+    stringValue(
+      referral.ad_id,
+    ) ||
+    stringValue(
+      adsContext?.ad_id,
+    );
+
+  return {
+    eventReferral,
+    messageReferral,
+    attribution: {
+      provider: "meta",
+      channel: "instagram",
+      source: source || null,
+      type: type || null,
+      ref: ref || null,
+      ad_id: adId || null,
+      ads_context_data:
+        adsContext,
+    },
+  };
+}
+
 function getMessageBody(message: any) {
   const text = stringValue(
     message?.text,
@@ -208,6 +318,12 @@ function extractInstagramMessages(
           ? message.attachments
           : [];
 
+      const referralContext =
+        getMetaReferralAttribution(
+          event,
+          message,
+        );
+
       messages.push({
         providerMessageId,
         senderId,
@@ -240,6 +356,27 @@ function extractInstagramMessages(
           timestamp:
             event?.timestamp ||
             null,
+
+          ...(referralContext.eventReferral
+            ? {
+                referral:
+                  referralContext.eventReferral,
+              }
+            : {}),
+
+          ...(referralContext.messageReferral
+            ? {
+                message_referral:
+                  referralContext.messageReferral,
+              }
+            : {}),
+
+          ...(referralContext.attribution
+            ? {
+                attribution:
+                  referralContext.attribution,
+              }
+            : {}),
 
           message: {
             mid:
