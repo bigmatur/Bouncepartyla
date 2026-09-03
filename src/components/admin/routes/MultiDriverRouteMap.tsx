@@ -183,12 +183,25 @@ function markerIcon(
   fillColor: string,
   strokeColor: string,
   numberText: string,
+  typeBadge?: string | null,
+  typeBadgeColor?: string,
 ) {
+  const badge = String(typeBadge || "").trim();
+  const badgeColor = String(typeBadgeColor || "#1f2937").trim() || "#1f2937";
+  const badgeMarkup = badge
+    ? `
+      <circle cx="37" cy="12" r="8" fill="#ffffff" opacity="0.98" />
+      <circle cx="37" cy="12" r="6.6" fill="${badgeColor}" />
+      <text x="37" y="14.5" text-anchor="middle" font-size="8" font-family="Arial, sans-serif" font-weight="700" fill="#ffffff">${badge.slice(0, 2)}</text>
+    `
+    : "";
+
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
       <circle cx="24" cy="24" r="20" fill="#ffffff" opacity="0.95" />
       <circle cx="24" cy="24" r="17" fill="${fillColor}" stroke="${strokeColor}" stroke-width="3.5" />
       <text x="24" y="29" text-anchor="middle" font-size="16" font-family="Arial, sans-serif" font-weight="700" fill="#ffffff">${numberText}</text>
+      ${badgeMarkup}
     </svg>
   `;
 
@@ -263,6 +276,89 @@ function lightenHexColor(hexColor: string, amount: number) {
     .padStart(2, "0")}${nextB.toString(16).padStart(2, "0")}`;
 }
 
+function latLngParts(position: any): { lat: number; lng: number } | null {
+  if (!position) return null;
+
+  const latRaw =
+    typeof position.lat === "function" ? position.lat() : position.lat;
+  const lngRaw =
+    typeof position.lng === "function" ? position.lng() : position.lng;
+
+  const lat = Number(latRaw);
+  const lng = Number(lngRaw);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return null;
+  }
+
+  return { lat, lng };
+}
+
+function normalizedAddressKey(stop: RouteStopLite | null | undefined) {
+  const address = stopAddress(stop)
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return address;
+}
+
+function overlapKey(position: any, stop: RouteStopLite | null | undefined) {
+  const addressKey = normalizedAddressKey(stop);
+  if (addressKey) {
+    return `a:${addressKey}`;
+  }
+
+  const point = latLngParts(position);
+  if (!point) return "";
+  return `c:${point.lat.toFixed(4)}|${point.lng.toFixed(4)}`;
+}
+
+function stopTypeOffsetAngle(stopType: string | null | undefined) {
+  if (stopType === "delivery") {
+    return (Math.PI * 3) / 4;
+  }
+
+  if (stopType === "pickup") {
+    return Math.PI / 4;
+  }
+
+  return 0;
+}
+
+function offsetOverlappedPosition(
+  position: any,
+  overlapIndex: number,
+  options?: {
+    preferredAngle?: number;
+    forceDirectional?: boolean;
+  },
+) {
+  const point = latLngParts(position);
+  if (!point || overlapIndex <= 0) {
+    return position;
+  }
+
+  const ring = Math.floor((overlapIndex - 1) / 8) + 1;
+  const spoke = (overlapIndex - 1) % 8;
+  const baseAngle = (Math.PI * 2 * spoke) / 8;
+
+  // Force a visible delivery/pickup split at same location.
+  const angle = options?.forceDirectional && options?.preferredAngle != null
+    ? options.preferredAngle + (spoke >= 2 ? (spoke - 1) * (Math.PI / 12) : 0)
+    : options?.preferredAngle != null
+      ? options.preferredAngle + baseAngle
+      : baseAngle;
+
+  // ~14-30m radial offset depending on stack density.
+  const radius = 0.00014 * ring;
+
+  return {
+    lat: point.lat + Math.sin(angle) * radius,
+    lng: point.lng + Math.cos(angle) * radius,
+  };
+}
+
 export default function MultiDriverRouteMap({
   apiKey,
   warehouseOriginAddress,
@@ -321,6 +417,48 @@ export default function MultiDriverRouteMap({
       setMapReadyVersion((version) => version + 1);
 
       const bounds = new window.google.maps.LatLngBounds();
+      const overlapCountsByCoord = new Map<string, number>();
+      const addressTypeStats = new Map<
+        string,
+        { delivery: number; pickup: number; other: number }
+      >();
+      const addressStops = new Map<
+        string,
+        Array<{ id: string; sequence: number; stopType: string | null | undefined }>
+      >();
+
+      for (const group of activeGroups) {
+        for (const stop of group.stops) {
+          const key = normalizedAddressKey(stop);
+          if (!key) {
+            continue;
+          }
+
+          const entry = addressTypeStats.get(key) || {
+            delivery: 0,
+            pickup: 0,
+            other: 0,
+          };
+
+          if (stop.stopType === "delivery") {
+            entry.delivery += 1;
+          } else if (stop.stopType === "pickup") {
+            entry.pickup += 1;
+          } else {
+            entry.other += 1;
+          }
+
+          addressTypeStats.set(key, entry);
+
+          const stopList = addressStops.get(key) || [];
+          stopList.push({
+            id: String(stop.id || ""),
+            sequence: Number(stop.sequenceNumber || 0) || 1,
+            stopType: stop.stopType,
+          });
+          addressStops.set(key, stopList);
+        }
+      }
 
       const directionsService = new window.google.maps.DirectionsService();
       const geocoder = new window.google.maps.Geocoder();
@@ -372,9 +510,51 @@ export default function MultiDriverRouteMap({
                 ? "Pickup"
                 : "Stop";
 
+          const key = overlapKey(position, stop);
+          const overlapIndex = key
+            ? overlapCountsByCoord.get(key) || 0
+            : 0;
+
+          if (key) {
+            overlapCountsByCoord.set(key, overlapIndex + 1);
+          }
+
+          const addressKey = normalizedAddressKey(stop);
+          const typeStats = addressKey ? addressTypeStats.get(addressKey) : null;
+          const hasMixedDeliveryPickup =
+            Boolean(typeStats) &&
+            (typeStats?.delivery || 0) > 0 &&
+            (typeStats?.pickup || 0) > 0;
+
+          const peers = addressKey
+            ? (addressStops.get(addressKey) || [])
+            : [];
+          const hiddenPeer = peers
+            .filter((peer) => peer.id !== String(stop.id || ""))
+            .sort((a, b) => {
+              if (a.stopType === stop.stopType && b.stopType !== stop.stopType) return 1;
+              if (a.stopType !== stop.stopType && b.stopType === stop.stopType) return -1;
+              if (a.sequence !== b.sequence) return a.sequence - b.sequence;
+              return a.id.localeCompare(b.id);
+            })[0] || null;
+
+          const hiddenPeerBadge = hiddenPeer ? String(hiddenPeer.sequence) : null;
+          const hiddenPeerBadgeColor = hiddenPeer
+            ? markerFillColor(hiddenPeer.stopType)
+            : undefined;
+
+          const markerPosition = offsetOverlappedPosition(
+            position,
+            overlapIndex,
+            {
+              preferredAngle: stopTypeOffsetAngle(stop.stopType),
+              forceDirectional: hasMixedDeliveryPickup,
+            },
+          );
+
           const marker = new window.google.maps.Marker({
             map,
-            position,
+            position: markerPosition,
             title: `${group.driverName} · ${stopTypeLabel} #${sequence}${
               stop.title ? ` · ${stop.title}` : ""
             }`,
@@ -382,10 +562,12 @@ export default function MultiDriverRouteMap({
               markerFillColor(stop.stopType),
               group.color,
               String(sequence),
+              hasMixedDeliveryPickup ? hiddenPeerBadge : null,
+              hasMixedDeliveryPickup ? hiddenPeerBadgeColor : undefined,
             ),
           });
 
-          bounds.extend(position);
+          bounds.extend(markerPosition);
           cleanups.push(() => marker.setMap(null));
         };
 
