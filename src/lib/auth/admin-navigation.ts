@@ -17,6 +17,7 @@ export type AdminNavItem = {
 
 export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   { label: "Dashboard", href: "/admin", icon: "⌂", permission: "dashboard.view" },
+  { label: "Business Intelligence", href: "/admin/business-intelligence", icon: "◫", permission: "dashboard.view" },
   { label: "Calendar", href: "/admin/calendar", icon: "◷", permission: "bookings.view" },
   {
     label: "CRM",

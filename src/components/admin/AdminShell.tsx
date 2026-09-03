@@ -12,6 +12,7 @@ import type {
 } from "@/lib/auth/access-shared";
 
 function mobilePageTitle(pathname: string) {
+  if (pathname.startsWith("/admin/business-intelligence")) return "Business Intelligence";
   if (pathname.startsWith("/admin/routes")) return "Route Board";
   if (pathname.startsWith("/admin/bookings")) return "Bookings";
   if (pathname.startsWith("/admin/customers")) return "Customers";
