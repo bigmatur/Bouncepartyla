@@ -970,39 +970,72 @@ export default async function BusinessIntelligencePage({
                 <div className="min-w-0 rounded-[22px] border border-[#eadfd1] bg-white p-4 shadow-[0_8px_28px_rgba(45,36,25,.04)] sm:rounded-[26px] sm:p-5">
                   <div className="text-[10px] font-bold uppercase tracking-[0.15em] text-[#a27742]">Campaign performance</div>
                   <h2 className="mt-1 text-lg font-bold text-[#28231f]">Meta campaigns</h2>
-                  <p className="mt-1 text-xs leading-5 text-[#81766c]">Spend and Meta-reported outcomes only. Internal booked revenue is intentionally not assigned to campaigns yet.</p>
+                  <p className="mt-1 text-xs leading-5 text-[#81766c]">
+                    Meta spend and messaging performance with first-touch CRM attribution where a captured Instagram ad ID can be matched to a booking.
+                  </p>
 
                   <div className="mt-4 overflow-x-auto">
-                    <table className="w-full min-w-[720px] text-left text-xs">
+                    <table className="w-full min-w-[980px] text-left text-xs">
                       <thead className="text-[10px] uppercase tracking-[0.1em] text-[#8b8177]">
                         <tr>
                           <th className="pb-2 pr-3">Campaign</th>
                           <th className="pb-2 pr-3 text-right">Spend</th>
                           <th className="pb-2 pr-3 text-right">Messages</th>
                           <th className="pb-2 pr-3 text-right">Cost / Msg</th>
-                          <th className="pb-2 pr-3 text-right">Leads</th>
-                          <th className="pb-2 pr-3 text-right">Clicks</th>
-                          <th className="pb-2 text-right">CTR</th>
+                          <th className="pb-2 pr-3 text-right">Attributed Leads</th>
+                          <th className="pb-2 pr-3 text-right">Bookings</th>
+                          <th className="pb-2 pr-3 text-right">Revenue</th>
+                          <th className="pb-2 text-right">Attributed ROAS</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {marketingSnapshot.metaAds.campaigns.slice(0, 12).map((row: any) => (
-                          <tr key={row.campaignId} className="border-t border-[#eee5dc]">
-                            <td className="max-w-[300px] py-2.5 pr-3 font-semibold text-[#342e29]"><div className="truncate">{row.campaignName}</div></td>
-                            <td className="py-2.5 pr-3 text-right font-semibold text-[#2d2a28]">{money(row.spend)}</td>
-                            <td className="py-2.5 pr-3 text-right text-[#6f655c]">{row.messagingConversations.toLocaleString("en-US")}</td>
-                            <td className="py-2.5 pr-3 text-right text-[#6f655c]">{row.costPerMessagingConversation === null ? "—" : money(row.costPerMessagingConversation)}</td>
-                            <td className="py-2.5 pr-3 text-right text-[#6f655c]">{row.leads.toLocaleString("en-US")}</td>
-                            <td className="py-2.5 pr-3 text-right text-[#6f655c]">{row.clicks.toLocaleString("en-US")}</td>
-                            <td className="py-2.5 text-right text-[#6f655c]">{percent(row.ctr, 2)}</td>
-                          </tr>
-                        ))}
+                        {marketingSnapshot.metaAds.campaigns.slice(0, 12).map((row: any) => {
+                          const attributionRow = marketingSnapshot.attribution.campaigns.find(
+                            (item: any) => item.campaignId === row.campaignId,
+                          );
+
+                          return (
+                            <tr key={row.campaignId} className="border-t border-[#eee5dc]">
+                              <td className="max-w-[300px] py-2.5 pr-3 font-semibold text-[#342e29]">
+                                <div className="truncate">{row.campaignName}</div>
+                              </td>
+                              <td className="py-2.5 pr-3 text-right font-semibold text-[#2d2a28]">
+                                {money(row.spend)}
+                              </td>
+                              <td className="py-2.5 pr-3 text-right text-[#6f655c]">
+                                {row.messagingConversations.toLocaleString("en-US")}
+                              </td>
+                              <td className="py-2.5 pr-3 text-right text-[#6f655c]">
+                                {row.costPerMessagingConversation === null
+                                  ? "—"
+                                  : money(row.costPerMessagingConversation)}
+                              </td>
+                              <td className="py-2.5 pr-3 text-right text-[#6f655c]">
+                                {attributionRow?.attributedLeads?.toLocaleString("en-US") || "—"}
+                              </td>
+                              <td className="py-2.5 pr-3 text-right text-[#6f655c]">
+                                {attributionRow?.linkedRevenueBookings?.toLocaleString("en-US") || "—"}
+                              </td>
+                              <td className="py-2.5 pr-3 text-right font-semibold text-[#2d2a28]">
+                                {attributionRow ? money(attributionRow.attributedBookedRevenue) : "—"}
+                              </td>
+                              <td className="py-2.5 text-right font-bold text-[#2d2a28]">
+                                {attributionRow?.attributedRoas === null ||
+                                attributionRow?.attributedRoas === undefined
+                                  ? "—"
+                                  : `${attributionRow.attributedRoas.toFixed(2)}x`}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
 
                   {marketingSnapshot.metaAds.campaigns.length === 0 ? (
-                    <div className="mt-3 rounded-xl bg-[#faf7f3] px-4 py-5 text-center text-xs font-medium text-[#81766c]">No Meta campaign delivery in selected period.</div>
+                    <div className="mt-3 rounded-xl bg-[#faf7f3] px-4 py-5 text-center text-xs font-medium text-[#81766c]">
+                      No Meta campaign delivery in selected period.
+                    </div>
                   ) : null}
                 </div>
 
@@ -1023,6 +1056,76 @@ export default async function BusinessIntelligencePage({
                     ) : null}
                   </div>
                 </div>
+              </section>
+
+              <section className="min-w-0 rounded-[22px] border border-[#eadfd1] bg-white p-4 shadow-[0_8px_28px_rgba(45,36,25,.04)] sm:rounded-[26px] sm:p-5">
+                <div className="text-[10px] font-bold uppercase tracking-[0.15em] text-[#a27742]">
+                  Ad performance
+                </div>
+                <h2 className="mt-1 text-lg font-bold text-[#28231f]">
+                  Meta ads with attributed revenue
+                </h2>
+                <p className="mt-1 text-xs leading-5 text-[#81766c]">
+                  First-touch attribution from captured Instagram ad IDs. Spend is Meta-reported for the selected period; revenue is linked internal booked revenue.
+                </p>
+
+                <div className="mt-4 overflow-x-auto">
+                  <table className="w-full min-w-[980px] text-left text-xs">
+                    <thead className="text-[10px] uppercase tracking-[0.1em] text-[#8b8177]">
+                      <tr>
+                        <th className="pb-2 pr-3">Ad</th>
+                        <th className="pb-2 pr-3">Campaign</th>
+                        <th className="pb-2 pr-3 text-right">Spend</th>
+                        <th className="pb-2 pr-3 text-right">Attributed Leads</th>
+                        <th className="pb-2 pr-3 text-right">Bookings</th>
+                        <th className="pb-2 pr-3 text-right">Revenue</th>
+                        <th className="pb-2 text-right">Attributed ROAS</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {marketingSnapshot.attribution.ads.slice(0, 20).map((row: any) => (
+                        <tr key={row.adId} className="border-t border-[#eee5dc]">
+                          <td className="max-w-[260px] py-2.5 pr-3 font-semibold text-[#342e29]">
+                            <div className="truncate">{row.adName}</div>
+                          </td>
+
+                          <td className="max-w-[260px] py-2.5 pr-3 text-[#6f655c]">
+                            <div className="truncate">{row.campaignName}</div>
+                          </td>
+
+                          <td className="py-2.5 pr-3 text-right font-semibold text-[#2d2a28]">
+                            {money(row.spend)}
+                          </td>
+
+                          <td className="py-2.5 pr-3 text-right text-[#6f655c]">
+                            {row.attributedLeads.toLocaleString("en-US")}
+                          </td>
+
+                          <td className="py-2.5 pr-3 text-right text-[#6f655c]">
+                            {row.linkedRevenueBookings.toLocaleString("en-US")}
+                          </td>
+
+                          <td className="py-2.5 pr-3 text-right font-semibold text-[#2d2a28]">
+                            {money(row.attributedBookedRevenue)}
+                          </td>
+
+                          <td className="py-2.5 text-right font-bold text-[#2d2a28]">
+                            {row.attributedRoas === null
+                              ? "—"
+                              : `${row.attributedRoas.toFixed(2)}x`}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {marketingSnapshot.attribution.ads.length === 0 ? (
+                  <div className="mt-3 rounded-xl bg-[#faf7f3] px-4 py-5 text-center text-xs font-medium leading-5 text-[#81766c]">
+                    No Meta ads have matched first-touch CRM attribution in the selected period yet.
+                  </div>
+                ) : null}
               </section>
             </>
           ) : null}

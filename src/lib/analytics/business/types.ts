@@ -348,6 +348,28 @@ export type BusinessMarketingLeadSourceRow = {
   leadDeltaPct?: number | null;
 };
 
+export type BusinessMarketingAttributionCampaignRow = {
+  campaignId: string;
+  campaignName: string;
+  spend: number;
+  attributedLeads: number;
+  linkedRevenueBookings: number;
+  attributedBookedRevenue: number;
+  attributedRoas: number | null;
+};
+
+export type BusinessMarketingAttributionAdRow = {
+  adId: string;
+  adName: string;
+  campaignId: string;
+  campaignName: string;
+  spend: number;
+  attributedLeads: number;
+  linkedRevenueBookings: number;
+  attributedBookedRevenue: number;
+  attributedRoas: number | null;
+};
+
 export type BusinessMarketingInsights = {
   metaAds: BusinessMetaAdsSnapshot;
   comparisons: {
@@ -380,6 +402,8 @@ export type BusinessMarketingInsights = {
     matchedBookedRevenue: number;
     matchedAdSpend: number;
     roas: number | null;
+    campaigns: BusinessMarketingAttributionCampaignRow[];
+    ads: BusinessMarketingAttributionAdRow[];
   };
   signals: BusinessSignal[];
 };

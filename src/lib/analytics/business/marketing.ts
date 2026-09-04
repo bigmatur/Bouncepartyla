@@ -300,6 +300,160 @@ export function calculateBusinessMarketing(params: {
     }
   }
 
+  const adAttributionGroups = new Map<
+    string,
+    {
+      adId: string;
+      adName: string;
+      campaignId: string;
+      campaignName: string;
+      spend: number;
+      attributedLeadIds: Set<string>;
+      bookingIds: Set<string>;
+      attributedBookedRevenue: number;
+    }
+  >();
+
+  const campaignAttributionGroups = new Map<
+    string,
+    {
+      campaignId: string;
+      campaignName: string;
+      attributedLeadIds: Set<string>;
+      bookingIds: Set<string>;
+      attributedBookedRevenue: number;
+    }
+  >();
+
+  for (const lead of params.currentLeads) {
+    const leadId = String(lead?.id || "").trim();
+    const attribution = attributionByLead.get(leadId);
+
+    if (!attribution) {
+      continue;
+    }
+
+    const adId = String(attribution.adId || "").trim();
+    const ad = adById.get(adId);
+
+    if (!ad) {
+      continue;
+    }
+
+    const campaignId = String(ad.campaignId || "").trim();
+    const campaignName =
+      String(ad.campaignName || "").trim() || "Unnamed campaign";
+
+    const adGroup = adAttributionGroups.get(adId) || {
+      adId,
+      adName: String(ad.adName || "").trim() || "Unnamed ad",
+      campaignId,
+      campaignName,
+      spend: numberValue(ad.spend),
+      attributedLeadIds: new Set<string>(),
+      bookingIds: new Set<string>(),
+      attributedBookedRevenue: 0,
+    };
+
+    adGroup.attributedLeadIds.add(leadId);
+
+    const campaignGroup = campaignAttributionGroups.get(campaignId) || {
+      campaignId,
+      campaignName,
+      attributedLeadIds: new Set<string>(),
+      bookingIds: new Set<string>(),
+      attributedBookedRevenue: 0,
+    };
+
+    campaignGroup.attributedLeadIds.add(leadId);
+
+    const bookingId = String(lead?.booking_id || "").trim();
+    const booking = bookingId
+      ? bookingById.get(bookingId)
+      : null;
+
+    if (booking && isBusinessRevenueBooking(booking)) {
+      if (!adGroup.bookingIds.has(bookingId)) {
+        adGroup.bookingIds.add(bookingId);
+        adGroup.attributedBookedRevenue += numberValue(
+          booking.total_amount,
+        );
+      }
+
+      if (!campaignGroup.bookingIds.has(bookingId)) {
+        campaignGroup.bookingIds.add(bookingId);
+        campaignGroup.attributedBookedRevenue += numberValue(
+          booking.total_amount,
+        );
+      }
+    }
+
+    adAttributionGroups.set(adId, adGroup);
+
+    if (campaignId) {
+      campaignAttributionGroups.set(campaignId, campaignGroup);
+    }
+  }
+
+  const campaignSpendById = new Map(
+    (params.metaAds.campaigns || [])
+      .map(
+        (row) =>
+          [String(row?.campaignId || "").trim(), numberValue(row?.spend)] as const,
+      )
+      .filter(([campaignId]) => Boolean(campaignId)),
+  );
+
+  const attributionAds = [...adAttributionGroups.values()]
+    .map((group) => ({
+      adId: group.adId,
+      adName: group.adName,
+      campaignId: group.campaignId,
+      campaignName: group.campaignName,
+      spend: group.spend,
+      attributedLeads: group.attributedLeadIds.size,
+      linkedRevenueBookings: group.bookingIds.size,
+      attributedBookedRevenue: group.attributedBookedRevenue,
+      attributedRoas:
+        group.spend > 0 && group.attributedBookedRevenue > 0
+          ? group.attributedBookedRevenue / group.spend
+          : null,
+    }))
+    .sort(
+      (a, b) =>
+        b.attributedBookedRevenue - a.attributedBookedRevenue ||
+        b.attributedLeads - a.attributedLeads ||
+        b.spend - a.spend ||
+        a.adName.localeCompare(b.adName),
+    );
+
+  const attributionCampaigns = [...campaignAttributionGroups.values()]
+    .map((group) => {
+      const spend = numberValue(
+        campaignSpendById.get(group.campaignId),
+      );
+
+      return {
+        campaignId: group.campaignId,
+        campaignName: group.campaignName,
+        spend,
+        attributedLeads: group.attributedLeadIds.size,
+        linkedRevenueBookings: group.bookingIds.size,
+        attributedBookedRevenue: group.attributedBookedRevenue,
+        attributedRoas:
+          spend > 0 && group.attributedBookedRevenue > 0
+            ? group.attributedBookedRevenue / spend
+            : null,
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.attributedBookedRevenue - a.attributedBookedRevenue ||
+        b.attributedLeads - a.attributedLeads ||
+        b.spend - a.spend ||
+        a.campaignName.localeCompare(b.campaignName),
+    );
+
   const attributedLeads = attributionByLead.size;
   const instagramLeadCount = currentInstagramLeadIds.size;
   const attributionCoveragePct =
@@ -384,6 +538,8 @@ export function calculateBusinessMarketing(params: {
       matchedBookedRevenue,
       matchedAdSpend,
       roas,
+      campaigns: attributionCampaigns,
+      ads: attributionAds,
     },
     signals,
   };
