@@ -1066,7 +1066,7 @@ export default function CrmCustomerContext({
 
           {!contextBooking?.id && (
             <Link
-              href="/admin/bookings/new"
+              href={selectedLead?.id ? `/admin/bookings/new?leadId=${selectedLead.id}` : "/admin/bookings/new"}
               className="rounded-full bg-[#c9964f] px-3 py-2.5 text-center text-xs font-semibold text-white"
             >
               Create Booking

@@ -431,11 +431,17 @@ export default function NewBookingWizard({
   discountSecurity,
   contractSettings,
   googleMapsApiKey,
+  sourceLeadId,
+  initialCustomerFirstName,
+  initialCustomerLastName,
+  initialCustomerPhone,
+  initialCustomerEmail,
   initialEventDate,
   initialEventStartTime,
   initialEventEndTime,
   initialSetupAddress,
   initialSetupCity,
+  initialSetupState,
   initialSetupZip,
 }: {
   bookingAttemptId: string;
@@ -452,11 +458,17 @@ export default function NewBookingWizard({
   discountSecurity: DiscountSecuritySettings;
   contractSettings: ContractSettings;
   googleMapsApiKey: string;
+  sourceLeadId?: string;
+  initialCustomerFirstName?: string;
+  initialCustomerLastName?: string;
+  initialCustomerPhone?: string;
+  initialCustomerEmail?: string;
   initialEventDate?: string;
   initialEventStartTime?: string;
   initialEventEndTime?: string;
   initialSetupAddress?: string;
   initialSetupCity?: string;
+  initialSetupState?: string;
   initialSetupZip?: string;
 }) {
   const [step, setStep] = useState(1);
@@ -465,10 +477,10 @@ export default function NewBookingWizard({
   );
 
   const [existingCustomerId, setExistingCustomerId] = useState("");
-  const [customerFirstName, setCustomerFirstName] = useState("");
-  const [customerLastName, setCustomerLastName] = useState("");
-  const [customerPhone, setCustomerPhone] = useState("");
-  const [customerEmail, setCustomerEmail] = useState("");
+  const [customerFirstName, setCustomerFirstName] = useState(initialCustomerFirstName || "");
+  const [customerLastName, setCustomerLastName] = useState(initialCustomerLastName || "");
+  const [customerPhone, setCustomerPhone] = useState(initialCustomerPhone || "");
+  const [customerEmail, setCustomerEmail] = useState(initialCustomerEmail || "");
   const [customerSearch, setCustomerSearch] = useState("");
 
   const [eventDate, setEventDate] = useState(initialEventDate || "");
@@ -478,7 +490,7 @@ export default function NewBookingWizard({
 
   const [setupAddress, setSetupAddress] = useState(initialSetupAddress || "");
   const [setupCity, setSetupCity] = useState(initialSetupCity || "");
-  const [setupState, setSetupState] = useState("CA");
+  const [setupState, setSetupState] = useState(initialSetupState || "CA");
   const [setupZip, setSetupZip] = useState(initialSetupZip || "");
   const [status, setStatus] = useState("inventory_reserved");
   const [completionStrategy, setCompletionStrategy] = useState<
@@ -2279,6 +2291,7 @@ export default function NewBookingWizard({
       ) : null}
 
       <input type="hidden" name="bookingAttemptId" value={bookingAttemptId} />
+      <input type="hidden" name="sourceLeadId" value={sourceLeadId || ""} />
       <input type="hidden" name="existingCustomerId" value={existingCustomerId} />
       <input type="hidden" name="customerFirstName" value={customerFirstName} />
       <input type="hidden" name="customerLastName" value={customerLastName} />

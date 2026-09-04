@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { redirect } from "next/navigation";
 import { requireAdminPermission } from "@/lib/auth/require-admin";
 import { resolveIntegrationConnection } from "@/lib/integrations/connections";
 import NewBookingWizard from "./components/NewBookingWizard";
@@ -11,6 +12,7 @@ type PageProps = {
     setupAddress?: string;
     setupCity?: string;
     setupZip?: string;
+    leadId?: string;
     error?: string;
   }>;
 };
@@ -66,6 +68,45 @@ export default async function NewBookingPage(props: PageProps) {
   const searchParams = props.searchParams ? await props.searchParams : {};
   const initialErrorMessage = resolveWizardErrorMessage(searchParams.error);
   const { supabase } = await requireAdminPermission("bookings.create");
+  const sourceLeadId = String(searchParams.leadId || "").trim();
+
+  const sourceLeadResult = sourceLeadId
+    ? await supabase
+        .from("booking_leads")
+        .select(`
+          id,
+          customer_name,
+          customer_phone,
+          customer_email,
+          event_date,
+          event_start_time,
+          event_end_time,
+          event_address,
+          event_city,
+          event_state,
+          event_zip,
+          booking_id
+        `)
+        .eq("id", sourceLeadId)
+        .maybeSingle()
+    : { data: null, error: null };
+
+  if (sourceLeadResult.error) {
+    throw new Error(sourceLeadResult.error.message);
+  }
+
+  const sourceLead = sourceLeadResult.data as any;
+
+  if (sourceLead?.booking_id) {
+    redirect(`/admin/bookings/${sourceLead.booking_id}`);
+  }
+
+  const sourceLeadNameParts = String(sourceLead?.customer_name || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const sourceLeadFirstName = sourceLeadNameParts[0] || "";
+  const sourceLeadLastName = sourceLeadNameParts.slice(1).join(" ");
 
   const [
     customersResult,
@@ -436,12 +477,18 @@ export default async function NewBookingPage(props: PageProps) {
         categories={categories}
         modifierGroups={modifierGroups}
         googleMapsApiKey={googleMapsApiKey}
-        initialEventDate={searchParams.eventDate || ""}
-        initialEventStartTime={searchParams.eventStartTime || ""}
-        initialEventEndTime={searchParams.eventEndTime || ""}
-        initialSetupAddress={searchParams.setupAddress || ""}
-        initialSetupCity={searchParams.setupCity || ""}
-        initialSetupZip={searchParams.setupZip || ""}
+        sourceLeadId={sourceLeadId}
+        initialCustomerFirstName={sourceLeadFirstName}
+        initialCustomerLastName={sourceLeadLastName}
+        initialCustomerPhone={String(sourceLead?.customer_phone || "")}
+        initialCustomerEmail={String(sourceLead?.customer_email || "")}
+        initialEventDate={searchParams.eventDate || String(sourceLead?.event_date || "")}
+        initialEventStartTime={searchParams.eventStartTime || String(sourceLead?.event_start_time || "")}
+        initialEventEndTime={searchParams.eventEndTime || String(sourceLead?.event_end_time || "")}
+        initialSetupAddress={searchParams.setupAddress || String(sourceLead?.event_address || "")}
+        initialSetupCity={searchParams.setupCity || String(sourceLead?.event_city || "")}
+        initialSetupState={String(sourceLead?.event_state || "CA")}
+        initialSetupZip={searchParams.setupZip || String(sourceLead?.event_zip || "")}
         timeFormat={(systemSettingsResult.data?.time_format || "24h") as
           | "12h"
           | "24h"}

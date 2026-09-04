@@ -800,7 +800,7 @@ export default async function CrmEventCenterPage({ params }: { params: Promise<{
     <section className="rounded-[22px] border border-[#eadfce] bg-[#fffaf2] p-4">
       <div className="text-sm font-bold text-[#1f1e1b]">Ready to convert</div>
       <div className="mt-1 text-xs leading-5 text-[#766d65]">Create a booking when the customer confirms. Event Center switches into operations mode automatically.</div>
-      <Link href="/admin/bookings/new" className="mt-3 flex min-h-[44px] items-center justify-center rounded-full bg-[#c9964f] px-4 text-sm font-semibold text-white">Create booking</Link>
+      <Link href={`/admin/bookings/new?leadId=${leadId}`} className="mt-3 flex min-h-[44px] items-center justify-center rounded-full bg-[#c9964f] px-4 text-sm font-semibold text-white">Create booking</Link>
     </section>
   )}
 
@@ -873,7 +873,7 @@ export default async function CrmEventCenterPage({ params }: { params: Promise<{
         </Link>
       ) : (
         <Link
-          href="/admin/bookings/new"
+          href={`/admin/bookings/new?leadId=${leadId}`}
           className="flex min-h-[46px] items-center justify-center rounded-full bg-[#c9964f] px-4 text-sm font-semibold text-white"
         >
           Create booking
@@ -903,7 +903,7 @@ export default async function CrmEventCenterPage({ params }: { params: Promise<{
             {booking?.id ? (
               <Link href={`/admin/bookings/${booking.id}`} className="rounded-full bg-[#23313f] px-4 py-2 text-sm font-semibold text-white">Open booking</Link>
             ) : (
-              <Link href="/admin/bookings/new" className="rounded-full bg-[#c9964f] px-4 py-2 text-sm font-semibold text-white">Create booking</Link>
+              <Link href={`/admin/bookings/new?leadId=${leadId}`} className="rounded-full bg-[#c9964f] px-4 py-2 text-sm font-semibold text-white">Create booking</Link>
             )}
           </div>
         </div>

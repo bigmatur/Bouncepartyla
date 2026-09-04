@@ -2777,6 +2777,196 @@ async function autoCreateRouteStopsForBooking({
   }
 }
 
+async function validateSourceLeadBeforeBookingCreation(params: {
+  supabase: any;
+  sourceLeadId: string;
+  bookingAttemptId: string;
+}) {
+  const sourceLeadId = String(params.sourceLeadId || "").trim();
+
+  if (!sourceLeadId) {
+    return;
+  }
+
+  const leadResult = await params.supabase
+    .from("booking_leads")
+    .select("id, booking_id")
+    .eq("id", sourceLeadId)
+    .maybeSingle();
+
+  if (leadResult.error) {
+    throw new Error(leadResult.error.message);
+  }
+
+  if (!leadResult.data?.id) {
+    throw new Error("Source CRM lead was not found.");
+  }
+
+  const existingBookingId = String(leadResult.data.booking_id || "").trim();
+
+  if (existingBookingId) {
+    const bookingAttemptId = String(params.bookingAttemptId || "").trim();
+
+    if (!bookingAttemptId) {
+      throw new Error("This CRM lead is already linked to another booking.");
+    }
+
+    const bookingResult = await params.supabase
+      .from("bookings")
+      .select("id, booking_attempt_id")
+      .eq("id", existingBookingId)
+      .maybeSingle();
+
+    if (bookingResult.error) {
+      throw new Error(bookingResult.error.message);
+    }
+
+    if (
+      !bookingResult.data?.id ||
+      String(bookingResult.data.booking_attempt_id || "").trim() !== bookingAttemptId
+    ) {
+      throw new Error("This CRM lead is already linked to another booking.");
+    }
+  }
+
+  const conversationsResult = await params.supabase
+    .from("crm_conversations")
+    .select("id, booking_id")
+    .eq("lead_id", sourceLeadId);
+
+  if (conversationsResult.error) {
+    throw new Error(conversationsResult.error.message);
+  }
+
+  const conflictingConversation = (conversationsResult.data || []).find(
+    (row: any) => {
+      const conversationBookingId = String(row.booking_id || "").trim();
+
+      if (!conversationBookingId) {
+        return false;
+      }
+
+      return !existingBookingId || conversationBookingId !== existingBookingId;
+    },
+  );
+
+  if (conflictingConversation) {
+    throw new Error("A CRM conversation for this lead is already linked to another booking.");
+  }
+}
+
+async function linkSourceLeadToBooking(params: {
+  supabase: any;
+  sourceLeadId: string;
+  bookingId: string;
+  customerId: string;
+}) {
+  const sourceLeadId = String(params.sourceLeadId || "").trim();
+
+  if (!sourceLeadId) {
+    return;
+  }
+
+  const leadResult = await params.supabase
+    .from("booking_leads")
+    .select("id, booking_id")
+    .eq("id", sourceLeadId)
+    .maybeSingle();
+
+  if (leadResult.error) {
+    throw new Error(leadResult.error.message);
+  }
+
+  if (!leadResult.data?.id) {
+    throw new Error("Source CRM lead was not found.");
+  }
+
+  const existingBookingId = String(leadResult.data.booking_id || "").trim();
+
+  if (existingBookingId && existingBookingId !== params.bookingId) {
+    throw new Error("This CRM lead is already linked to another booking.");
+  }
+
+  if (!existingBookingId) {
+    const leadUpdate = await params.supabase
+      .from("booking_leads")
+      .update({
+        booking_id: params.bookingId,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", sourceLeadId)
+      .is("booking_id", null)
+      .select("id, booking_id")
+      .maybeSingle();
+
+    if (leadUpdate.error) {
+      throw new Error(leadUpdate.error.message);
+    }
+
+    if (!leadUpdate.data?.id) {
+      const claimedLeadResult = await params.supabase
+        .from("booking_leads")
+        .select("id, booking_id")
+        .eq("id", sourceLeadId)
+        .maybeSingle();
+
+      if (claimedLeadResult.error) {
+        throw new Error(claimedLeadResult.error.message);
+      }
+
+      if (
+        !claimedLeadResult.data?.id ||
+        String(claimedLeadResult.data.booking_id || "").trim() !== params.bookingId
+      ) {
+        throw new Error("This CRM lead is already linked to another booking.");
+      }
+    }
+  }
+
+  const conversationsResult = await params.supabase
+    .from("crm_conversations")
+    .select("id, booking_id")
+    .eq("lead_id", sourceLeadId);
+
+  if (conversationsResult.error) {
+    throw new Error(conversationsResult.error.message);
+  }
+
+  const conflictingConversation = (conversationsResult.data || []).find(
+    (row: any) =>
+      row.booking_id && String(row.booking_id) !== params.bookingId,
+  );
+
+  if (conflictingConversation) {
+    throw new Error("A CRM conversation for this lead is already linked to another booking.");
+  }
+
+  const conversationUpdate = await params.supabase
+    .from("crm_conversations")
+    .update({
+      booking_id: params.bookingId,
+      customer_id: params.customerId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("lead_id", sourceLeadId);
+
+  if (conversationUpdate.error) {
+    throw new Error(conversationUpdate.error.message);
+  }
+
+  const identityUpdate = await params.supabase
+    .from("crm_contact_identities")
+    .update({
+      customer_id: params.customerId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("lead_id", sourceLeadId);
+
+  if (identityUpdate.error) {
+    throw new Error(identityUpdate.error.message);
+  }
+}
+
 async function createBookingActionInternal(
   formData: FormData,
 ) {
@@ -2808,6 +2998,18 @@ async function createBookingActionInternal(
       formData,
       "bookingAttemptId",
     );
+
+  const sourceLeadId =
+    getString(
+      formData,
+      "sourceLeadId",
+    );
+
+  await validateSourceLeadBeforeBookingCreation({
+    supabase,
+    sourceLeadId,
+    bookingAttemptId,
+  });
 
   const existingCustomerId =
     getString(
@@ -3487,6 +3689,13 @@ async function createBookingActionInternal(
   const bookingId = String(
     persistedBooking.booking.id,
   );
+
+  await linkSourceLeadToBooking({
+    supabase,
+    sourceLeadId,
+    bookingId,
+    customerId,
+  });
 
   if (
     persistedBooking.reusedExistingBooking
