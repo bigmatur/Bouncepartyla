@@ -90,6 +90,20 @@ function normalizeMessageStatus(value: string) {
   return null;
 }
 
+function successStatusRank(value: string | null) {
+  if (value === "sent") return 1;
+  if (value === "delivered") return 2;
+  if (value === "read") return 3;
+  return 0;
+}
+
+function successStatusFromRank(rank: number) {
+  if (rank >= 3) return "read";
+  if (rank === 2) return "delivered";
+  if (rank === 1) return "sent";
+  return null;
+}
+
 export async function getResolvedWhatsAppIntegration() {
   const integration = await resolveIntegrationConnection("whatsapp");
   const publicConfig = integration.publicConfig as Record<string, any>;
@@ -384,10 +398,12 @@ export async function sendCrmWhatsAppReply(params: {
     `https://graph.facebook.com/${config.graphVersion}/` +
     `${encodeURIComponent(config.phoneNumberId)}/messages`;
 
-  let providerMessageId =
+  const fallbackProviderMessageId =
     `wa_out_${Date.now()}_${Math.random()
       .toString(36)
       .slice(2, 9)}`;
+
+  const providerMessageIds: string[] = [];
 
   let status = "sent";
 
@@ -407,7 +423,7 @@ export async function sendCrmWhatsAppReply(params: {
       });
 
     if (textResult.providerMessageId) {
-      providerMessageId = textResult.providerMessageId;
+      providerMessageIds.push(textResult.providerMessageId);
     }
 
     status =
@@ -436,13 +452,21 @@ export async function sendCrmWhatsAppReply(params: {
     });
 
     if (mediaResult.providerMessageId) {
-      providerMessageId = mediaResult.providerMessageId;
+      providerMessageIds.push(mediaResult.providerMessageId);
     }
 
     status =
       normalizeMessageStatus(mediaResult.rawStatus) ||
       status;
   }
+
+  const uniqueProviderMessageIds = Array.from(
+    new Set(providerMessageIds.filter(Boolean)),
+  );
+
+  const primaryProviderMessageId =
+    uniqueProviderMessageIds[0] ||
+    fallbackProviderMessageId;
 
   const now = new Date().toISOString();
 
@@ -459,7 +483,7 @@ export async function sendCrmWhatsAppReply(params: {
         recipient.recipientDisplay,
       body_text: body,
       provider_message_id:
-        providerMessageId,
+        primaryProviderMessageId,
       provider_thread_id:
         recipient.recipientPhone,
       status,
@@ -471,6 +495,12 @@ export async function sendCrmWhatsAppReply(params: {
           config.businessAccountId || null,
         native_media_count:
           attachments.length,
+        whatsapp_primary_provider_message_id:
+          primaryProviderMessageId,
+        whatsapp_provider_message_ids:
+          uniqueProviderMessageIds.length > 0
+            ? uniqueProviderMessageIds
+            : [primaryProviderMessageId],
       },
     });
 
@@ -495,9 +525,63 @@ export async function sendCrmWhatsAppReply(params: {
   }
 
   return {
-    messageId: providerMessageId,
+    messageId: primaryProviderMessageId,
     status,
   };
+}
+
+async function findWhatsappMessageByProviderMessageId(params: {
+  providerMessageId: string;
+}) {
+  const providerMessageId = stringValue(
+    params.providerMessageId,
+  );
+
+  if (!providerMessageId) {
+    return null;
+  }
+
+  const supabase = createServiceClient();
+
+  const direct = await supabase
+    .from("crm_messages")
+    .select("id, metadata")
+    .eq("channel", "whatsapp")
+    .eq("provider_message_id", providerMessageId)
+    .maybeSingle();
+
+  if (direct.error) {
+    throw new Error(direct.error.message);
+  }
+
+  if (direct.data?.id) {
+    return direct.data;
+  }
+
+  const mapped = await supabase
+    .from("crm_messages")
+    .select("id, metadata")
+    .eq("channel", "whatsapp")
+    .contains("metadata", {
+      whatsapp_provider_message_ids: [providerMessageId],
+    })
+    .limit(2);
+
+  if (mapped.error) {
+    throw new Error(mapped.error.message);
+  }
+
+  if ((mapped.data || []).length === 0) {
+    return null;
+  }
+
+  if ((mapped.data || []).length > 1) {
+    throw new Error(
+      "WhatsApp status callback provider message id matched multiple CRM messages.",
+    );
+  }
+
+  return mapped.data?.[0] || null;
 }
 
 export async function updateCrmWhatsAppDeliveryStatus(params: {
@@ -520,51 +604,111 @@ export async function updateCrmWhatsAppDeliveryStatus(params: {
     };
   }
 
-  const supabase = createServiceClient();
+  const message = await findWhatsappMessageByProviderMessageId({
+    providerMessageId,
+  });
 
-  const patch: Record<string, unknown> = {
-    status: normalizedStatus,
-  };
+  if (!message?.id) {
+    console.warn(
+      "WhatsApp status callback ignored: unknown provider message id",
+      {
+        providerMessageId,
+      },
+    );
 
-  if (normalizedStatus === "delivered") {
-    patch.delivered_at = new Date().toISOString();
-  }
-
-  if (normalizedStatus === "read") {
-    const now = new Date().toISOString();
-    patch.delivered_at = now;
-    patch.read_at = now;
-  }
-
-  if (normalizedStatus === "failed") {
-    patch.failed_at = new Date().toISOString();
-  }
-
-  const result = await supabase
-    .from("crm_messages")
-    .update(patch)
-    .eq("channel", "whatsapp")
-    .eq("provider_message_id", providerMessageId)
-    .select("id, metadata")
-    .maybeSingle();
-
-  if (result.error) {
-    throw new Error(result.error.message);
-  }
-
-  if (!result.data?.id) {
     return {
       updated: false,
       ignored: true,
     };
   }
 
+  const supabase = createServiceClient();
+  const current = await supabase
+    .from("crm_messages")
+    .select("id, status, sent_at, delivered_at, read_at, failed_at, metadata")
+    .eq("id", message.id)
+    .maybeSingle();
+
+  if (current.error) {
+    throw new Error(current.error.message);
+  }
+
+  if (!current.data?.id) {
+    return {
+      updated: false,
+      ignored: true,
+    };
+  }
+
+  const currentStatus = stringValue(current.data.status || "") || null;
+  const currentSuccessRank = successStatusRank(currentStatus);
+  const incomingSuccessRank = successStatusRank(normalizedStatus);
+
+  const now = new Date().toISOString();
+  const patch: Record<string, unknown> = {};
+
+  if (incomingSuccessRank > 0) {
+    const nextRank = Math.max(currentSuccessRank, incomingSuccessRank);
+    const nextStatus = successStatusFromRank(nextRank);
+
+    if (nextStatus && nextStatus !== currentStatus) {
+      patch.status = nextStatus;
+    }
+
+    if (normalizedStatus === "delivered" && !current.data.delivered_at) {
+      patch.delivered_at = now;
+    }
+
+    if (normalizedStatus === "read") {
+      if (!current.data.delivered_at) {
+        patch.delivered_at = now;
+      }
+
+      if (!current.data.read_at) {
+        patch.read_at = now;
+      }
+    }
+  } else if (normalizedStatus === "failed") {
+    if (!current.data.failed_at) {
+      patch.failed_at = now;
+    }
+
+    const hasDeliveredSuccess = currentSuccessRank >= 2;
+
+    if (!hasDeliveredSuccess && currentStatus !== "failed") {
+      patch.status = "failed";
+    }
+  }
+
+  let latestMetadata: unknown = current.data.metadata;
+
+  if (Object.keys(patch).length > 0) {
+    const updateResult = await supabase
+      .from("crm_messages")
+      .update(patch)
+      .eq("id", current.data.id)
+      .select("id, metadata")
+      .maybeSingle();
+
+    if (updateResult.error) {
+      throw new Error(updateResult.error.message);
+    }
+
+    latestMetadata =
+      updateResult.data?.metadata ??
+      latestMetadata;
+  }
+
   if (params.metadata) {
+    const metadataSource =
+      latestMetadata || {};
+
     const metadata = {
-      ...((result.data.metadata ||
-        {}) as Record<string, unknown>),
+      ...(metadataSource as Record<string, unknown>),
       whatsapp_status:
         normalizedStatus,
+      whatsapp_status_provider_message_id:
+        providerMessageId,
       whatsapp_status_metadata:
         safeMetadataObject(params.metadata) ||
         null,
@@ -573,17 +717,26 @@ export async function updateCrmWhatsAppDeliveryStatus(params: {
     const metadataUpdate = await supabase
       .from("crm_messages")
       .update({ metadata })
-      .eq("id", result.data.id);
+      .eq("id", current.data.id);
 
     if (metadataUpdate.error) {
       throw new Error(metadataUpdate.error.message);
     }
   }
 
+  const responseStatus =
+    stringValue(
+      String(
+        patch.status ||
+          currentStatus ||
+          normalizedStatus,
+      ),
+    ) || normalizedStatus;
+
   return {
     updated: true,
     ignored: false,
-    status: normalizedStatus,
+    status: responseStatus,
   };
 }
 
