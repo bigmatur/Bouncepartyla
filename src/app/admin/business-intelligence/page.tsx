@@ -1068,10 +1068,59 @@ export default async function BusinessIntelligencePage({
             <div className="space-y-4 sm:space-y-5">
               <div className="rounded-[22px] border border-amber-200 bg-amber-50 p-4 sm:rounded-[26px] sm:p-5">
                 <div className="text-[10px] font-bold uppercase tracking-[0.15em] text-amber-700">Attribution readiness</div>
-                <h2 className="mt-1 text-lg font-bold text-[#4b3a22]">ROAS intentionally unavailable</h2>
-                <p className="mt-2 text-xs leading-5 text-amber-900/80">{marketingSnapshot.attribution.reason}</p>
+                <h2 className="mt-1 text-lg font-bold text-[#4b3a22]">
+                  {marketingSnapshot.attribution.roasAvailable
+                    ? "Attributed ROAS available"
+                    : "ROAS not available yet"}
+                </h2>
+
+                <p className="mt-2 text-xs leading-5 text-amber-900/80">
+                  {marketingSnapshot.attribution.reason}
+                </p>
+
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <div className="rounded-xl bg-white/70 px-3 py-2 ring-1 ring-amber-200">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-amber-700">
+                      Ad attribution coverage
+                    </div>
+                    <div className="mt-1 text-base font-bold text-[#4b3a22]">
+                      {percent(marketingSnapshot.attribution.attributionCoveragePct)}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl bg-white/70 px-3 py-2 ring-1 ring-amber-200">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-amber-700">
+                      Matched bookings
+                    </div>
+                    <div className="mt-1 text-base font-bold text-[#4b3a22]">
+                      {marketingSnapshot.attribution.matchedLinkedRevenueBookings.toLocaleString("en-US")}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl bg-white/70 px-3 py-2 ring-1 ring-amber-200">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-amber-700">
+                      Attributed revenue
+                    </div>
+                    <div className="mt-1 text-base font-bold text-[#4b3a22]">
+                      {money(marketingSnapshot.attribution.matchedBookedRevenue)}
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl bg-white/70 px-3 py-2 ring-1 ring-amber-200">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-amber-700">
+                      Matched ad spend
+                    </div>
+                    <div className="mt-1 text-base font-bold text-[#4b3a22]">
+                      {money(marketingSnapshot.attribution.matchedAdSpend)}
+                    </div>
+                  </div>
+                </div>
+
                 <div className="mt-3 rounded-xl bg-white/70 px-3 py-2 text-[11px] font-medium text-amber-900 ring-1 ring-amber-200">
-                  Meta spend and internal booked revenue are not mathematically joined in this version.
+                  {marketingSnapshot.attribution.roasAvailable &&
+                  marketingSnapshot.attribution.roas !== null
+                    ? `First-touch attributed ROAS: ${marketingSnapshot.attribution.roas.toFixed(2)}x.`
+                    : "Revenue is joined to Meta spend only when the CRM lead has a captured Instagram ad ID, that ad exists in Meta Insights, and the lead is linked to a revenue booking."}
                 </div>
               </div>
 

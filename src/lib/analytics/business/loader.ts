@@ -687,6 +687,13 @@ async function loadMarketingLeadDataset(
 
   const currentLeads = currentResult.error ? [] : currentResult.data || [];
   const previousLeads = previousResult.error ? [] : previousResult.data || [];
+  const allLeadIds = [
+    ...new Set(
+      [...currentLeads, ...previousLeads]
+        .map((lead: any) => String(lead?.id || "").trim())
+        .filter(Boolean),
+    ),
+  ];
   const bookingIds = [
     ...new Set(
       [...currentLeads, ...previousLeads]
@@ -711,7 +718,155 @@ async function loadMarketingLeadDataset(
     linkedBookings.push(...(result.data || []));
   }
 
-  return { currentLeads, previousLeads, linkedBookings };
+  const leadAttributions: Array<{
+    leadId: string;
+    adId: string;
+    occurredAt: string;
+  }> = [];
+
+  if (allLeadIds.length > 0) {
+    const conversations: any[] = [];
+
+    for (let index = 0; index < allLeadIds.length; index += chunkSize) {
+      const ids = allLeadIds.slice(index, index + chunkSize);
+      const result = await supabase
+        .from("crm_conversations")
+        .select("id, lead_id")
+        .in("lead_id", ids);
+
+      if (result.error) {
+        if (!softFailure(result.error)) {
+          throw new Error(
+            `Unable to load CRM conversations for marketing attribution: ${result.error.message}`,
+          );
+        }
+
+        conversations.length = 0;
+        break;
+      }
+
+      conversations.push(...(result.data || []));
+    }
+
+    const conversationToLead = new Map<string, string>();
+
+    for (const conversation of conversations) {
+      const conversationId = String(conversation?.id || "").trim();
+      const leadId = String(conversation?.lead_id || "").trim();
+
+      if (conversationId && leadId) {
+        conversationToLead.set(conversationId, leadId);
+      }
+    }
+
+    const conversationIds = [...conversationToLead.keys()];
+    const firstTouchByLead = new Map<
+      string,
+      {
+        leadId: string;
+        adId: string;
+        occurredAt: string;
+        messageId: string;
+      }
+    >();
+
+    for (let index = 0; index < conversationIds.length; index += chunkSize) {
+      const ids = conversationIds.slice(index, index + chunkSize);
+      const result = await supabase
+        .from("crm_messages")
+        .select(
+          "id, conversation_id, direction, channel, metadata, sent_at, created_at",
+        )
+        .in("conversation_id", ids)
+        .eq("direction", "inbound")
+        .eq("channel", "instagram");
+
+      if (result.error) {
+        if (!softFailure(result.error)) {
+          throw new Error(
+            `Unable to load CRM messages for marketing attribution: ${result.error.message}`,
+          );
+        }
+
+        firstTouchByLead.clear();
+        break;
+      }
+
+      for (const message of result.data || []) {
+        const conversationId = String(
+          (message as any)?.conversation_id || "",
+        ).trim();
+        const leadId = conversationToLead.get(conversationId) || "";
+
+        const attribution = (message as any)?.metadata?.attribution;
+        const provider = String(
+          attribution?.provider || "",
+        ).trim().toLowerCase();
+        const channel = String(
+          attribution?.channel || "",
+        ).trim().toLowerCase();
+        const adId = String(
+          attribution?.ad_id || "",
+        ).trim();
+
+        if (
+          !leadId ||
+          provider !== "meta" ||
+          channel !== "instagram" ||
+          !adId
+        ) {
+          continue;
+        }
+
+        const occurredAt = String(
+          (message as any)?.sent_at ||
+            (message as any)?.created_at ||
+            "",
+        ).trim();
+
+        const messageId = String(
+          (message as any)?.id || "",
+        ).trim();
+
+        const candidate = {
+          leadId,
+          adId,
+          occurredAt,
+          messageId,
+        };
+
+        const existing = firstTouchByLead.get(leadId);
+
+        if (
+          !existing ||
+          candidate.occurredAt < existing.occurredAt ||
+          (
+            candidate.occurredAt === existing.occurredAt &&
+            candidate.messageId < existing.messageId
+          )
+        ) {
+          firstTouchByLead.set(leadId, candidate);
+        }
+      }
+    }
+
+    leadAttributions.push(
+      ...[...firstTouchByLead.values()].map(
+        ({ leadId, adId, occurredAt }) => ({
+          leadId,
+          adId,
+          occurredAt,
+        }),
+      ),
+    );
+  }
+
+  return {
+    currentLeads,
+    previousLeads,
+    linkedBookings,
+    leadAttributions,
+  };
 }
 
 export async function loadBusinessMarketing(
@@ -730,6 +885,7 @@ export async function loadBusinessMarketing(
     currentLeads: leadData.currentLeads,
     previousLeads: leadData.previousLeads,
     linkedBookings: leadData.linkedBookings,
+    leadAttributions: leadData.leadAttributions,
   });
 }
 

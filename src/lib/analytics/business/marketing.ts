@@ -203,6 +203,11 @@ export function calculateBusinessMarketing(params: {
   currentLeads: any[];
   previousLeads: any[];
   linkedBookings: any[];
+  leadAttributions: Array<{
+    leadId: string;
+    adId: string;
+    occurredAt: string;
+  }>;
 }): BusinessMarketingInsights {
   const currentSourceRows = leadSourceRows(params.currentLeads, params.linkedBookings);
   const previousSourceRows = leadSourceRows(params.previousLeads, params.linkedBookings);
@@ -224,7 +229,126 @@ export function calculateBusinessMarketing(params: {
   });
 
   const signals = summarySignals(params.metaAds);
-  const leadLinkageCoveragePct = currentLeadCount > 0 ? (currentLinkedLeadCount / currentLeadCount) * 100 : 0;
+  const leadLinkageCoveragePct =
+    currentLeadCount > 0
+      ? (currentLinkedLeadCount / currentLeadCount) * 100
+      : 0;
+
+  const currentInstagramLeadIds = new Set(
+    params.currentLeads
+      .filter((lead) => normalizeSource(lead?.source) === "instagram")
+      .map((lead) => String(lead?.id || "").trim())
+      .filter(Boolean),
+  );
+
+  const attributionByLead = new Map(
+    params.leadAttributions
+      .filter((row) =>
+        currentInstagramLeadIds.has(String(row?.leadId || "").trim()),
+      )
+      .map((row) => [String(row.leadId).trim(), row]),
+  );
+
+  const adById = new Map(
+    (params.metaAds.ads || [])
+      .map((row) => [String(row?.adId || "").trim(), row] as const)
+      .filter(([adId]) => Boolean(adId)),
+  );
+
+  const bookingById = new Map(
+    params.linkedBookings
+      .map(
+        (booking) =>
+          [String(booking?.id || "").trim(), booking] as const,
+      )
+      .filter(([bookingId]) => Boolean(bookingId)),
+  );
+
+  const matchedAdIds = new Set<string>();
+  const matchedRevenueBookingIds = new Set<string>();
+  let matchedBookedRevenue = 0;
+
+  for (const lead of params.currentLeads) {
+    const leadId = String(lead?.id || "").trim();
+    const attribution = attributionByLead.get(leadId);
+
+    if (!attribution) {
+      continue;
+    }
+
+    const adId = String(attribution.adId || "").trim();
+    const ad = adById.get(adId);
+
+    if (!ad) {
+      continue;
+    }
+
+    matchedAdIds.add(adId);
+
+    const bookingId = String(lead?.booking_id || "").trim();
+    const booking = bookingId
+      ? bookingById.get(bookingId)
+      : null;
+
+    if (
+      booking &&
+      isBusinessRevenueBooking(booking) &&
+      !matchedRevenueBookingIds.has(bookingId)
+    ) {
+      matchedRevenueBookingIds.add(bookingId);
+      matchedBookedRevenue += numberValue(booking.total_amount);
+    }
+  }
+
+  const attributedLeads = attributionByLead.size;
+  const instagramLeadCount = currentInstagramLeadIds.size;
+  const attributionCoveragePct =
+    instagramLeadCount > 0
+      ? (attributedLeads / instagramLeadCount) * 100
+      : 0;
+
+  const matchedAdSpend = [...matchedAdIds].reduce(
+    (sum, adId) =>
+      sum + numberValue(adById.get(adId)?.spend),
+    0,
+  );
+
+  const roas =
+    matchedBookedRevenue > 0 && matchedAdSpend > 0
+      ? matchedBookedRevenue / matchedAdSpend
+      : null;
+
+  const campaignRevenueAttributionAvailable =
+    matchedRevenueBookingIds.size > 0 &&
+    matchedAdIds.size > 0;
+
+  const roasAvailable = roas !== null;
+
+  let attributionReason =
+    "No CRM leads were created in the selected period, so there is no lead cohort to attribute.";
+
+  if (currentLeadCount > 0 && instagramLeadCount === 0) {
+    attributionReason =
+      "No Instagram CRM leads were created in the selected period, so there is no Meta Instagram lead cohort to attribute.";
+  } else if (instagramLeadCount > 0 && attributedLeads === 0) {
+    attributionReason =
+      "No Instagram leads in the selected period have captured Meta ad referral IDs yet. New eligible Instagram inbound messages will populate attribution going forward.";
+  } else if (
+    attributedLeads > 0 &&
+    matchedAdIds.size === 0
+  ) {
+    attributionReason =
+      `${attributedLeads} lead${attributedLeads === 1 ? "" : "s"} have captured Meta ad IDs, but those ads were not returned by Meta Insights for the selected period.`;
+  } else if (
+    matchedAdIds.size > 0 &&
+    matchedRevenueBookingIds.size === 0
+  ) {
+    attributionReason =
+      `${attributedLeads} lead${attributedLeads === 1 ? "" : "s"} have Meta ad attribution and ${matchedAdIds.size} ad${matchedAdIds.size === 1 ? "" : "s"} matched Meta Insights, but no attributed lead is linked to a revenue booking yet.`;
+  } else if (roasAvailable) {
+    attributionReason =
+      `${attributedLeads} of ${instagramLeadCount} Instagram leads (${attributionCoveragePct.toFixed(1)}%) have first-touch Meta ad attribution. ${matchedRevenueBookingIds.size} linked revenue booking${matchedRevenueBookingIds.size === 1 ? "" : "s"} matched ${matchedAdIds.size} Meta ad${matchedAdIds.size === 1 ? "" : "s"}.`;
+  }
 
   if (currentLeadCount > 0 && leadLinkageCoveragePct < 80) {
     signals.push({
@@ -249,10 +373,17 @@ export function calculateBusinessMarketing(params: {
       leadDeltaPct: pctDelta(currentLeadCount, params.previousLeads.length),
     },
     attribution: {
-      campaignRevenueAttributionAvailable: false,
-      roasAvailable: false,
-      reason:
-        "Current lead data does not store an immutable campaign/ad set/ad identifier for each booking. Meta spend and internal booked revenue are intentionally shown separately until reliable attribution capture exists.",
+      campaignRevenueAttributionAvailable,
+      roasAvailable,
+      reason: attributionReason,
+      attributedLeads,
+      attributionCoveragePct,
+      matchedAdIds: matchedAdIds.size,
+      matchedLinkedRevenueBookings:
+        matchedRevenueBookingIds.size,
+      matchedBookedRevenue,
+      matchedAdSpend,
+      roas,
     },
     signals,
   };

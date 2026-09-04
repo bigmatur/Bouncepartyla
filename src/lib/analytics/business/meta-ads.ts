@@ -3,6 +3,7 @@ import "server-only";
 import { resolveIntegrationConnection } from "@/lib/integrations/connections";
 import type {
   BusinessAnalyticsRange,
+  BusinessMarketingAdRow,
   BusinessMarketingCampaignRow,
   BusinessMarketingDailyRow,
   BusinessMetaAdsSnapshot,
@@ -88,7 +89,7 @@ async function fetchMetaRows(params: {
   adAccountId: string;
   accessToken: string;
   range: BusinessAnalyticsRange;
-  level: "account" | "campaign";
+  level: "account" | "campaign" | "ad";
   timeIncrement?: number;
   fields: string[];
   maxPages?: number;
@@ -161,6 +162,23 @@ function campaignRows(rows: MetaApiRow[]): BusinessMarketingCampaignRow[] {
     .sort((a, b) => b.spend - a.spend);
 }
 
+function adRows(rows: MetaApiRow[]): BusinessMarketingAdRow[] {
+  return rows
+    .map((row) => ({
+      adId: String(row.ad_id || "").trim(),
+      adName: String(row.ad_name || "").trim() || "Unnamed ad",
+      campaignId: String(row.campaign_id || "").trim() || "unknown",
+      campaignName: String(row.campaign_name || "").trim() || "Unnamed campaign",
+      spend: numberValue(row.spend),
+      impressions: numberValue(row.impressions),
+      clicks: numberValue(row.clicks),
+      leads: actionValue(row.actions, LEAD_ACTION_PRIORITY),
+      messagingConversations: actionValue(row.actions, MESSAGE_ACTION_PRIORITY),
+    }))
+    .filter((row) => Boolean(row.adId))
+    .sort((a, b) => b.spend - a.spend);
+}
+
 function dailyRows(rows: MetaApiRow[]): BusinessMarketingDailyRow[] {
   return rows
     .map((row) => {
@@ -211,6 +229,7 @@ export async function loadMetaAdsInsights(params: {
         current: null,
         previous: null,
         campaigns: [],
+        ads: [],
         daily: [],
       };
     }
@@ -226,8 +245,20 @@ export async function loadMetaAdsInsights(params: {
       "date_start",
       "date_stop",
     ];
+    const adFields = [
+      "ad_id",
+      "ad_name",
+      "campaign_id",
+      "campaign_name",
+      "spend",
+      "impressions",
+      "clicks",
+      "actions",
+      "date_start",
+      "date_stop",
+    ];
 
-    const [currentRows, previousRows, currentCampaignRows, currentDailyRows] = await Promise.all([
+    const [currentRows, previousRows, currentCampaignRows, currentAdRows, currentDailyRows] = await Promise.all([
       fetchMetaRows({
         graphVersion,
         adAccountId,
@@ -257,6 +288,15 @@ export async function loadMetaAdsInsights(params: {
         adAccountId,
         accessToken,
         range: params.range,
+        level: "ad",
+        fields: adFields,
+        maxPages: 10,
+      }),
+      fetchMetaRows({
+        graphVersion,
+        adAccountId,
+        accessToken,
+        range: params.range,
         level: "account",
         timeIncrement: 1,
         fields: summaryFields,
@@ -274,6 +314,7 @@ export async function loadMetaAdsInsights(params: {
       current: summaryFromRows(currentRows),
       previous: summaryFromRows(previousRows),
       campaigns: campaignRows(currentCampaignRows),
+      ads: adRows(currentAdRows),
       daily: dailyRows(currentDailyRows),
     };
   } catch (error) {
@@ -288,6 +329,7 @@ export async function loadMetaAdsInsights(params: {
       current: null,
       previous: null,
       campaigns: [],
+      ads: [],
       daily: [],
     };
   }

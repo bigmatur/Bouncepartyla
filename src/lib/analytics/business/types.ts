@@ -311,6 +311,18 @@ export type BusinessMarketingDailyRow = {
   costPerMessagingConversation: number | null;
 };
 
+export type BusinessMarketingAdRow = {
+  adId: string;
+  adName: string;
+  campaignId: string;
+  campaignName: string;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  leads: number;
+  messagingConversations: number;
+};
+
 export type BusinessMetaAdsSnapshot = {
   connection: {
     configured: boolean;
@@ -322,6 +334,7 @@ export type BusinessMetaAdsSnapshot = {
   current: BusinessMetaAdsSummary | null;
   previous: BusinessMetaAdsSummary | null;
   campaigns: BusinessMarketingCampaignRow[];
+  ads: BusinessMarketingAdRow[];
   daily: BusinessMarketingDailyRow[];
 };
 
@@ -360,6 +373,13 @@ export type BusinessMarketingInsights = {
     campaignRevenueAttributionAvailable: boolean;
     roasAvailable: boolean;
     reason: string;
+    attributedLeads: number;
+    attributionCoveragePct: number;
+    matchedAdIds: number;
+    matchedLinkedRevenueBookings: number;
+    matchedBookedRevenue: number;
+    matchedAdSpend: number;
+    roas: number | null;
   };
   signals: BusinessSignal[];
 };
