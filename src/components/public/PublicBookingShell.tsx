@@ -12,36 +12,78 @@ export default function PublicBookingShell({
   return (
     <div className="min-h-screen bg-[#f5efe6] text-[#1d1d1b]">
       <header className="sticky top-0 z-40 border-b border-black/5 bg-[#f5efe6]/95 backdrop-blur">
-        <div className="mx-auto flex min-h-[68px] w-full max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
-          <a href={MARKETING_SITE_URL} className="min-w-0">
-            <div className="truncate text-xs font-semibold uppercase tracking-[0.2em] text-[#9a723e]">
-              Bounce Party LA
-            </div>
-            <div className="truncate text-lg font-semibold tracking-[-0.02em]">
-              Rentals & Booking
-            </div>
-          </a>
+        <div className="mx-auto w-full max-w-7xl px-4 sm:px-6">
+          <div className="flex min-h-[68px] items-center justify-between gap-4">
+            <Link href="/" className="min-w-0">
+              <div className="truncate text-xs font-semibold uppercase tracking-[0.2em] text-[#9a723e]">
+                Bounce Party LA
+              </div>
+              <div className="truncate text-lg font-semibold tracking-[-0.02em]">
+                Rentals & Booking
+              </div>
+            </Link>
 
-          <nav className="flex items-center gap-2">
+            <nav className="hidden items-center gap-2 sm:flex" aria-label="Public primary navigation">
+              <Link
+                href="/"
+                className="rounded-full px-4 py-2 text-sm font-semibold text-[#3d3832] transition hover:bg-black/[0.04]"
+              >
+                Home
+              </Link>
+
+              <Link
+                href="/catalog"
+                className="rounded-full px-4 py-2 text-sm font-semibold text-[#3d3832] transition hover:bg-black/[0.04]"
+              >
+                Rentals
+              </Link>
+
+              <Link
+                href="/account"
+                className="rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold transition hover:bg-black/[0.03]"
+              >
+                Account
+              </Link>
+
+              <Link
+                href="/book"
+                className="rounded-full bg-[#1d1d1b] px-4 py-2 text-sm font-semibold text-white transition hover:bg-black"
+              >
+                Check Availability
+              </Link>
+            </nav>
+          </div>
+
+          <nav
+            className="flex items-center gap-2 overflow-x-auto pb-3 sm:hidden"
+            aria-label="Public mobile navigation"
+          >
+            <Link
+              href="/"
+              className="whitespace-nowrap rounded-full border border-black/10 bg-white px-3 py-2 text-xs font-semibold"
+            >
+              Home
+            </Link>
+
             <Link
               href="/catalog"
-              className="hidden rounded-full px-4 py-2 text-sm font-semibold text-[#3d3832] transition hover:bg-black/[0.04] sm:inline-flex"
+              className="whitespace-nowrap rounded-full border border-black/10 bg-white px-3 py-2 text-xs font-semibold"
             >
               Rentals
             </Link>
 
             <Link
               href="/account"
-              className="rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold transition hover:bg-black/[0.03]"
+              className="whitespace-nowrap rounded-full border border-black/10 bg-white px-3 py-2 text-xs font-semibold"
             >
-              My Account
+              Account
             </Link>
 
             <Link
               href="/book"
-              className="rounded-full bg-[#1d1d1b] px-4 py-2 text-sm font-semibold text-white transition hover:bg-black"
+              className="whitespace-nowrap rounded-full bg-[#1d1d1b] px-3 py-2 text-xs font-semibold text-white"
             >
-              Book Now
+              Check Availability
             </Link>
           </nav>
         </div>
@@ -54,6 +96,10 @@ export default function PublicBookingShell({
           <div>© Bounce Party LA</div>
 
           <div className="flex flex-wrap gap-4">
+            <Link href="/" className="font-semibold text-[#3d3832]">
+              Home
+            </Link>
+
             <a href={MARKETING_SITE_URL} className="font-semibold text-[#3d3832]">
               Main website
             </a>

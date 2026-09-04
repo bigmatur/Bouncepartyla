@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
 import {
@@ -16,6 +17,14 @@ type SearchParams = Promise<
     SearchParamsValue
   >
 >;
+
+export const metadata: Metadata = {
+  title: "Start Booking | Bounce Party LA",
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
 
 export const dynamic =
   "force-dynamic";

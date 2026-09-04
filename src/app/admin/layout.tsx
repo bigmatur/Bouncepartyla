@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
 import AdminShell from "@/components/admin/AdminShell";
@@ -6,6 +7,25 @@ import { getUnifiedAccess, isStaffRole } from "@/lib/auth/access";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Admin App | Bounce Party LA",
+  description: "Private administrative application for Bounce Party LA.",
+  robots: {
+    index: false,
+    follow: false,
+  },
+  openGraph: {
+    title: "Admin App | Bounce Party LA",
+    description: "Private administrative application for Bounce Party LA.",
+    type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: "Admin App | Bounce Party LA",
+    description: "Private administrative application for Bounce Party LA.",
+  },
+};
 
 export default async function AdminLayout({
   children,

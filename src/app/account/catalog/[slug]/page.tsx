@@ -31,14 +31,12 @@ export async function generateMetadata({
     product?.short_description ||
     "Bounce house and party rental equipment details.";
 
-  const canIndex = Boolean(product && product.active !== false);
-
   return {
     title: `${title} | Bounce Party LA`,
     description,
     robots: {
-      index: canIndex,
-      follow: canIndex,
+      index: false,
+      follow: false,
     },
   };
 }

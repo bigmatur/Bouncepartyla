@@ -9,6 +9,7 @@ import {
   getPublicCatalogProducts,
   getPublicCategoryBySlug,
 } from "@/lib/customer/public-catalog";
+import { buildPublicMetadata } from "@/lib/public/seo";
 
 type PageParams = Promise<{
   categorySlug: string;
@@ -29,19 +30,20 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { categorySlug } = await params;
   const category = await getPublicCategoryBySlug(categorySlug);
+  const canIndex = Boolean(category);
 
-  return {
+  return buildPublicMetadata({
     title: category
       ? `${category.name} | Bounce Party LA Booking`
       : "Rentals | Bounce Party LA",
     description:
       category?.description ||
       "Browse Bounce Party LA rentals and continue into booking.",
-    robots: {
-      index: false,
-      follow: true,
-    },
-  };
+    path: category
+      ? `/catalog/${encodeURIComponent(category.slug)}`
+      : "/catalog",
+    index: canIndex,
+  });
 }
 
 export default async function PublicCategoryPage({

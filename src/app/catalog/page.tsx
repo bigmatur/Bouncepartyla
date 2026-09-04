@@ -7,15 +7,14 @@ import {
   getPublicCatalogCategories,
   getPublicCatalogProducts,
 } from "@/lib/customer/public-catalog";
+import { buildPublicMetadata } from "@/lib/public/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = buildPublicMetadata({
   title: "Browse Rentals | Bounce Party LA",
   description: "Browse Bounce Party LA rentals and continue into the booking system.",
-  robots: {
-    index: false,
-    follow: true,
-  },
-};
+  path: "/catalog",
+  index: true,
+});
 
 type SearchParams = Promise<{
   date?: string;

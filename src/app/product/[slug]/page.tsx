@@ -8,6 +8,7 @@ import {
   getPublicCatalogCategories,
   getPublicProductBySlug,
 } from "@/lib/customer/public-catalog";
+import { buildPublicMetadata } from "@/lib/public/seo";
 
 type PageParams = Promise<{
   slug: string;
@@ -41,20 +42,31 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { slug } = await params;
   const product = await getPublicProductBySlug(slug);
+  const canIndex = Boolean(product);
 
-  return {
-    title: product
-      ? `${product.public_title || product.name} | Bounce Party LA Booking`
-      : "Rental | Bounce Party LA",
+  if (!product) {
+    return {
+      title: "Rental | Bounce Party LA",
+      description: "Bounce Party LA rental details.",
+      robots: {
+        index: false,
+        follow: false,
+      },
+    };
+  }
+
+  const publicSlug = String(product.public_slug || product.slug || "").trim();
+
+  return buildPublicMetadata({
+    title: `${product.public_title || product.name} | Bounce Party LA Booking`,
     description:
-      product?.short_description ||
-      product?.description ||
+      product.short_description ||
+      product.description ||
       "Bounce Party LA rental details.",
-    robots: {
-      index: false,
-      follow: true,
-    },
-  };
+    path: `/product/${encodeURIComponent(publicSlug || slug)}`,
+    index: canIndex,
+    image: product.image_url || null,
+  });
 }
 
 export default async function PublicProductPage({

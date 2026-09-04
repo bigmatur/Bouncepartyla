@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
 import { requestCustomerLoginCode } from "@/app/account/login/actions";
@@ -23,6 +24,14 @@ type LoginSearchParams =
     mode?: string;
     resetSent?: string;
   }>;
+
+export const metadata: Metadata = {
+  title: "Sign In | Bounce Party LA",
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
 
 export const dynamic =
   "force-dynamic";
