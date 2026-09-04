@@ -31,6 +31,7 @@ function channelLabel(channel: string) {
   if (normalized === "sms") return "SMS";
   if (normalized === "email") return "Email";
   if (normalized === "instagram") return "Instagram";
+  if (normalized === "whatsapp") return "WhatsApp";
   return normalized || "CRM";
 }
 
@@ -120,7 +121,7 @@ export default async function CrmConversationPage({
     .find(
       (item) =>
         item.direction === "inbound" &&
-        ["sms", "email", "instagram"].includes(
+        ["sms", "email", "instagram", "whatsapp"].includes(
           String(item.channel || "").trim().toLowerCase(),
         ),
     );
@@ -131,7 +132,7 @@ export default async function CrmConversationPage({
     .trim()
     .toLowerCase();
 
-  const canReply = ["sms", "email", "instagram"].includes(replyChannel);
+  const canReply = ["sms", "email", "instagram", "whatsapp"].includes(replyChannel);
   const isClosed = conversation.data.status === "closed";
 
   return (

@@ -1,4 +1,4 @@
-export type CrmCommunicationChannel = "email" | "sms" | "instagram";
+export type CrmCommunicationChannel = "email" | "sms" | "instagram" | "whatsapp";
 
 export type CrmAttachment = {
   storagePath: string;

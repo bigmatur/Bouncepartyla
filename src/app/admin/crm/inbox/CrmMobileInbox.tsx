@@ -48,7 +48,9 @@ function personName(conversation: any, lead: any, customer: any) {
 
 function channelLabel(value: unknown) {
   const channel = String(value || "CRM").toLowerCase();
-  return channel === "instagram" ? "Instagram" : channel.toUpperCase();
+  if (channel === "instagram") return "Instagram";
+  if (channel === "whatsapp") return "WhatsApp";
+  return channel.toUpperCase();
 }
 
 function workingStatus(conversation: any) {

@@ -87,6 +87,7 @@ function channelLabel(
   if (normalized === "instagram") return "INSTAGRAM";
   if (normalized === "sms") return "SMS";
   if (normalized === "email") return "EMAIL";
+  if (normalized === "whatsapp") return "WHATSAPP";
 
   return normalized
     ? normalized.toUpperCase()
@@ -907,6 +908,7 @@ export default async function CrmInboxPage({
             "sms",
             "email",
             "instagram",
+              "whatsapp",
           ].includes(
             String(
               item.channel || "",
@@ -929,6 +931,7 @@ export default async function CrmInboxPage({
     "sms",
     "email",
     "instagram",
+    "whatsapp",
   ].includes(
     replyChannel,
   );
