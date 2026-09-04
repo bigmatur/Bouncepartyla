@@ -1,3 +1,33 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  color-scheme: light;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+html {
+  scroll-behavior: smooth;
+  background: #f7f3ec;
+}
+
+body {
+  margin: 0;
+  background: #f7f3ec;
+  color: #1c1b18;
+  font-family: Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: #d9c7b2;
+  color: #1c1b18;
+}
+
+button,
+a,
+input {
+  -webkit-tap-highlight-color: transparent;
+}
