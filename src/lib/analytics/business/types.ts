@@ -395,6 +395,7 @@ export type BusinessMarketingInsights = {
     campaignRevenueAttributionAvailable: boolean;
     roasAvailable: boolean;
     reason: string;
+    instagramLeads: number;
     attributedLeads: number;
     attributionCoveragePct: number;
     matchedAdIds: number;

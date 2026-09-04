@@ -530,6 +530,7 @@ export function calculateBusinessMarketing(params: {
       campaignRevenueAttributionAvailable,
       roasAvailable,
       reason: attributionReason,
+      instagramLeads: instagramLeadCount,
       attributedLeads,
       attributionCoveragePct,
       matchedAdIds: matchedAdIds.size,

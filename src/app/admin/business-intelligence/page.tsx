@@ -1228,6 +1228,106 @@ export default async function BusinessIntelligencePage({
               </div>
 
               <div className="rounded-[22px] border border-[#eadfd1] bg-white p-4 shadow-[0_8px_28px_rgba(45,36,25,.04)] sm:rounded-[26px] sm:p-5">
+                <div className="text-[10px] font-bold uppercase tracking-[0.15em] text-[#a27742]">
+                  Marketing funnel
+                </div>
+                <h2 className="mt-1 text-lg font-bold text-[#28231f]">
+                  Meta → CRM → Booking → Revenue
+                </h2>
+                <p className="mt-1 text-xs leading-5 text-[#81766c]">
+                  Selected-period Instagram lead cohort with first-touch Meta attribution and linked internal booking revenue.
+                </p>
+
+                <div className="mt-4 space-y-2.5">
+                  <div className="rounded-xl border border-[#eee5dc] bg-[#fcfaf7] px-3 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#85796d]">
+                          Meta messages
+                        </div>
+                        <div className="mt-1 text-lg font-bold text-[#2d2a28]">
+                          {marketingSnapshot.metaAds.current?.messagingConversations.toLocaleString("en-US") || "0"}
+                        </div>
+                      </div>
+                      <div className="text-right text-[11px] text-[#81766c]">
+                        Meta-reported
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-[#eee5dc] bg-[#fcfaf7] px-3 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#85796d]">
+                          Instagram CRM leads
+                        </div>
+                        <div className="mt-1 text-lg font-bold text-[#2d2a28]">
+                          {marketingSnapshot.attribution.instagramLeads.toLocaleString("en-US")}
+                        </div>
+                      </div>
+                      <div className="text-right text-[11px] text-[#81766c]">
+                        Internal CRM
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-[#eee5dc] bg-[#fcfaf7] px-3 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#85796d]">
+                          Ad-attributed leads
+                        </div>
+                        <div className="mt-1 text-lg font-bold text-[#2d2a28]">
+                          {marketingSnapshot.attribution.attributedLeads.toLocaleString("en-US")}
+                        </div>
+                      </div>
+                      <div className="text-right text-[11px] font-semibold text-[#6f655c]">
+                        {percent(marketingSnapshot.attribution.attributionCoveragePct)} coverage
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-[#eee5dc] bg-[#fcfaf7] px-3 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#85796d]">
+                          Linked revenue bookings
+                        </div>
+                        <div className="mt-1 text-lg font-bold text-[#2d2a28]">
+                          {marketingSnapshot.attribution.matchedLinkedRevenueBookings.toLocaleString("en-US")}
+                        </div>
+                      </div>
+                      <div className="text-right text-[11px] text-[#81766c]">
+                        CRM → booking
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-[#eee5dc] bg-[#fcfaf7] px-3 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#85796d]">
+                          Attributed booked revenue
+                        </div>
+                        <div className="mt-1 text-lg font-bold text-[#2d2a28]">
+                          {money(marketingSnapshot.attribution.matchedBookedRevenue)}
+                        </div>
+                      </div>
+                      <div className="text-right text-[11px] font-bold text-[#2d2a28]">
+                        {marketingSnapshot.attribution.roas === null
+                          ? "ROAS —"
+                          : `${marketingSnapshot.attribution.roas.toFixed(2)}x ROAS`}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3 rounded-xl bg-[#faf7f3] px-3 py-2 text-[11px] leading-5 text-[#81766c]">
+                  Meta messaging conversations and CRM leads are different systems and should not be treated as a strict one-to-one conversion rate. The lower funnel becomes reliable as Instagram referral capture and lead-to-booking linkage coverage increase.
+                </div>
+              </div>
+
+              <div className="rounded-[22px] border border-[#eadfd1] bg-white p-4 shadow-[0_8px_28px_rgba(45,36,25,.04)] sm:rounded-[26px] sm:p-5">
                 <div className="text-[10px] font-bold uppercase tracking-[0.15em] text-[#a27742]">Marketing signals</div>
                 <h2 className="mt-1 text-lg font-bold text-[#28231f]">Deterministic diagnostics</h2>
                 <div className="mt-4 space-y-2.5">
