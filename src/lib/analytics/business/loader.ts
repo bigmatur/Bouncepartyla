@@ -664,12 +664,12 @@ async function loadMarketingLeadDataset(
   const [currentResult, previousResult] = await Promise.all([
     supabase
       .from("booking_leads")
-      .select("id, source, status, booking_id, created_at")
+      .select("id, source, status, booking_id, created_at, customer_name, customer_email, customer_phone, instagram_username")
       .gte("created_at", currentFromTs)
       .lte("created_at", currentToTs),
     supabase
       .from("booking_leads")
-      .select("id, source, status, booking_id, created_at")
+      .select("id, source, status, booking_id, created_at, customer_name, customer_email, customer_phone, instagram_username")
       .gte("created_at", previousFromTs)
       .lte("created_at", previousToTs),
   ]);

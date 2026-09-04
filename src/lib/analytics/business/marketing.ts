@@ -33,6 +33,33 @@ function normalizeSource(value: unknown) {
   return String(value || "other").trim().toLowerCase() || "other";
 }
 
+function marketingLeadDisplayName(lead: any) {
+  const customerName = String(lead?.customer_name || "").trim();
+  if (customerName) return customerName;
+
+  const instagramUsername = String(lead?.instagram_username || "")
+    .trim()
+    .replace(/^@+/, "");
+  if (instagramUsername) return `@${instagramUsername}`;
+
+  return "Unknown lead";
+}
+
+function marketingLeadContactLabel(lead: any) {
+  const instagramUsername = String(lead?.instagram_username || "")
+    .trim()
+    .replace(/^@+/, "");
+  if (instagramUsername) return `@${instagramUsername}`;
+
+  const email = String(lead?.customer_email || "").trim();
+  if (email) return email;
+
+  const phone = String(lead?.customer_phone || "").trim();
+  if (phone) return phone;
+
+  return "No contact identity";
+}
+
 function leadSourceRows(leads: any[], bookings: any[]): BusinessMarketingLeadSourceRow[] {
   const bookingById = new Map<string, any>();
   for (const booking of bookings) {
@@ -454,6 +481,67 @@ export function calculateBusinessMarketing(params: {
         a.campaignName.localeCompare(b.campaignName),
     );
 
+  const missingAdIdDrillDown: BusinessMarketingInsights["attribution"]["drillDown"]["missingAdId"] = [];
+  const unmatchedMetaAdDrillDown: BusinessMarketingInsights["attribution"]["drillDown"]["unmatchedMetaAd"] = [];
+  const noRevenueBookingDrillDown: BusinessMarketingInsights["attribution"]["drillDown"]["noRevenueBooking"] = [];
+
+  for (const lead of params.currentLeads) {
+    if (normalizeSource(lead?.source) !== "instagram") {
+      continue;
+    }
+
+    const leadId = String(lead?.id || "").trim();
+    if (!leadId) {
+      continue;
+    }
+
+    const attribution = attributionByLead.get(leadId);
+    const adId = String(attribution?.adId || "").trim();
+    const ad = adId ? adById.get(adId) : null;
+    const bookingId = String(lead?.booking_id || "").trim();
+    const booking = bookingId ? bookingById.get(bookingId) : null;
+
+    const baseRow = {
+      leadId,
+      customerName: marketingLeadDisplayName(lead),
+      contactLabel: marketingLeadContactLabel(lead),
+      createdAt: String(lead?.created_at || "").trim(),
+      status: String(lead?.status || "").trim() || "unknown",
+      bookingId,
+      bookingStatus: String(booking?.status || "").trim(),
+      adId,
+      adName: ad ? String(ad.adName || "").trim() || "Unnamed ad" : "",
+      campaignName: ad
+        ? String(ad.campaignName || "").trim() || "Unnamed campaign"
+        : "",
+    };
+
+    if (!attribution) {
+      missingAdIdDrillDown.push(baseRow);
+      continue;
+    }
+
+    if (!ad) {
+      unmatchedMetaAdDrillDown.push(baseRow);
+      continue;
+    }
+
+    if (!booking || !isBusinessRevenueBooking(booking)) {
+      noRevenueBookingDrillDown.push(baseRow);
+    }
+  }
+
+  const newestFirst = (
+    a: BusinessMarketingInsights["attribution"]["drillDown"]["missingAdId"][number],
+    b: BusinessMarketingInsights["attribution"]["drillDown"]["missingAdId"][number],
+  ) =>
+    String(b.createdAt || "").localeCompare(String(a.createdAt || "")) ||
+    a.customerName.localeCompare(b.customerName);
+
+  missingAdIdDrillDown.sort(newestFirst);
+  unmatchedMetaAdDrillDown.sort(newestFirst);
+  noRevenueBookingDrillDown.sort(newestFirst);
+
   const attributedLeads = attributionByLead.size;
   const instagramLeadCount = currentInstagramLeadIds.size;
   const attributionCoveragePct =
@@ -579,6 +667,11 @@ export function calculateBusinessMarketing(params: {
       roas,
       campaigns: attributionCampaigns,
       ads: attributionAds,
+      drillDown: {
+        missingAdId: missingAdIdDrillDown,
+        unmatchedMetaAd: unmatchedMetaAdDrillDown,
+        noRevenueBooking: noRevenueBookingDrillDown,
+      },
     },
     signals,
   };

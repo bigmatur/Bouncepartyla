@@ -370,6 +370,19 @@ export type BusinessMarketingAttributionAdRow = {
   attributedRoas: number | null;
 };
 
+export type BusinessMarketingAttributionDrillDownRow = {
+  leadId: string;
+  customerName: string;
+  contactLabel: string;
+  createdAt: string;
+  status: string;
+  bookingId: string;
+  bookingStatus: string;
+  adId: string;
+  adName: string;
+  campaignName: string;
+};
+
 export type BusinessMarketingInsights = {
   metaAds: BusinessMetaAdsSnapshot;
   comparisons: {
@@ -405,6 +418,11 @@ export type BusinessMarketingInsights = {
     roas: number | null;
     campaigns: BusinessMarketingAttributionCampaignRow[];
     ads: BusinessMarketingAttributionAdRow[];
+    drillDown: {
+      missingAdId: BusinessMarketingAttributionDrillDownRow[];
+      unmatchedMetaAd: BusinessMarketingAttributionDrillDownRow[];
+      noRevenueBooking: BusinessMarketingAttributionDrillDownRow[];
+    };
   };
   signals: BusinessSignal[];
 };
