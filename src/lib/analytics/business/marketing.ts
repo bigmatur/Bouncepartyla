@@ -504,6 +504,44 @@ export function calculateBusinessMarketing(params: {
       `${attributedLeads} of ${instagramLeadCount} Instagram leads (${attributionCoveragePct.toFixed(1)}%) have first-touch Meta ad attribution. ${matchedRevenueBookingIds.size} linked revenue booking${matchedRevenueBookingIds.size === 1 ? "" : "s"} matched ${matchedAdIds.size} Meta ad${matchedAdIds.size === 1 ? "" : "s"}.`;
   }
 
+  if (instagramLeadCount > 0 && attributionCoveragePct < 80) {
+    signals.push({
+      id: "marketing-attribution-capture-coverage",
+      type: "marketing_attribution_quality",
+      severity: "warning",
+      title: `Ad attribution coverage ${attributionCoveragePct.toFixed(1)}%`,
+      explanation: `${attributedLeads} of ${instagramLeadCount} Instagram CRM leads created in the selected period have a captured first-touch Meta ad ID. Campaign and ad revenue reporting is incomplete until this coverage improves.`,
+      currentValue: attributionCoveragePct,
+    });
+  }
+
+  const unmatchedMetaInsightLeadCount = [...attributionByLead.values()].filter((row) => {
+    const adId = String(row?.adId || "").trim();
+    return Boolean(adId) && !adById.has(adId);
+  }).length;
+
+  if (unmatchedMetaInsightLeadCount > 0) {
+    signals.push({
+      id: "marketing-attribution-meta-match-gap",
+      type: "marketing_attribution_quality",
+      severity: "warning",
+      title: `${unmatchedMetaInsightLeadCount} attributed lead${unmatchedMetaInsightLeadCount === 1 ? "" : "s"} missing from Meta Insights`,
+      explanation: `${unmatchedMetaInsightLeadCount} Instagram CRM lead${unmatchedMetaInsightLeadCount === 1 ? "" : "s"} have captured Meta ad IDs that were not returned by Meta Insights for the selected period. Their revenue cannot be assigned to an ad or campaign in this report.`,
+      currentValue: unmatchedMetaInsightLeadCount,
+    });
+  }
+
+  if (matchedAdIds.size > 0 && matchedRevenueBookingIds.size === 0) {
+    signals.push({
+      id: "marketing-attribution-booking-gap",
+      type: "marketing_attribution_quality",
+      severity: "warning",
+      title: "Attributed leads have no revenue booking yet",
+      explanation: `${attributedLeads} attributed lead${attributedLeads === 1 ? "" : "s"} include ${matchedAdIds.size} Meta-matched ad${matchedAdIds.size === 1 ? "" : "s"}, but none currently resolve to a linked booking in a revenue status.`,
+      currentValue: 0,
+    });
+  }
+
   if (currentLeadCount > 0 && leadLinkageCoveragePct < 80) {
     signals.push({
       id: "marketing-lead-linkage-coverage",
