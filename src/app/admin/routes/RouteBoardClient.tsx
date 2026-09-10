@@ -85,6 +85,20 @@ type RouteStop = {
     teardownMinutes: number;
   }>;
 };
+type RouteWeatherForecast = {
+  temperatureF: number | null;
+  condition: string | null;
+  windMph: number | null;
+  gustMph: number | null;
+  forecastTime: string | null;
+};
+
+type WeatherWindLevel = "none" | "yellow" | "orange" | "red";
+
+type WeatherRisk = {
+  windLevel: WeatherWindLevel;
+  rain: boolean;
+};
 
 function bookingRouteDurations(stop: RouteStop, bookingItems: any[]) {
   return resolveBookingRouteDurations(bookingItems, {
@@ -940,6 +954,93 @@ function bookingAddress(stop: RouteStop) {
   return address || "No address";
 }
 
+function finiteNumber(value: unknown) {
+  if (
+    value === null ||
+    value === undefined ||
+    (typeof value === "string" && value.trim() === "")
+  ) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getWeatherRisk(params: {
+  windMph: number | null;
+  gustMph: number | null;
+  condition: string | null;
+}): WeatherRisk {
+  const speedValues = [params.windMph, params.gustMph].filter(
+    (value): value is number => typeof value === "number" && Number.isFinite(value),
+  );
+
+  const riskWind = speedValues.length > 0 ? Math.max(...speedValues) : null;
+
+  let windLevel: WeatherWindLevel = "none";
+
+  if (riskWind != null) {
+    if (riskWind >= 24) {
+      windLevel = "red";
+    } else if (riskWind >= 21) {
+      windLevel = "orange";
+    } else if (riskWind >= 18) {
+      windLevel = "yellow";
+    }
+  }
+
+  const normalizedCondition = String(params.condition || "").toLowerCase();
+
+  const rain = [
+    "thunderstorms",
+    "thunderstorm",
+    "showers",
+    "drizzle",
+    "rain",
+  ].some((keyword) => normalizedCondition.includes(keyword));
+
+  return { windLevel, rain };
+}
+
+function compactWeather(stopWeather: RouteWeatherForecast | null | undefined) {
+  if (!stopWeather) {
+    return null;
+  }
+
+  const temperature = finiteNumber(stopWeather.temperatureF);
+  const wind = finiteNumber(stopWeather.windMph);
+  const gust = finiteNumber(stopWeather.gustMph);
+  const condition = String(stopWeather.condition || "").trim() || null;
+
+  const primaryParts = [
+    temperature != null ? `${Math.round(temperature)}°F` : null,
+    condition,
+  ].filter(Boolean) as string[];
+
+  const windParts = [
+    wind != null ? `Wind ${Math.round(wind)} mph` : null,
+    gust != null ? `Gusts ${Math.round(gust)} mph` : null,
+  ].filter(Boolean) as string[];
+
+  const windText = windParts.join(" · ");
+  const risk = getWeatherRisk({
+    windMph: wind,
+    gustMph: gust,
+    condition,
+  });
+
+  if (primaryParts.length < 1 && !windText && !risk.rain) {
+    return null;
+  }
+
+  return {
+    primary: primaryParts.join(" · "),
+    windText,
+    risk,
+  };
+}
+
 function componentsForBooking(
   bookingId: string | null,
   checklistItems: ChecklistItem[],
@@ -1180,6 +1281,7 @@ function WindowEditor({
 
 function SortableStopCard({
   stop,
+  weatherByStopId,
   sequenceNumber,
   numberTone,
   liveTimingByStopId,
@@ -1196,6 +1298,7 @@ function SortableStopCard({
   canPersistBoardOrderOnSave,
 }: {
   stop: RouteStop;
+  weatherByStopId: Record<string, RouteWeatherForecast | null>;
   sequenceNumber: number | null;
   numberTone: "delivery" | "pickup" | "other";
   liveTimingByStopId: Map<string, LiveTiming>;
@@ -1233,6 +1336,7 @@ function SortableStopCard({
   const customer = bookingCustomer(stop);
   const phone = phoneUrl(customer.phone);
   const url = mapUrl(stop);
+  const weather = compactWeather(weatherByStopId[stop.id]);
   const components = componentsForBooking(stop.booking_id, checklistItems);
   const options = optionsForBooking(stop.booking_id, modifiers);
   const referenceDateForBookingStop =
@@ -1782,6 +1886,60 @@ const effectiveDeliveryDurationMin =
               <span className="block max-w-full min-w-0 flex-1 truncate text-xs font-medium text-[#7a736c] sm:whitespace-normal sm:text-sm sm:font-normal sm:text-[#8c857d]">{bookingAddress(stop)}</span>
             </div>
           )}
+
+          {!isBreakCard && weather ? (
+            <div className="mt-1 space-y-0.5 text-xs leading-4 text-[#6c6258]">
+              {weather.primary ? (
+                <div className="truncate font-semibold text-[#5f5750]">{weather.primary}</div>
+              ) : null}
+
+              {weather.windText || weather.risk.rain ? (
+                <div
+                  className={[
+                    "flex min-w-0 flex-wrap items-center gap-1.5",
+                    weather.risk.windLevel === "yellow"
+                      ? "text-amber-700"
+                      : weather.risk.windLevel === "orange"
+                        ? "text-orange-700"
+                        : weather.risk.windLevel === "red"
+                          ? "text-red-700 font-semibold"
+                          : weather.risk.rain
+                            ? "text-sky-700"
+                            : "text-[#7a736c]",
+                  ].join(" ")}
+                >
+                  {weather.risk.windLevel !== "none" ? (
+                    <span
+                      className={[
+                        "inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] ring-1",
+                        weather.risk.windLevel === "yellow"
+                          ? "bg-amber-50 text-amber-700 ring-amber-200"
+                          : weather.risk.windLevel === "orange"
+                            ? "bg-orange-50 text-orange-700 ring-orange-200"
+                            : "bg-red-50 text-red-700 ring-red-200",
+                      ].join(" ")}
+                    >
+                      {weather.risk.windLevel === "red"
+                        ? "HIGH WIND"
+                        : weather.risk.windLevel === "orange"
+                          ? "WIND 21+"
+                          : "WIND 18+"}
+                    </span>
+                  ) : null}
+
+                  {weather.risk.rain ? (
+                    <span className="inline-flex shrink-0 items-center rounded-full bg-sky-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-sky-700 ring-1 ring-sky-200">
+                      RAIN
+                    </span>
+                  ) : null}
+
+                  {weather.windText ? (
+                    <span className="truncate">{weather.windText}</span>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="mt-2 grid w-full min-w-0 max-w-full grid-cols-[repeat(3,minmax(0,1fr))] gap-2 overflow-hidden sm:mt-1.5 sm:flex sm:flex-wrap sm:overflow-visible">
             {isBreakCard && (
@@ -2510,6 +2668,7 @@ type LiveDriverLocation = {
 
 export default function RouteBoardClient({
   stops,
+  weatherByStopId,
   drivers,
   checklistItems,
   modifiers,
@@ -2525,6 +2684,7 @@ export default function RouteBoardClient({
   liveDriverLocations = [],
 }: {
   stops: RouteStop[];
+  weatherByStopId: Record<string, RouteWeatherForecast | null>;
   drivers: Driver[];
   checklistItems: ChecklistItem[];
   modifiers: BookingModifier[];
@@ -4699,6 +4859,7 @@ const effectiveLocked =
                   <SortableStopCard
                     key={stop.id}
                     stop={stop}
+                    weatherByStopId={weatherByStopId}
                     sequenceNumber={
                       isBreakRouteStop(stop)
                         ? null

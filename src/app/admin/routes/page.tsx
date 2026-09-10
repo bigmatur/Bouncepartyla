@@ -1,5 +1,10 @@
 import { createClient } from "@/lib/supabase/server";
 import { getUnifiedAccess } from "@/lib/auth/access";
+import {
+  getRouteWeatherForecast,
+  routeLocalDateTimeToDate,
+  type RouteWeatherForecast,
+} from "@/lib/maps/google-weather";
 import { redirect } from "next/navigation";
 import RouteBoardClient from "./RouteBoardClient";
 
@@ -57,6 +62,77 @@ function isMissingArchivedAtError(error: any) {
     code === "42703" ||
     (message.includes("archived_at") && message.includes("bookings"))
   );
+}
+
+function one(value: any) {
+  return Array.isArray(value) ? value[0] || null : value || null;
+}
+
+function normalizedTimeValue(value: string | null | undefined) {
+  const match = String(value || "")
+    .trim()
+    .match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+
+  if (!match) {
+    return null;
+  }
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3] || 0);
+
+  if (
+    !Number.isFinite(hours) ||
+    !Number.isFinite(minutes) ||
+    !Number.isFinite(seconds) ||
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59 ||
+    seconds < 0 ||
+    seconds > 59
+  ) {
+    return null;
+  }
+
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(
+    seconds,
+  ).padStart(2, "0")}`;
+}
+
+function stopWeatherAddress(stop: any) {
+  const booking = one(stop.bookings);
+
+  const stopAddress = String(stop.address || "").trim();
+  const stopCity = String(stop.city || "").trim();
+  const stopState = String(stop.state || "").trim();
+  const stopZip = String(stop.zip || "").trim();
+
+  if (stopAddress && stopCity && stopState && stopZip) {
+    return `${stopAddress}, ${stopCity}, ${stopState}, ${stopZip}`;
+  }
+
+  const bookingAddress = String(booking?.setup_address || "").trim();
+  const bookingCity = String(booking?.setup_city || "").trim();
+  const bookingState = String(booking?.setup_state || "").trim();
+  const bookingZip = String(booking?.setup_zip || "").trim();
+
+  if (bookingAddress && bookingCity && bookingState && bookingZip) {
+    return `${bookingAddress}, ${bookingCity}, ${bookingState}, ${bookingZip}`;
+  }
+
+  return null;
+}
+
+function weatherDebugLog(context: string, details?: string) {
+  if (process.env.NODE_ENV === "production") return;
+
+  if (details) {
+    console.warn(`[RouteBoardWeather] ${context}: ${details}`);
+    return;
+  }
+
+  console.warn(`[RouteBoardWeather] ${context}`);
 }
 
 async function fetchRouteStopsForRoutes(
@@ -696,6 +772,67 @@ export default async function AdminRoutesPage({
     };
   });
 
+  const weatherCache = new Map<
+    string,
+    Promise<RouteWeatherForecast | null>
+  >();
+
+  const weatherEntries = await Promise.all(
+    stopsWithCompleteDurations.map(async (stop: any) => {
+      const stopId = String(stop?.id || "").trim();
+
+      if (!stopId) {
+        return ["", null] as const;
+      }
+
+      const booking = one(stop.bookings);
+      const eventDate = String(booking?.event_date || "").trim();
+      const eventStartTime = normalizedTimeValue(booking?.event_start_time);
+      const address = stopWeatherAddress(stop);
+
+      if (!eventDate || !eventStartTime || !address) {
+        return [stopId, null] as const;
+      }
+
+      let targetTime: Date;
+
+      try {
+        targetTime = routeLocalDateTimeToDate(eventDate, eventStartTime);
+      } catch (error) {
+        weatherDebugLog(
+          `Invalid event time for stop ${stopId}`,
+          error instanceof Error ? error.message : String(error),
+        );
+        return [stopId, null] as const;
+      }
+
+      const cacheKey = `${address.toLowerCase()}|${targetTime.toISOString()}`;
+
+      if (!weatherCache.has(cacheKey)) {
+        weatherCache.set(
+          cacheKey,
+          getRouteWeatherForecast({
+            address,
+            targetTime,
+          }).catch((error) => {
+            weatherDebugLog(
+              `Weather lookup failed for stop ${stopId}`,
+              error instanceof Error ? error.message : String(error),
+            );
+            return null;
+          }),
+        );
+      }
+
+      const weather = await weatherCache.get(cacheKey)!;
+
+      return [stopId, weather] as const;
+    }),
+  );
+
+  const weatherByStopId: Record<string, RouteWeatherForecast | null> =
+    Object.fromEntries(weatherEntries.filter(([stopId]) => Boolean(stopId)));
+
   const bookingRouteStopsResult =
     bookingIds.length > 0
       ? await supabase
@@ -986,6 +1123,7 @@ export default async function AdminRoutesPage({
 
       <RouteBoardClient
         stops={stopsWithCompleteDurations}
+        weatherByStopId={weatherByStopId}
         drivers={drivers}
         checklistItems={checklistItems}
         modifiers={modifiers}
