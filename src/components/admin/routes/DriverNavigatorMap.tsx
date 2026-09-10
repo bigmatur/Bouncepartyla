@@ -202,7 +202,7 @@ export default function DriverNavigatorMap({
     <div className="relative h-full w-full bg-[#d9d4ca]">
       <div ref={mapRef} className="absolute inset-0 h-full w-full" />
 
-      <div className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2 rounded-full bg-[#23313f]/90 px-4 py-2 text-xs font-semibold text-white shadow-lg backdrop-blur">
+      <div className="pointer-events-none absolute left-1/2 top-7 z-10 -translate-x-1/2 rounded-full bg-[#23313f]/90 px-4 py-2 text-xs font-semibold text-white shadow-lg backdrop-blur">
         Live GPS navigation
       </div>
 

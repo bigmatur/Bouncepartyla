@@ -278,6 +278,11 @@ function phoneUrl(phone: string | null | undefined) {
   return cleanPhone ? `tel:${cleanPhone}` : "";
 }
 
+function smsUrl(phone: string | null | undefined) {
+  const cleanPhone = String(phone || "").replace(/[^\d+]/g, "");
+  return cleanPhone ? `sms:${cleanPhone}` : "";
+}
+
 function addressText(stop: DriverStop) {
   return (
     [stop.address, stop.city, stop.state, stop.zip].filter(Boolean).join(", ") ||
@@ -315,7 +320,18 @@ function routeTimeLabel(stop: DriverStop) {
   const start = formatTime(stop.scheduled_start_time);
   const end = stop.scheduled_end_time ? formatTime(stop.scheduled_end_time) : "";
 
-  return `${label}: ${routeDate} · ${start}${end ? ` — ${end}` : ""}`;
+  const hasStart = Boolean(timeValue(stop.scheduled_start_time));
+  const hasEnd = Boolean(timeValue(stop.scheduled_end_time));
+
+  const timeLabel = hasStart
+    ? hasEnd
+      ? `${start} — ${end}`
+      : start
+    : hasEnd
+      ? end
+      : "Any time";
+
+  return `${label}: ${routeDate} · ${timeLabel}`;
 }
 
 function mapAddress(stop: DriverStop | null) {
@@ -427,6 +443,16 @@ export default function DriverRouteApp({
   showOwnWorkingTime = false,
 }: Props) {
   const routeStops = useMemo(() => {
+    const sortOrderValue = (stop: DriverStop) => {
+      const value = Number(stop.sort_order);
+
+      if (!Number.isFinite(value)) {
+        return Number.MAX_SAFE_INTEGER;
+      }
+
+      return value;
+    };
+
     const sortValue = (stop: DriverStop) => {
       const date = String(stop.stop_date || selectedDate || "").trim();
       const startTime = timeValue(stop.scheduled_start_time);
@@ -440,20 +466,18 @@ export default function DriverRouteApp({
     };
 
     return [...stops].sort((leftStop, rightStop) => {
+      const leftOrder = sortOrderValue(leftStop);
+      const rightOrder = sortOrderValue(rightStop);
+
+      if (leftOrder !== rightOrder) {
+        return leftOrder - rightOrder;
+      }
+
       const leftValue = sortValue(leftStop);
       const rightValue = sortValue(rightStop);
 
       if (leftValue !== rightValue) {
         return leftValue - rightValue;
-      }
-
-      const leftOrder = Number(leftStop.sort_order ?? Number.MAX_SAFE_INTEGER);
-      const rightOrder = Number(
-        rightStop.sort_order ?? Number.MAX_SAFE_INTEGER,
-      );
-
-      if (leftOrder !== rightOrder) {
-        return leftOrder - rightOrder;
       }
 
       return String(leftStop.id).localeCompare(String(rightStop.id));
@@ -504,6 +528,43 @@ export default function DriverRouteApp({
     "idle" | "loading" | "ready" | "denied" | "error"
   >("idle");
   const [isPending, startTransition] = useTransition();
+  const [mapSoundMuted, setMapSoundMuted] = useState(false);
+  const [carPlayMode, setCarPlayMode] = useState(false);
+
+  useEffect(() => {
+    try {
+      setMapSoundMuted(window.localStorage.getItem("driverMapSoundMuted") === "1");
+      setCarPlayMode(window.localStorage.getItem("driverCarPlayMode") === "1");
+    } catch {
+      // Ignore localStorage read errors.
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("driverMapSoundMuted", mapSoundMuted ? "1" : "0");
+    } catch {
+      // Ignore localStorage write errors.
+    }
+
+    if (typeof document !== "undefined") {
+      document.querySelectorAll("audio, video").forEach((media) => {
+        (media as HTMLAudioElement | HTMLVideoElement).muted = mapSoundMuted;
+      });
+    }
+
+    if (mapSoundMuted && typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+  }, [mapSoundMuted]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("driverCarPlayMode", carPlayMode ? "1" : "0");
+    } catch {
+      // Ignore localStorage write errors.
+    }
+  }, [carPlayMode]);
 
   const activeStop = routeStops[activeIndex] || null;
   const nextUncompletedIndex = routeStops.findIndex(
@@ -817,7 +878,12 @@ export default function DriverRouteApp({
     navigableStops.every((stop) => isCompleted(stop));
 
   return (
-    <div className="relative h-[100dvh] min-h-screen overflow-hidden bg-[#111827]">
+    <div
+      className={[
+        "relative h-[100dvh] min-h-screen overflow-hidden bg-[#111827]",
+        carPlayMode ? "text-[1.04rem]" : "",
+      ].join(" ")}
+    >
       <div className="absolute inset-0">
       {isNavigatorMode ? (
   driverLocation && mapDestination ? (
@@ -909,6 +975,7 @@ export default function DriverRouteApp({
                 onClick={requestDriverLocation}
                 className={[
                   "rounded-full px-4 py-2 text-xs font-semibold text-white shadow-[0_10px_25px_rgba(0,0,0,0.22)] ring-1 ring-white/15 backdrop-blur transition",
+                  carPlayMode ? "px-5 py-3 text-sm" : "",
                   isNavigatorMode ? "bg-[#23313f]/85" : "bg-white/15",
                 ].join(" ")}
               >
@@ -921,9 +988,39 @@ export default function DriverRouteApp({
 
               <button
                 type="button"
+                onClick={() => setMapSoundMuted((value) => !value)}
+                className={[
+                  "rounded-full px-3 py-2 text-xs font-semibold text-white shadow-[0_10px_25px_rgba(0,0,0,0.22)] ring-1 ring-white/15 backdrop-blur transition",
+                  carPlayMode ? "px-4 py-3 text-sm" : "",
+                  isNavigatorMode ? "bg-[#23313f]/85" : "bg-white/15",
+                ].join(" ")}
+                aria-label={mapSoundMuted ? "Unmute map" : "Mute map"}
+              >
+                {mapSoundMuted ? "🔇" : "🔊"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setCarPlayMode((value) => !value)}
+                className={[
+                  "rounded-full px-3 py-2 text-xs font-semibold text-white shadow-[0_10px_25px_rgba(0,0,0,0.22)] ring-1 ring-white/15 backdrop-blur transition",
+                  carPlayMode
+                    ? "bg-[#c9964f]"
+                    : isNavigatorMode
+                      ? "bg-[#23313f]/85"
+                      : "bg-white/15",
+                ].join(" ")}
+                aria-label="Toggle car mode"
+              >
+                Car
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setFiltersOpen(true)}
                 className={[
                   "rounded-full px-4 py-2 text-xs font-semibold text-white shadow-[0_10px_25px_rgba(0,0,0,0.22)] ring-1 ring-white/15 backdrop-blur transition",
+                  carPlayMode ? "px-5 py-3 text-sm" : "",
                   isNavigatorMode ? "bg-[#23313f]/85" : "bg-white/15",
                 ].join(" ")}
               >
@@ -1256,12 +1353,27 @@ export default function DriverRouteApp({
                                 </div>
 
                                 {customerPhone(activeStop) && (
-                                  <a
-                                    href={phoneUrl(customerPhone(activeStop))}
-                                    className="mt-3 block rounded-full bg-emerald-600 px-4 py-2 text-center text-xs font-semibold text-white"
-                                  >
-                                    Call {customerPhone(activeStop)}
-                                  </a>
+                                  <div className="mt-3 flex items-center gap-2">
+                                    <a
+                                      href={phoneUrl(customerPhone(activeStop))}
+                                      className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-600 text-base text-white"
+                                      aria-label="Call customer"
+                                    >
+                                      📞
+                                    </a>
+
+                                    <a
+                                      href={smsUrl(customerPhone(activeStop))}
+                                      className="flex h-10 w-10 items-center justify-center rounded-full bg-[#23313f] text-base text-white"
+                                      aria-label="Send SMS to customer"
+                                    >
+                                      💬
+                                    </a>
+
+                                    <span className="truncate text-xs font-semibold text-[#6c6258]">
+                                      {customerPhone(activeStop)}
+                                    </span>
+                                  </div>
                                 )}
                               </>
                             )}
@@ -1622,12 +1734,23 @@ export default function DriverRouteApp({
                 </div>
 
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold text-white">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0 truncate text-sm font-semibold text-white">
+                      {customerName(activeStop)}
+                    </div>
+                    <div className="min-w-0 max-w-[48%] truncate text-[10px] text-white/70">
+                      {addressText(activeStop)}
+                    </div>
+                  </div>
+
+                  <div className="truncate text-xs text-white/80">
                     {mainProductName(activeStop)}
                   </div>
-                  <div className="truncate text-xs text-white/70">
+
+                  <div className="truncate text-[11px] text-white/70">
                     Navigation mode · Origin:{" "}
                     {driverLocation ? "Driver GPS" : "Warehouse / previous stop"}
+                    {mapSoundMuted ? " · Sound off" : ""}
                   </div>
                 </div>
 
@@ -1900,12 +2023,27 @@ export default function DriverRouteApp({
                                 </a>
                               )}
                               {phone && (
-                                <a
-                                  href={phoneHref}
-                                  className="rounded-full bg-emerald-600 px-4 py-2 text-center text-xs font-semibold text-white"
-                                >
-                                  Call {phone}
-                                </a>
+                                <div className="flex items-center gap-2">
+                                  <a
+                                    href={phoneHref}
+                                    className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-600 text-base text-white"
+                                    aria-label="Call customer"
+                                  >
+                                    📞
+                                  </a>
+
+                                  <a
+                                    href={smsUrl(phone)}
+                                    className="flex h-10 w-10 items-center justify-center rounded-full bg-[#23313f] text-base text-white"
+                                    aria-label="Send SMS to customer"
+                                  >
+                                    💬
+                                  </a>
+
+                                  <span className="truncate text-xs font-semibold text-[#6c6258]">
+                                    {phone}
+                                  </span>
+                                </div>
                               )}
 
                               {hasCollect && (

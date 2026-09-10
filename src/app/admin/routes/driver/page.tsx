@@ -244,8 +244,8 @@ export default async function DriverRoutePage({
       .select(selectClause)
       .eq("stop_date", selectedDate)
       .in("stop_type", ["delivery", "pickup"])
-      .order("scheduled_start_time", { ascending: true })
       .order("sort_order", { ascending: true })
+      .order("scheduled_start_time", { ascending: true, nullsFirst: false })
       .order("created_at", { ascending: true });
 
     if (effectiveSelectedDriver) {
