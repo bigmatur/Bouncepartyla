@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useTransition,
 } from "react";
@@ -237,6 +238,57 @@ function timeFromAny(value: any) {
   if (!match) return "";
 
   return `${match[1]}:${match[2]}`;
+}
+
+function stopDateTimeStamp(stop: RouteStop, selectedDate: string) {
+  const date = String(stop.stop_date || selectedDate || "").slice(0, 10);
+  const start = timeValue(stop.scheduled_start_time);
+
+  if (!date || !start) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const stamp = Date.parse(`${date}T${start}:00`);
+  return Number.isFinite(stamp) ? stamp : Number.POSITIVE_INFINITY;
+}
+
+function sortStopsByScheduledTime(stops: RouteStop[], selectedDate: string) {
+  return [...stops].sort((left, right) => {
+    const leftStamp = stopDateTimeStamp(left, selectedDate);
+    const rightStamp = stopDateTimeStamp(right, selectedDate);
+
+    if (leftStamp !== rightStamp) {
+      return leftStamp - rightStamp;
+    }
+
+    const leftSort = Number(left.sort_order);
+    const rightSort = Number(right.sort_order);
+    const normalizedLeftSort = Number.isFinite(leftSort)
+      ? leftSort
+      : Number.MAX_SAFE_INTEGER;
+    const normalizedRightSort = Number.isFinite(rightSort)
+      ? rightSort
+      : Number.MAX_SAFE_INTEGER;
+
+    if (normalizedLeftSort !== normalizedRightSort) {
+      return normalizedLeftSort - normalizedRightSort;
+    }
+
+    const leftCreatedAt = Date.parse(String(left.created_at || ""));
+    const rightCreatedAt = Date.parse(String(right.created_at || ""));
+    const normalizedLeftCreatedAt = Number.isFinite(leftCreatedAt)
+      ? leftCreatedAt
+      : Number.MAX_SAFE_INTEGER;
+    const normalizedRightCreatedAt = Number.isFinite(rightCreatedAt)
+      ? rightCreatedAt
+      : Number.MAX_SAFE_INTEGER;
+
+    if (normalizedLeftCreatedAt !== normalizedRightCreatedAt) {
+      return normalizedLeftCreatedAt - normalizedRightCreatedAt;
+    }
+
+    return String(left.id).localeCompare(String(right.id));
+  });
 }
 
 function formatDate(value: string | null | undefined) {
@@ -2789,7 +2841,9 @@ export default function RouteBoardClient({
   const [selectedTimingFilter, setSelectedTimingFilter] = useState<
     "all" | "issues"
   >("all");
-  const [orderedStops, setOrderedStops] = useState<RouteStop[]>(stops);
+  const [orderedStops, setOrderedStops] = useState<RouteStop[]>(
+    sortStopsByScheduledTime(stops, selectedDate),
+  );
   const [manualAddress, setManualAddress] = useState("");
   const [manualCity, setManualCity] = useState("");
   const [manualState, setManualState] = useState("CA");
@@ -2813,8 +2867,46 @@ export default function RouteBoardClient({
   const [routeCalculationVersion, setRouteCalculationVersion] = useState(0);
 const [routeSaveError, setRouteSaveError] = useState("");
 const [isPending, startTransition] = useTransition();
+  const hasManualOrderRef = useRef(false);
+  const previousSelectedDateRef = useRef(selectedDate);
   useEffect(() => {
-    setOrderedStops(stops);
+    const dateChanged = previousSelectedDateRef.current !== selectedDate;
+    previousSelectedDateRef.current = selectedDate;
+
+    if (dateChanged) {
+      hasManualOrderRef.current = false;
+    }
+
+    setOrderedStops((currentOrderedStops) => {
+      if (!hasManualOrderRef.current) {
+        return sortStopsByScheduledTime(stops, selectedDate);
+      }
+
+      const freshById = new Map(
+        stops.map((stop) => [String(stop.id), stop]),
+      );
+      const nextOrderedStops: RouteStop[] = [];
+      const seen = new Set<string>();
+
+      currentOrderedStops.forEach((stop) => {
+        const id = String(stop.id);
+        const fresh = freshById.get(id);
+
+        if (!fresh || seen.has(id)) {
+          return;
+        }
+
+        nextOrderedStops.push(fresh);
+        seen.add(id);
+      });
+
+      const newStops = sortStopsByScheduledTime(
+        stops.filter((stop) => !seen.has(String(stop.id))),
+        selectedDate,
+      );
+
+      return [...nextOrderedStops, ...newStops];
+    });
     setTimingDraftByStopId({});
     setDriverDraftByStopId({});
   }, [stops, selectedDate]);
@@ -4053,6 +4145,7 @@ const effectiveLocked =
         : item,
     );
 
+    hasManualOrderRef.current = true;
     setOrderedStops(reorderedItems);
     setRouteSegmentsByChainId({});
 
@@ -4120,7 +4213,8 @@ const effectiveLocked =
 }
 
   function resetRouteBoardChanges() {
-    setOrderedStops(stops);
+    hasManualOrderRef.current = false;
+    setOrderedStops(sortStopsByScheduledTime(stops, selectedDate));
     setTimingDraftByStopId({});
     setDriverDraftByStopId({});
     setRouteSegmentsByChainId({});
