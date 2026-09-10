@@ -25,6 +25,21 @@ function isMissingTableError(error: any) {
   );
 }
 
+function isMissingColumnError(error: any, tableName: string, columnName: string) {
+  const message = String(error?.message || "").toLowerCase();
+  const code = String(error?.code || "").toLowerCase();
+
+  if (code === "42703") {
+    return true;
+  }
+
+  return (
+    message.includes("column") &&
+    message.includes(String(columnName).toLowerCase()) &&
+    message.includes(String(tableName).toLowerCase())
+  );
+}
+
 function getProductCategoryName(categories: any[], categoryId: string | null) {
   if (!categoryId) return null;
 
@@ -66,18 +81,20 @@ export default async function AccountBookNowPage({
       ? customerProfileResult.data[0]
       : customerProfileResult.data;
 
-  const [productsResult, categoriesResult, productModifierGroupsResult, modifierGroupOptionsResult, systemSettingsResult, workingHoursResult, workingHourExceptionsResult, paymentMethodsResult, paymentPosSettingsResult, discountSecurityResult, contractSettingsResult] =
+  const [productsResult, categoriesWithVisibilityResult, productModifierGroupsResult, modifierGroupOptionsResult, systemSettingsResult, workingHoursResult, workingHourExceptionsResult, paymentMethodsResult, paymentPosSettingsResult, discountSecurityResult, contractSettingsResult] =
     await Promise.all([
       supabase
         .from("products")
         .select("*")
         .neq("active", false)
+        .neq("customer_visible", false)
         .order("sort_order", { ascending: true })
         .order("name", { ascending: true }),
 
       supabase
-        .from("categories")
-        .select("id, name, active, sort_order")
+        .from("inventory_categories")
+        .select("id, name, active, sort_order, customer_visible")
+        .eq("customer_visible", true)
         .order("sort_order", { ascending: true })
         .order("name", { ascending: true }),
 
@@ -157,6 +174,17 @@ export default async function AccountBookNowPage({
         .maybeSingle(),
     ]);
 
+  let categoriesResult: any = categoriesWithVisibilityResult;
+
+  if (isMissingColumnError(categoriesResult.error, "inventory_categories", "customer_visible")) {
+    categoriesResult = await supabase
+      .from("inventory_categories")
+      .select("id, name, active, sort_order")
+      .neq("active", false)
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true });
+  }
+
   if (productsResult.error) throw new Error(productsResult.error.message);
   if (categoriesResult.error) throw new Error(categoriesResult.error.message);
   if (productModifierGroupsResult.error) throw new Error(productModifierGroupsResult.error.message);
@@ -168,6 +196,7 @@ export default async function AccountBookNowPage({
   if (contractSettingsResult.error && !isMissingTableError(contractSettingsResult.error)) throw new Error(contractSettingsResult.error.message);
 
   const categories = (categoriesResult.data || []).filter((category: any) => category.active !== false);
+  const categoryIds = new Set(categories.map((category: any) => String(category.id)));
   const resolvedCustomerId = String(
     customerProfile?.customer_id || customerProfile?.id || access.customerId || ""
   ).trim();
@@ -183,10 +212,15 @@ export default async function AccountBookNowPage({
     },
   ];
 
-  const products = (productsResult.data || []).map((product: any) => ({
-    ...product,
-    category_name: getProductCategoryName(categories, product.category_id),
-  }));
+  const products = (productsResult.data || [])
+    .filter((product: any) => {
+      const categoryId = String(product.category_id || "");
+      return categoryId ? categoryIds.has(categoryId) : false;
+    })
+    .map((product: any) => ({
+      ...product,
+      category_name: getProductCategoryName(categories, product.category_id),
+    }));
 
   const optionRows = modifierGroupOptionsResult.data || [];
   const paymentMethodsFromDb = (paymentMethodsResult.data || []).map((item: any) => ({

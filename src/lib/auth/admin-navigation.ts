@@ -17,6 +17,7 @@ export type AdminNavItem = {
 
 export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   { label: "Dashboard", href: "/admin", icon: "⌂", permission: "dashboard.view" },
+  { label: "Business Intelligence", href: "/admin/business-intelligence", icon: "◫", permission: "dashboard.view" },
   { label: "Calendar", href: "/admin/calendar", icon: "◷", permission: "bookings.view" },
   {
     label: "CRM",
@@ -112,6 +113,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     permission: "settings.view",
     children: [
       { label: "Settings", href: "/admin/settings", icon: "⚙", permission: "settings.view" },
+      { label: "Homepage Content", href: "/admin/settings/homepage", icon: "◇", permission: "settings.view" },
       { label: "System Docs", href: "/admin/system/docs", icon: "◇", permission: "settings.view" },
     ],
   },

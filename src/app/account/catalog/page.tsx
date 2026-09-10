@@ -90,6 +90,21 @@ function money(value: number | string | null | undefined) {
   }).format(Number.isNaN(parsed) ? 0 : parsed);
 }
 
+function isMissingColumnError(error: any, tableName: string, columnName: string) {
+  const message = String(error?.message || "").toLowerCase();
+  const code = String(error?.code || "").toLowerCase();
+
+  if (code === "42703") {
+    return true;
+  }
+
+  return (
+    message.includes("column") &&
+    message.includes(String(columnName).toLowerCase()) &&
+    message.includes(String(tableName).toLowerCase())
+  );
+}
+
 export default async function AccountCatalogPage({
   searchParams,
 }: {
@@ -105,11 +120,12 @@ export default async function AccountCatalogPage({
     resolvedSearchParams.category || resolvedSearchParams.bn_category
   ).trim() || "all";
 
-  const [categoriesResult, productsResult] = await Promise.all([
+  const [categoriesWithVisibilityResult, productsResult] = await Promise.all([
     supabase
-      .from("categories")
-      .select("id, name, active, sort_order")
+      .from("inventory_categories")
+      .select("id, name, active, sort_order, customer_visible")
       .neq("active", false)
+      .eq("customer_visible", true)
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true }),
 
@@ -122,6 +138,17 @@ export default async function AccountCatalogPage({
       .limit(200),
   ]);
 
+  let categoriesResult: any = categoriesWithVisibilityResult;
+
+  if (isMissingColumnError(categoriesResult.error, "inventory_categories", "customer_visible")) {
+    categoriesResult = await supabase
+      .from("inventory_categories")
+      .select("id, name, active, sort_order")
+      .neq("active", false)
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true });
+  }
+
   if (categoriesResult.error) {
     throw new Error(categoriesResult.error.message);
   }
@@ -131,6 +158,7 @@ export default async function AccountCatalogPage({
   }
 
   const categories = (categoriesResult.data || []).filter((category: any) => category.active !== false);
+  const categoryIds = new Set(categories.map((category: any) => String(category.id)));
 
   let products = productsResult.data || [];
 
@@ -148,6 +176,11 @@ export default async function AccountCatalogPage({
 
     products = fallbackProductsResult.data || [];
   }
+
+  products = products.filter((product: any) => {
+    const categoryId = String(product.category_id || "");
+    return categoryId ? categoryIds.has(categoryId) : false;
+  });
 
   const filteredProducts =
     selectedCategoryId === "all"

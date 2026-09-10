@@ -48,18 +48,34 @@ function outwardSlug(row: {
   ).trim();
 }
 
+function isMissingColumnError(error: any, tableName: string, columnName: string) {
+  const message = String(error?.message || "").toLowerCase();
+  const code = String(error?.code || "").toLowerCase();
+
+  if (code === "42703") {
+    return true;
+  }
+
+  return (
+    message.includes("column") &&
+    message.includes(String(columnName).toLowerCase()) &&
+    message.includes(String(tableName).toLowerCase())
+  );
+}
+
 export async function getPublicCatalogCategories(): Promise<
   PublicCatalogCategory[]
 > {
   const supabase =
     createServiceClient();
 
-  const result = await supabase
-    .from("categories")
+  let result: any = await supabase
+    .from("inventory_categories")
     .select(
-      "id, name, slug, description, sort_order, active",
+      "id, name, slug, description, sort_order, active, customer_visible",
     )
     .eq("active", true)
+    .eq("customer_visible", true)
     .not("slug", "is", null)
     .order("sort_order", {
       ascending: true,
@@ -67,6 +83,22 @@ export async function getPublicCatalogCategories(): Promise<
     .order("name", {
       ascending: true,
     });
+
+  if (isMissingColumnError(result.error, "inventory_categories", "customer_visible")) {
+    result = await supabase
+      .from("inventory_categories")
+      .select(
+        "id, name, slug, description, sort_order, active",
+      )
+      .eq("active", true)
+      .not("slug", "is", null)
+      .order("sort_order", {
+        ascending: true,
+      })
+      .order("name", {
+        ascending: true,
+      });
+  }
 
   if (result.error) {
     throw new Error(
@@ -100,6 +132,33 @@ export async function getPublicCatalogProducts(params?: {
   const supabase =
     createServiceClient();
 
+  let visibleCategoriesResult: any = await supabase
+    .from("inventory_categories")
+    .select("id")
+    .eq("active", true)
+    .eq("customer_visible", true);
+
+  if (isMissingColumnError(visibleCategoriesResult.error, "inventory_categories", "customer_visible")) {
+    visibleCategoriesResult = await supabase
+      .from("inventory_categories")
+      .select("id")
+      .eq("active", true);
+  }
+
+  if (visibleCategoriesResult.error) {
+    throw new Error(
+      visibleCategoriesResult.error.message,
+    );
+  }
+
+  const visibleCategoryIds = (visibleCategoriesResult.data || []).map((row: any) =>
+    String(row.id || "").trim(),
+  ).filter(Boolean);
+
+  if (visibleCategoryIds.length === 0) {
+    return [];
+  }
+
   let query = supabase
     .from("products")
     .select(`
@@ -118,6 +177,7 @@ export async function getPublicCatalogProducts(params?: {
       active
     `)
     .eq("active", true)
+    .in("category_id", visibleCategoryIds)
     .order("sort_order", {
       ascending: true,
     })
@@ -207,14 +267,26 @@ export async function getPublicCategoryBySlug(
   const supabase =
     createServiceClient();
 
-  const result = await supabase
-    .from("categories")
+  let result = await supabase
+    .from("inventory_categories")
     .select(
-      "id, name, slug, description, sort_order, active",
+      "id, name, slug, description, sort_order, active, customer_visible",
     )
     .eq("slug", safeSlug)
     .eq("active", true)
+    .eq("customer_visible", true)
     .maybeSingle();
+
+  if (isMissingColumnError(result.error, "inventory_categories", "customer_visible")) {
+    result = await supabase
+      .from("inventory_categories")
+      .select(
+        "id, name, slug, description, sort_order, active",
+      )
+      .eq("slug", safeSlug)
+      .eq("active", true)
+      .maybeSingle();
+  }
 
   if (result.error) {
     throw new Error(
