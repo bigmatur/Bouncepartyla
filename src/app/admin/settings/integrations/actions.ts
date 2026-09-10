@@ -328,6 +328,291 @@ async function testMetaConnection(provider: "meta" | "instagram") {
   }
 }
 
+
+async function testGmailConnection() {
+  const integration =
+    await resolveIntegrationConnection(
+      "gmail",
+    );
+
+  const publicConfig =
+    integration.publicConfig as Record<
+      string,
+      any
+    >;
+
+  const credentials =
+    integration.credentials as Record<
+      string,
+      string
+    >;
+
+  const mailbox =
+    String(
+      publicConfig.mailbox ||
+        "",
+    ).trim();
+
+  const clientId =
+    String(
+      credentials.client_id ||
+        "",
+    ).trim();
+
+  const clientSecret =
+    String(
+      credentials.client_secret ||
+        "",
+    ).trim();
+
+  const refreshToken =
+    String(
+      credentials.refresh_token ||
+        "",
+    ).trim();
+
+  if (
+    !mailbox ||
+    !clientId ||
+    !clientSecret ||
+    !refreshToken
+  ) {
+    throw new Error(
+      "Gmail OAuth configuration is incomplete.",
+    );
+  }
+
+  const tokenResponse =
+    await fetch(
+      "https://oauth2.googleapis.com/token",
+      {
+        method:
+          "POST",
+
+        headers: {
+          "Content-Type":
+            "application/x-www-form-urlencoded",
+        },
+
+        body:
+          new URLSearchParams({
+            client_id:
+              clientId,
+
+            client_secret:
+              clientSecret,
+
+            refresh_token:
+              refreshToken,
+
+            grant_type:
+              "refresh_token",
+          }),
+
+        cache:
+          "no-store",
+      },
+    );
+
+  const tokenPayload =
+    await tokenResponse
+      .json()
+      .catch(
+        () => ({}),
+      ) as {
+        access_token?: string;
+        scope?: string;
+        error?: string;
+        error_description?: string;
+      };
+
+  if (
+    !tokenResponse.ok ||
+    !tokenPayload.access_token
+  ) {
+    throw new Error(
+      String(
+        tokenPayload.error_description ||
+          tokenPayload.error ||
+          "Google OAuth refresh failed.",
+      ),
+    );
+  }
+
+  const accessToken =
+    tokenPayload.access_token;
+
+  let scopeValue =
+    String(
+      tokenPayload.scope ||
+        "",
+    ).trim();
+
+  /*
+   * Google does not always include `scope` in a
+   * refresh-token response, so use tokeninfo as
+   * a read-only fallback.
+   */
+  if (!scopeValue) {
+    const tokenInfoUrl =
+      new URL(
+        "https://oauth2.googleapis.com/tokeninfo",
+      );
+
+    tokenInfoUrl.searchParams.set(
+      "access_token",
+      accessToken,
+    );
+
+    const tokenInfoResponse =
+      await fetch(
+        tokenInfoUrl.toString(),
+        {
+          cache:
+            "no-store",
+        },
+      );
+
+    const tokenInfoPayload =
+      await tokenInfoResponse
+        .json()
+        .catch(
+          () => ({}),
+        ) as {
+          scope?: string;
+          error?: string;
+          error_description?: string;
+        };
+
+    if (!tokenInfoResponse.ok) {
+      throw new Error(
+        String(
+          tokenInfoPayload.error_description ||
+            tokenInfoPayload.error ||
+            "Google OAuth token validation failed.",
+        ),
+      );
+    }
+
+    scopeValue =
+      String(
+        tokenInfoPayload.scope ||
+          "",
+      ).trim();
+  }
+
+  const scopes =
+    new Set(
+      scopeValue
+        .split(/\s+/)
+        .map(
+          (value) =>
+            value.trim(),
+        )
+        .filter(
+          Boolean,
+        ),
+    );
+
+  const fullAccessScope =
+    "https://mail.google.com/";
+
+  const readScopes = [
+    fullAccessScope,
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
+  ];
+
+  const sendScopes = [
+    fullAccessScope,
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/gmail.modify",
+  ];
+
+  const canRead =
+    readScopes.some(
+      (scope) =>
+        scopes.has(scope),
+    );
+
+  const canSend =
+    sendScopes.some(
+      (scope) =>
+        scopes.has(scope),
+    );
+
+  if (!canRead) {
+    throw new Error(
+      "Gmail OAuth is connected, but the refresh token does not have permission to read CRM email. Re-authorize Gmail with gmail.readonly (or gmail.modify).",
+    );
+  }
+
+  if (!canSend) {
+    throw new Error(
+      "Gmail OAuth is connected, but the refresh token does not have permission to send CRM replies. Re-authorize Gmail with gmail.send (or gmail.modify).",
+    );
+  }
+
+  const profileResponse =
+    await fetch(
+      "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+      {
+        headers: {
+          Authorization:
+            `Bearer ${accessToken}`,
+        },
+
+        cache:
+          "no-store",
+      },
+    );
+
+  const profilePayload =
+    await profileResponse
+      .json()
+      .catch(
+        () => ({}),
+      ) as {
+        emailAddress?: string;
+        error?: {
+          message?: string;
+        };
+      };
+
+  if (!profileResponse.ok) {
+    throw new Error(
+      String(
+        profilePayload.error?.message ||
+          "Gmail profile request failed.",
+      ),
+    );
+  }
+
+  const connectedMailbox =
+    String(
+      profilePayload.emailAddress ||
+        "",
+    )
+      .trim()
+      .toLowerCase();
+
+  if (!connectedMailbox) {
+    throw new Error(
+      "Google did not return the connected Gmail mailbox.",
+    );
+  }
+
+  if (
+    connectedMailbox !==
+    mailbox.toLowerCase()
+  ) {
+    throw new Error(
+      `Gmail OAuth belongs to ${connectedMailbox}, but Settings is configured for ${mailbox}.`,
+    );
+  }
+}
+
 export async function testIntegrationConnectionAction(formData: FormData) {
   const { user, profile } = await requireAdminPermission("settings.edit");
   const provider = parseProvider(getString(formData, "provider"));
@@ -340,6 +625,8 @@ export async function testIntegrationConnectionAction(formData: FormData) {
       await testGa4Connection();
     } else if (provider === "meta" || provider === "instagram") {
       await testMetaConnection(provider);
+    } else if (provider === "gmail") {
+      await testGmailConnection();
     } else {
       const integration = await resolveIntegrationConnection(provider);
       const credentials = integration.credentials as Record<string, string>;

@@ -6,7 +6,7 @@ import {
   parseCrmAttachments,
   } from "@/lib/communication/attachments";
 import { requireAdminPermission } from "@/lib/auth/require-admin";
-import { getCrmGmailConfiguration } from "@/lib/crm/gmail";
+import { getResolvedCrmGmailConfiguration } from "@/lib/crm/gmail";
 import { getResolvedMetaIntegration } from "@/lib/crm/instagram";
 import { resendUpdatedContractManualAction } from "@/app/admin/bookings/[id]/actions";
 import { createTaskAction,
@@ -230,7 +230,7 @@ export default async function CrmInboxPage({
   ).trim();
 
   const gmail =
-    getCrmGmailConfiguration();
+    await getResolvedCrmGmailConfiguration();
 
   const instagram =
     await getResolvedMetaIntegration();

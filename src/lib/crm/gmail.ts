@@ -5,6 +5,7 @@ import nodemailer from "nodemailer";
 import { createServiceClient } from "@/lib/supabase/service";
 import { ingestCrmInboundMessage } from "@/lib/communication/inbound";
 import { downloadCrmAttachment } from "@/lib/communication/attachments";
+import { resolveIntegrationConnection } from "@/lib/integrations/connections";
 
 import type {
   CrmAttachment,
@@ -105,11 +106,53 @@ export function getCrmGmailConfiguration() {
   };
 }
 
-async function getGmailAccessToken() {
-  const config =
-    getCrmGmailConfiguration();
 
-  if (!config.configured) {
+export async function getResolvedCrmGmailConfiguration() {
+  const integration =
+    await resolveIntegrationConnection("gmail");
+
+  const publicConfig =
+    integration.publicConfig as Record<string, any>;
+
+  const credentials =
+    integration.credentials as Record<string, string>;
+
+  const mailbox =
+    String(publicConfig.mailbox || "").trim();
+
+  const clientId =
+    String(credentials.client_id || "").trim();
+
+  const clientSecret =
+    String(credentials.client_secret || "").trim();
+
+  const refreshToken =
+    String(credentials.refresh_token || "").trim();
+
+  return {
+    source: integration.source,
+    configured: Boolean(
+      clientId &&
+        clientSecret &&
+        refreshToken &&
+        mailbox,
+    ),
+    mailbox,
+    clientId,
+    clientSecret,
+    refreshToken,
+  };
+}
+
+
+async function getGmailAccessToken(
+  config?: Awaited<ReturnType<typeof getResolvedCrmGmailConfiguration>>,
+) {
+  const resolvedConfig =
+    config ||
+    await getResolvedCrmGmailConfiguration();
+
+  if (!resolvedConfig.configured) {
     throw new Error(
       "Gmail CRM OAuth is not configured.",
     );
@@ -127,13 +170,13 @@ async function getGmailAccessToken() {
 
       body: new URLSearchParams({
         client_id:
-          config.clientId,
+          resolvedConfig.clientId,
 
         client_secret:
-          config.clientSecret,
+          resolvedConfig.clientSecret,
 
         refresh_token:
-          config.refreshToken,
+          resolvedConfig.refreshToken,
 
         grant_type:
           "refresh_token",
@@ -420,7 +463,7 @@ async function gmailGet<T>(
 
 export async function syncCrmGmailInbox() {
   const config =
-    getCrmGmailConfiguration();
+    await getResolvedCrmGmailConfiguration();
 
   if (!config.configured) {
     throw new Error(
@@ -436,7 +479,7 @@ export async function syncCrmGmailInbox() {
 
   try {
     const token =
-      await getGmailAccessToken();
+      await getGmailAccessToken(config);
 
     const lookback =
       Math.min(
@@ -791,6 +834,233 @@ export async function syncCrmGmailInbox() {
   }
 }
 
+
+function sanitizeMailHeader(value: string) {
+  return String(value || "")
+    .replace(/[\r\n]+/g, " ")
+    .trim();
+}
+
+function toBase64Url(value: Buffer | string) {
+  const buffer =
+    Buffer.isBuffer(value)
+      ? value
+      : Buffer.from(value, "utf8");
+
+  return buffer
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function buildGmailRawMessage(params: {
+  from: string;
+  to: string;
+  subject: string;
+  text: string;
+  attachments: CrmSmtpAttachment[];
+  inReplyTo?: string;
+  references?: string;
+}) {
+  const from =
+    sanitizeMailHeader(params.from);
+
+  const to =
+    sanitizeMailHeader(params.to);
+
+  const subject =
+    sanitizeMailHeader(params.subject);
+
+  const inReplyTo =
+    sanitizeMailHeader(params.inReplyTo || "");
+
+  const references =
+    sanitizeMailHeader(params.references || "");
+
+  const commonHeaders = [
+    `From: ${from}`,
+    `To: ${to}`,
+    `Subject: ${subject}`,
+    "MIME-Version: 1.0",
+    ...(inReplyTo
+      ? [`In-Reply-To: ${inReplyTo}`]
+      : []),
+    ...(references
+      ? [`References: ${references}`]
+      : []),
+  ];
+
+  if (params.attachments.length === 0) {
+    return [
+      ...commonHeaders,
+      'Content-Type: text/plain; charset="UTF-8"',
+      "Content-Transfer-Encoding: base64",
+      "",
+      Buffer.from(params.text || "", "utf8").toString("base64"),
+      "",
+    ].join("\r\n");
+  }
+
+  const boundary =
+    `bounceparty_${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2)}`;
+
+  const lines: string[] = [
+    ...commonHeaders,
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    Buffer.from(params.text || "", "utf8").toString("base64"),
+    "",
+  ];
+
+  for (const attachment of params.attachments) {
+    const filename =
+      sanitizeMailHeader(
+        attachment.filename ||
+          "attachment",
+      );
+
+    lines.push(
+      `--${boundary}`,
+      `Content-Type: ${sanitizeMailHeader(
+        attachment.contentType ||
+          "application/octet-stream",
+      )}`,
+      `Content-Disposition: attachment; filename="${filename.replace(/"/g, "'")}"`,
+      "Content-Transfer-Encoding: base64",
+      "",
+      attachment.content.toString("base64"),
+      "",
+    );
+  }
+
+  lines.push(
+    `--${boundary}--`,
+    "",
+  );
+
+  return lines.join("\r\n");
+}
+
+async function sendCrmEmailViaGmailApi(params: {
+  config: Awaited<
+    ReturnType<
+      typeof getResolvedCrmGmailConfiguration
+    >
+  >;
+  from: string;
+  to: string;
+  subject: string;
+  text: string;
+  attachments: CrmSmtpAttachment[];
+  threadId?: string | null;
+  inReplyTo?: string;
+  references?: string;
+}) {
+  if (!params.config.configured) {
+    throw new Error(
+      "Gmail CRM OAuth is not configured.",
+    );
+  }
+
+  const accessToken =
+    await getGmailAccessToken(
+      params.config,
+    );
+
+  const rawMessage =
+    buildGmailRawMessage({
+      from:
+        params.from,
+      to:
+        params.to,
+      subject:
+        params.subject,
+      text:
+        params.text,
+      attachments:
+        params.attachments,
+      inReplyTo:
+        params.inReplyTo,
+      references:
+        params.references,
+    });
+
+  const response =
+    await fetch(
+      "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+      {
+        method:
+          "POST",
+
+        headers: {
+          Authorization:
+            `Bearer ${accessToken}`,
+
+          "Content-Type":
+            "application/json",
+        },
+
+        body:
+          JSON.stringify({
+            raw:
+              toBase64Url(
+                rawMessage,
+              ),
+
+            ...(params.threadId
+              ? {
+                  threadId:
+                    params.threadId,
+                }
+              : {}),
+          }),
+      },
+    );
+
+  const payload =
+    await response
+      .json()
+      .catch(
+        () => ({}),
+      ) as {
+        id?: string;
+        threadId?: string;
+        error?: {
+          message?: string;
+        };
+      };
+
+  if (!response.ok) {
+    throw new Error(
+      payload.error?.message ||
+        `Gmail send failed (${response.status}).`,
+    );
+  }
+
+  if (!payload.id) {
+    throw new Error(
+      "Gmail send succeeded without a message id.",
+    );
+  }
+
+  return {
+    messageId:
+      payload.id,
+
+    threadId:
+      payload.threadId ||
+      params.threadId ||
+      null,
+  };
+}
+
 function smtpTransporter(): CrmSmtpTransporter {
   const host = env(
     "SMTP_HOST",
@@ -1034,7 +1304,15 @@ export async function sendCrmEmailReply(
         "",
     ).trim();
 
+  const gmailConfig =
+    await getResolvedCrmGmailConfiguration();
+
   const from =
+    (
+      gmailConfig.configured
+        ? gmailConfig.mailbox
+        : ""
+    ) ||
     env(
       "BOOKING_FROM_EMAIL",
     ) ||
@@ -1089,64 +1367,98 @@ export async function sendCrmEmailReply(
       ),
     );
 
-  const transporter =
-    smtpTransporter();
+  const subject =
+    `Re: ${subjectBase}`;
 
-  const mailOptions: CrmSmtpMailOptions = {
-    from,
+  const references =
+    [
+      refs,
+      rfcMessageId,
+    ]
+      .filter(
+        Boolean,
+      )
+      .join(" ");
 
-    to:
-      recipient,
-
-    subject:
-      `Re: ${subjectBase}`,
-
-    text:
-      body ||
-      "Please see the attached file.",
-
-    attachments:
-      mailAttachments,
-
-    headers: {
-      ...(rfcMessageId
-        ? {
-            "In-Reply-To":
-              rfcMessageId,
-          }
-        : {}),
-
-      ...(
-        [
-          refs,
-          rfcMessageId,
-        ]
-          .filter(
-            Boolean,
-          )
-          .join(" ")
-          ? {
-              References:
-                [
-                  refs,
-                  rfcMessageId,
-                ]
-                  .filter(
-                    Boolean,
-                  )
-                  .join(
-                    " ",
-                  ),
-            }
-          : {}
-      ),
-    },
+  let info: {
+    messageId?: string;
+    threadId?: string | null;
   };
 
-  const info =
-    await transporter.sendMail(
-      mailOptions,
-    );
+  if (gmailConfig.configured) {
+    info =
+      await sendCrmEmailViaGmailApi({
+        config:
+          gmailConfig,
+
+        from,
+
+        to:
+          recipient,
+
+        subject,
+
+        text:
+          body ||
+          "Please see the attached file.",
+
+        attachments:
+          mailAttachments,
+
+        threadId:
+          lastInbound.data
+            ?.provider_thread_id ||
+          null,
+
+        inReplyTo:
+          rfcMessageId ||
+          undefined,
+
+        references:
+          references ||
+          undefined,
+      });
+  } else {
+    const transporter =
+      smtpTransporter();
+
+    const mailOptions: CrmSmtpMailOptions = {
+      from,
+
+      to:
+        recipient,
+
+      subject,
+
+      text:
+        body ||
+        "Please see the attached file.",
+
+      attachments:
+        mailAttachments,
+
+      headers: {
+        ...(rfcMessageId
+          ? {
+              "In-Reply-To":
+                rfcMessageId,
+            }
+          : {}),
+
+        ...(references
+          ? {
+              References:
+                references,
+            }
+          : {}),
+      },
+    };
+
+    info =
+      await transporter.sendMail(
+        mailOptions,
+      );
+  }
 
   const now =
     new Date()
@@ -1179,6 +1491,7 @@ export async function sendCrmEmailReply(
           null,
 
         provider_thread_id:
+          info.threadId ||
           lastInbound.data
             ?.provider_thread_id ||
           null,
