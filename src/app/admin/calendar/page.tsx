@@ -755,7 +755,7 @@ function MonthView({
                 key={day.iso}
                 href={getViewHref("day", day.iso)}
                 className={[
-                  "min-h-[150px] border-b border-r border-[#f0e7dc] p-3 transition hover:bg-[#fcfaf7]",
+                  "flex min-h-[150px] min-w-0 flex-col border-b border-r border-[#f0e7dc] p-3 transition hover:bg-[#fcfaf7]",
                   day.isSelected ? "bg-[#eaf2f9]" : day.isPast ? "bg-[#f5f5f5]" : "bg-white",
                   !day.isCurrentMonth ? "opacity-45" : "",
                 ].join(" ")}
@@ -781,8 +781,8 @@ function MonthView({
                   )}
                 </div>
 
-                <div className="space-y-1.5">
-                  {dayBookings.slice(0, 3).map((booking: any) => (
+                <div className="min-w-0 space-y-1.5">
+                  {dayBookings.slice(0, 2).map((booking: any) => (
                     <SmallBookingCard
                       key={booking.id}
                       booking={booking}
@@ -790,9 +790,9 @@ function MonthView({
                     />
                   ))}
 
-                  {dayBookings.length > 3 && (
+                  {dayBookings.length > 2 && (
                     <div className="rounded-xl bg-[#23313f] px-2.5 py-1.5 text-[11px] font-semibold text-white">
-                      +{dayBookings.length - 3} more
+                      +{dayBookings.length - 2} more
                     </div>
                   )}
                 </div>
