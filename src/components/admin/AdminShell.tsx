@@ -20,6 +20,7 @@ function mobilePageTitle(pathname: string) {
   if (pathname.startsWith("/admin/inventory")) return "Inventory";
   if (pathname.startsWith("/admin/settings")) return "Settings";
   if (pathname.startsWith("/admin/reports")) return "Reports";
+  if (pathname.startsWith("/admin/business-intelligence")) return "Intelligence";
   if (pathname.startsWith("/admin/catalog")) return "Catalog";
   if (pathname.startsWith("/admin/tasks")) return "Tasks";
   if (pathname.startsWith("/admin/access")) return "Access";
