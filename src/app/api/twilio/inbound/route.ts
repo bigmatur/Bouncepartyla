@@ -1,7 +1,10 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { ingestCrmInboundSms } from "@/lib/crm/sms";
+import {
+  getResolvedCrmSmsConfiguration,
+  ingestCrmInboundSms,
+} from "@/lib/crm/sms";
 
 export const runtime = "nodejs";
 
@@ -42,7 +45,12 @@ function verifyTwilioSignature(params: {
 }
 
 export async function POST(request: Request) {
-  const authToken = String(process.env.TWILIO_AUTH_TOKEN || "").trim();
+  const config =
+    await getResolvedCrmSmsConfiguration();
+
+  const authToken =
+    config.authToken;
+
   if (!authToken) {
     return new NextResponse(twiml(), { status: 503, headers: { "Content-Type": "text/xml" } });
   }
@@ -50,7 +58,10 @@ export async function POST(request: Request) {
   const raw = await request.text();
   const form = new URLSearchParams(raw);
   const signature = request.headers.get("x-twilio-signature") || "";
-  const verificationUrl = String(process.env.TWILIO_INBOUND_WEBHOOK_URL || request.url).trim();
+
+  const verificationUrl =
+    config.inboundWebhookUrl ||
+    request.url;
 
   if (!signature || !verifyTwilioSignature({ url: verificationUrl, form, signature, authToken })) {
     return new NextResponse(twiml(), { status: 403, headers: { "Content-Type": "text/xml" } });

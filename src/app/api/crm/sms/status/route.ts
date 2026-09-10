@@ -1,6 +1,9 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
-import { updateCrmSmsDeliveryStatus } from "@/lib/crm/sms";
+import {
+  getResolvedCrmSmsConfiguration,
+  updateCrmSmsDeliveryStatus,
+} from "@/lib/crm/sms";
 
 export const runtime = "nodejs";
 
@@ -23,13 +26,26 @@ function verifyTwilioSignature(params: { url: string; form: URLSearchParams; sig
 }
 
 export async function POST(request: Request) {
-  const authToken = String(process.env.TWILIO_AUTH_TOKEN || "").trim();
-  if (!authToken) return NextResponse.json({ error: "Twilio is not configured." }, { status: 503 });
+  const config =
+    await getResolvedCrmSmsConfiguration();
+
+  const authToken =
+    config.authToken;
+
+  if (!authToken) {
+    return NextResponse.json(
+      { error: "Twilio is not configured." },
+      { status: 503 },
+    );
+  }
 
   const raw = await request.text();
   const form = new URLSearchParams(raw);
   const signature = request.headers.get("x-twilio-signature") || "";
-  const verificationUrl = String(process.env.TWILIO_STATUS_CALLBACK_URL || request.url).trim();
+
+  const verificationUrl =
+    config.statusCallbackUrl ||
+    request.url;
 
   if (!signature || !verifyTwilioSignature({ url: verificationUrl, form, signature, authToken })) {
     return NextResponse.json({ error: "Invalid Twilio signature." }, { status: 403 });

@@ -2,6 +2,7 @@ import "server-only";
 
 import { createServiceClient } from "@/lib/supabase/service";
 import { ingestCrmInboundMessage } from "@/lib/communication/inbound";
+import { resolveIntegrationConnection } from "@/lib/integrations/connections";
 import type {
   CrmAttachmentWithUrl,
 } from "@/lib/communication/types";
@@ -97,6 +98,57 @@ export function getCrmSmsConfiguration() {
     statusCallbackUrl,
   };
 }
+
+
+export async function getResolvedCrmSmsConfiguration() {
+  const integration =
+    await resolveIntegrationConnection("sms");
+
+  const publicConfig =
+    integration.publicConfig as Record<string, any>;
+
+  const credentials =
+    integration.credentials as Record<string, string>;
+
+  const accountSid =
+    String(credentials.account_sid || "").trim();
+
+  const authToken =
+    String(credentials.auth_token || "").trim();
+
+  const fromNumber =
+    String(publicConfig.from_number || "").trim();
+
+  const publicOrigin =
+    env("NEXT_PUBLIC_APP_URL");
+
+  const inboundWebhookUrl =
+    String(publicConfig.inbound_webhook_url || "").trim() ||
+    (publicOrigin
+      ? `${publicOrigin.replace(/\/$/, "")}/api/twilio/inbound`
+      : "");
+
+  const statusCallbackUrl =
+    String(publicConfig.status_callback_url || "").trim() ||
+    (publicOrigin
+      ? `${publicOrigin.replace(/\/$/, "")}/api/crm/sms/status`
+      : "");
+
+  return {
+    source: integration.source,
+    configured: Boolean(
+      accountSid &&
+        authToken &&
+        fromNumber,
+    ),
+    accountSid,
+    authToken,
+    fromNumber,
+    inboundWebhookUrl,
+    statusCallbackUrl,
+  };
+}
+
 
 export async function ingestCrmInboundSms(
   params: {
@@ -210,7 +262,7 @@ export async function sendCrmSmsReply(
   }
 
   const config =
-    getCrmSmsConfiguration();
+    await getResolvedCrmSmsConfiguration();
 
   if (!config.configured) {
     throw new Error(
