@@ -119,6 +119,10 @@ export default async function InventoryCategoriesPage() {
     (category: any) => !category.parent_id
   ).length;
 
+  const customerVisibleCount = categories.filter(
+    (category: any) => category.customer_visible !== false
+  ).length;
+
   return (
     <div className="min-w-0 space-y-4 pb-10 sm:space-y-6">
       <section className="min-w-0 rounded-[22px] border border-black/5 bg-white p-4 shadow-[0_8px_28px_rgba(0,0,0,0.035)] sm:rounded-[30px] sm:p-6 sm:shadow-[0_10px_35px_rgba(0,0,0,0.035)]">
@@ -157,7 +161,7 @@ export default async function InventoryCategoriesPage() {
         </div>
       </section>
 
-      <section className="grid grid-cols-2 gap-2.5 sm:gap-4 md:grid-cols-4">
+      <section className="grid grid-cols-2 gap-2.5 sm:gap-4 md:grid-cols-5">
         <div className="min-w-0 rounded-[18px] border border-black/5 bg-white p-3.5 shadow-[0_6px_20px_rgba(0,0,0,0.03)] sm:rounded-[24px] sm:p-5">
           <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#9a723e]">
             Categories
@@ -191,6 +195,15 @@ export default async function InventoryCategoriesPage() {
           </div>
           <div className="mt-1.5 text-2xl font-bold text-[#1f1e1b] sm:mt-2 sm:text-3xl sm:font-semibold">
             {rootCount}
+          </div>
+        </div>
+
+        <div className="min-w-0 rounded-[18px] border border-black/5 bg-white p-3.5 shadow-[0_6px_20px_rgba(0,0,0,0.03)] sm:rounded-[24px] sm:p-5">
+          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#9a723e]">
+            Customer visible
+          </div>
+          <div className="mt-1.5 text-2xl font-bold text-[#1f1e1b] sm:mt-2 sm:text-3xl sm:font-semibold">
+            {customerVisibleCount}
           </div>
         </div>
       </section>
@@ -242,6 +255,16 @@ export default async function InventoryCategoriesPage() {
               />
             </Field>
 
+            <label className="flex items-center justify-between gap-4 rounded-xl border border-[#eee5d9] bg-[#fcfaf7] px-3 py-2.5 text-sm font-bold text-[#1f1e1b] sm:rounded-2xl sm:px-4 sm:py-3 sm:font-semibold">
+              <span>Show to customers</span>
+              <input
+                type="checkbox"
+                name="customerVisible"
+                defaultChecked
+                className="h-5 w-5"
+              />
+            </label>
+
             <button
               type="submit"
               className="w-full rounded-xl bg-[#c9964f] px-4 py-3 text-sm font-bold text-white shadow-[0_8px_22px_rgba(201,150,79,0.20)] transition hover:bg-[#b78744] sm:rounded-full sm:px-6 sm:py-4 sm:font-semibold"
@@ -286,6 +309,10 @@ export default async function InventoryCategoriesPage() {
 
                     <span className="rounded-full bg-[#fff4d8] px-2.5 py-1 text-[10px] font-bold text-[#8a6b20] ring-1 ring-[#efd582] sm:px-3 sm:text-xs sm:font-semibold">
                       {childrenCount} children
+                    </span>
+
+                    <span className="rounded-full bg-[#f0f4fa] px-2.5 py-1 text-[10px] font-bold text-[#2f567d] ring-1 ring-[#d7e2ef] sm:px-3 sm:text-xs sm:font-semibold">
+                      {category.customer_visible !== false ? "Client on" : "Client off"}
                     </span>
                   </div>
 
@@ -350,6 +377,16 @@ export default async function InventoryCategoriesPage() {
                           type="checkbox"
                           name="active"
                           defaultChecked={category.active !== false}
+                          className="h-5 w-5"
+                        />
+                      </label>
+
+                      <label className="flex items-center justify-between gap-4 rounded-xl border border-[#eee5d9] bg-[#fcfaf7] px-3 py-2.5 text-sm font-bold text-[#1f1e1b] sm:rounded-2xl sm:px-4 sm:py-3 sm:font-semibold">
+                        <span>Show to customers</span>
+                        <input
+                          type="checkbox"
+                          name="customerVisible"
+                          defaultChecked={category.customer_visible !== false}
                           className="h-5 w-5"
                         />
                       </label>

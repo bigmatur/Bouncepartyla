@@ -73,7 +73,7 @@ export default async function NewCatalogProductPage() {
 
   const [categoriesResult, inventoryItemsResult] = await Promise.all([
     supabase
-      .from("categories")
+      .from("inventory_categories")
       .select("id, name, active, sort_order")
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true }),

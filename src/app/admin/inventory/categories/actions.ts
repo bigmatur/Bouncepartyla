@@ -39,6 +39,21 @@ function escapeForRegex(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function isMissingColumnError(error: any, tableName: string, columnName: string) {
+  const message = String(error?.message || "").toLowerCase();
+  const code = String(error?.code || "").toLowerCase();
+
+  if (code === "42703") {
+    return true;
+  }
+
+  return (
+    message.includes("column") &&
+    message.includes(String(columnName).toLowerCase()) &&
+    message.includes(String(tableName).toLowerCase())
+  );
+}
+
 async function buildUniqueCategorySlug(params: {
   supabase: Awaited<ReturnType<typeof createClient>>;
   baseSlug: string;
@@ -100,6 +115,7 @@ export async function createInventoryCategoryAction(formData: FormData) {
   const parentId = getNullableString(formData, "parentId");
   const description = getNullableString(formData, "description");
   const sortOrder = getNumber(formData, "sortOrder", 100);
+  const customerVisible = getBoolean(formData, "customerVisible");
 
   if (!name) {
     throw new Error("Category name is required.");
@@ -111,19 +127,20 @@ export async function createInventoryCategoryAction(formData: FormData) {
     baseSlug,
   });
 
-  let { error } = await supabase.from("inventory_categories").insert({
+  const payloadWithVisibility = {
     name,
     slug,
     parent_id: parentId,
     description,
     sort_order: sortOrder,
     active: true,
-  });
+    customer_visible: customerVisible,
+  };
 
-  if (error?.code === "23505") {
-    slug = `${baseSlug || "category"}-${Date.now()}`;
+  let { error } = await supabase.from("inventory_categories").insert(payloadWithVisibility);
 
-    const retry = await supabase.from("inventory_categories").insert({
+  if (isMissingColumnError(error, "inventory_categories", "customer_visible")) {
+    const retryWithoutVisibility = await supabase.from("inventory_categories").insert({
       name,
       slug,
       parent_id: parentId,
@@ -131,6 +148,25 @@ export async function createInventoryCategoryAction(formData: FormData) {
       sort_order: sortOrder,
       active: true,
     });
+
+    error = retryWithoutVisibility.error;
+  }
+
+  if (error?.code === "23505") {
+    slug = `${baseSlug || "category"}-${Date.now()}`;
+
+    let retry = await supabase.from("inventory_categories").insert(payloadWithVisibility);
+
+    if (isMissingColumnError(retry.error, "inventory_categories", "customer_visible")) {
+      retry = await supabase.from("inventory_categories").insert({
+        name,
+        slug,
+        parent_id: parentId,
+        description,
+        sort_order: sortOrder,
+        active: true,
+      });
+    }
 
     error = retry.error;
   }
@@ -151,6 +187,7 @@ export async function updateInventoryCategoryAction(formData: FormData) {
   const description = getNullableString(formData, "description");
   const sortOrder = getNumber(formData, "sortOrder", 100);
   const active = getBoolean(formData, "active");
+  const customerVisible = getBoolean(formData, "customerVisible");
 
   if (!categoryId) {
     throw new Error("Missing category id.");
@@ -171,23 +208,24 @@ export async function updateInventoryCategoryAction(formData: FormData) {
     excludeCategoryId: categoryId,
   });
 
+  const payloadWithVisibility = {
+    name,
+    slug,
+    parent_id: parentId,
+    description,
+    sort_order: sortOrder,
+    active,
+    customer_visible: customerVisible,
+    updated_at: new Date().toISOString(),
+  };
+
   let { error } = await supabase
     .from("inventory_categories")
-    .update({
-      name,
-      slug,
-      parent_id: parentId,
-      description,
-      sort_order: sortOrder,
-      active,
-      updated_at: new Date().toISOString(),
-    })
+    .update(payloadWithVisibility)
     .eq("id", categoryId);
 
-  if (error?.code === "23505") {
-    slug = `${baseSlug || "category"}-${Date.now()}`;
-
-    const retry = await supabase
+  if (isMissingColumnError(error, "inventory_categories", "customer_visible")) {
+    const retryWithoutVisibility = await supabase
       .from("inventory_categories")
       .update({
         name,
@@ -199,6 +237,32 @@ export async function updateInventoryCategoryAction(formData: FormData) {
         updated_at: new Date().toISOString(),
       })
       .eq("id", categoryId);
+
+    error = retryWithoutVisibility.error;
+  }
+
+  if (error?.code === "23505") {
+    slug = `${baseSlug || "category"}-${Date.now()}`;
+
+    let retry = await supabase
+      .from("inventory_categories")
+      .update(payloadWithVisibility)
+      .eq("id", categoryId);
+
+    if (isMissingColumnError(retry.error, "inventory_categories", "customer_visible")) {
+      retry = await supabase
+        .from("inventory_categories")
+        .update({
+          name,
+          slug,
+          parent_id: parentId,
+          description,
+          sort_order: sortOrder,
+          active,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", categoryId);
+    }
 
     error = retry.error;
   }

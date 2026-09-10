@@ -39,7 +39,7 @@ export default async function CatalogPage({
       .order("name", { ascending: true }),
 
     supabase
-      .from("categories")
+      .from("inventory_categories")
       .select("*")
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true }),

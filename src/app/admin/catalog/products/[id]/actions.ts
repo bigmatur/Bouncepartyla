@@ -107,28 +107,34 @@ function normalizeCategoryName(value: string | null | undefined) {
     .trim();
 }
 
+function isCategoryForeignKeyError(error: any) {
+  const code = String(error?.code || "").toLowerCase();
+  const message = String(error?.message || "").toLowerCase();
+  return code === "23503" && message.includes("products_category_id_fkey");
+}
+
 async function resolveProductCategoryId(categoryId: string | null) {
   if (!categoryId) return null;
 
   const supabase = await createClient();
 
-  const { data: existingCategory, error: existingCategoryError } = await supabase
+  const { data: existingCatalogCategory, error: existingCatalogCategoryError } = await supabase
     .from("categories")
     .select("id")
     .eq("id", categoryId)
     .maybeSingle();
 
-  if (existingCategoryError) {
-    throw new Error(existingCategoryError.message);
+  if (existingCatalogCategoryError) {
+    throw new Error(existingCatalogCategoryError.message);
   }
 
-  if (existingCategory) {
+  if (existingCatalogCategory) {
     return categoryId;
   }
 
   const { data: inventoryCategory, error: inventoryCategoryError } = await supabase
     .from("inventory_categories")
-    .select("id, name")
+    .select("id, name, slug, description, sort_order, active")
     .eq("id", categoryId)
     .maybeSingle();
 
@@ -140,9 +146,23 @@ async function resolveProductCategoryId(categoryId: string | null) {
     return null;
   }
 
+  const bySlugResult = await supabase
+    .from("categories")
+    .select("id")
+    .eq("slug", inventoryCategory.slug)
+    .maybeSingle();
+
+  if (bySlugResult.error) {
+    throw new Error(bySlugResult.error.message);
+  }
+
+  if (bySlugResult.data?.id) {
+    return String(bySlugResult.data.id);
+  }
+
   const { data: categories, error: categoriesError } = await supabase
     .from("categories")
-    .select("id, name");
+    .select("id, name, slug");
 
   if (categoriesError) {
     throw new Error(categoriesError.message);
@@ -150,11 +170,34 @@ async function resolveProductCategoryId(categoryId: string | null) {
 
   const target = (categories || []).find(
     (category: any) =>
+      (inventoryCategory.slug && category.slug === inventoryCategory.slug) ||
       normalizeCategoryName(category.name) ===
       normalizeCategoryName(inventoryCategory.name)
   );
 
-  return target?.id || null;
+  if (target?.id) {
+    return String(target.id);
+  }
+
+  const createResult = await supabase
+    .from("categories")
+    .insert({
+      id: inventoryCategory.id,
+      name: inventoryCategory.name,
+      slug: inventoryCategory.slug,
+      description: inventoryCategory.description || null,
+      sort_order: Number(inventoryCategory.sort_order || 100),
+      active: inventoryCategory.active !== false,
+      updated_at: new Date().toISOString(),
+    })
+    .select("id")
+    .maybeSingle();
+
+  if (createResult.error) {
+    throw new Error(createResult.error.message);
+  }
+
+  return createResult.data?.id ? String(createResult.data.id) : null;
 }
 
 function revalidateProduct(productId: string) {
@@ -213,45 +256,71 @@ export async function updateCatalogProductAction(formData: FormData) {
 
   const resolvedCategoryId = await resolveProductCategoryId(categoryId);
 
-  const { error } = await supabase
+  const payload = {
+    name,
+    category_id: resolvedCategoryId,
+    inventory_item_id: inventoryItemId,
+    public_title: publicTitle,
+    short_description: shortDescription,
+    description: fullDescription,
+    gallery_urls: galleryUrls,
+    what_included: whatIncluded,
+    what_not_included: whatNotIncluded,
+    setup_surface: setupSurface,
+    power_requirements: powerRequirements,
+    safety_rules: safetyRules,
+    seo_title: seoTitle,
+    seo_description: seoDescription,
+    indoor_allowed: indoorAllowed,
+    outdoor_allowed: outdoorAllowed,
+    water_use: waterUse,
+    admin_notes: adminNotes,
+    base_price: basePrice,
+    deposit_amount: depositAmount,
+    setup_width_ft: setupWidthFt > 0 ? setupWidthFt : null,
+    setup_length_ft: setupLengthFt > 0 ? setupLengthFt : null,
+    setup_height_ft: setupHeightFt > 0 ? setupHeightFt : null,
+    min_age: minAge > 0 ? Math.round(minAge) : null,
+    max_age: maxAge > 0 ? Math.round(maxAge) : null,
+    max_capacity: maxCapacity > 0 ? Math.round(maxCapacity) : null,
+    rental_duration_min: rentalDurationMin,
+    setup_duration_min: setupDurationMin,
+    teardown_duration_min: teardownDurationMin,
+    buffer_before_min: bufferBeforeMin,
+    buffer_after_min: bufferAfterMin,
+    sort_order: sortOrder,
+    active,
+    updated_at: new Date().toISOString(),
+  };
+
+  let { error } = await supabase
     .from("products")
-    .update({
-      name,
-      category_id: resolvedCategoryId,
-      inventory_item_id: inventoryItemId,
-      public_title: publicTitle,
-      short_description: shortDescription,
-      description: fullDescription,
-      gallery_urls: galleryUrls,
-      what_included: whatIncluded,
-      what_not_included: whatNotIncluded,
-      setup_surface: setupSurface,
-      power_requirements: powerRequirements,
-      safety_rules: safetyRules,
-      seo_title: seoTitle,
-      seo_description: seoDescription,
-      indoor_allowed: indoorAllowed,
-      outdoor_allowed: outdoorAllowed,
-      water_use: waterUse,
-      admin_notes: adminNotes,
-      base_price: basePrice,
-      deposit_amount: depositAmount,
-      setup_width_ft: setupWidthFt > 0 ? setupWidthFt : null,
-      setup_length_ft: setupLengthFt > 0 ? setupLengthFt : null,
-      setup_height_ft: setupHeightFt > 0 ? setupHeightFt : null,
-      min_age: minAge > 0 ? Math.round(minAge) : null,
-      max_age: maxAge > 0 ? Math.round(maxAge) : null,
-      max_capacity: maxCapacity > 0 ? Math.round(maxCapacity) : null,
-      rental_duration_min: rentalDurationMin,
-      setup_duration_min: setupDurationMin,
-      teardown_duration_min: teardownDurationMin,
-      buffer_before_min: bufferBeforeMin,
-      buffer_after_min: bufferAfterMin,
-      sort_order: sortOrder,
-      active,
-      updated_at: new Date().toISOString(),
-    })
+    .update(payload)
     .eq("id", productId);
+
+  if (error && isCategoryForeignKeyError(error)) {
+    const { data: currentProduct, error: currentProductError } = await supabase
+      .from("products")
+      .select("category_id")
+      .eq("id", productId)
+      .maybeSingle();
+
+    if (currentProductError) {
+      throw new Error(currentProductError.message);
+    }
+
+    const fallbackCategoryId = currentProduct?.category_id ? String(currentProduct.category_id) : null;
+
+    const retry = await supabase
+      .from("products")
+      .update({
+        ...payload,
+        category_id: fallbackCategoryId,
+      })
+      .eq("id", productId);
+
+    error = retry.error;
+  }
 
   if (error) {
     throw new Error(error.message);
