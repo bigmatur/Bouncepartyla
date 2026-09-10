@@ -251,9 +251,12 @@ async function getCustomRolesByKeys(supabase: any, roleKeys: string[]) {
 
     if (
       code === "42p01" ||
+      code === "42703" ||
       message.includes("relation") ||
+      message.includes("column") ||
       message.includes("schema cache") ||
-      message.includes("could not find the table")
+      message.includes("could not find the table") ||
+      message.includes("permission denied")
     ) {
       return {} as Record<string, { permissions: AppPermission[]; interfaces: InterfaceKey[] }>;
     }
