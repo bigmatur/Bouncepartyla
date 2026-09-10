@@ -268,6 +268,13 @@ export default function AdminSidebar({
               const hasChildren = itemChildren.length > 0;
               const expanded =
                 hasChildren && expandedNavHrefs.includes(item.href);
+              const toggleSubmenu = () => {
+                setExpandedNavHrefs((current) =>
+                  current.includes(item.href)
+                    ? current.filter((href) => href !== item.href)
+                    : [...current, item.href],
+                );
+              };
 
               return (
                 <div key={item.href}>
@@ -279,27 +286,36 @@ export default function AdminSidebar({
                         : "text-white/75 hover:bg-white/10 hover:text-white",
                     ].join(" ")}
                   >
-                    <Link href={item.href} className={["flex flex-1 items-center gap-3 px-4", mobile ? "py-2.5" : "py-3"].join(" ")}>
-                      <span className="flex h-5 w-5 items-center justify-center text-base">
-                        {item.icon}
-                      </span>
-                      {item.label}
-                    </Link>
+                    {hasChildren ? (
+                      <button
+                        type="button"
+                        onClick={toggleSubmenu}
+                        aria-expanded={expanded}
+                        aria-controls={`sidebar-submenu-${item.href.replace(/[^a-z0-9_-]/gi, "-")}`}
+                        className={["flex min-w-0 flex-1 items-center gap-3 px-4 text-left", mobile ? "py-2.5" : "py-3"].join(" ")}
+                      >
+                        <span className="flex h-5 w-5 items-center justify-center text-base">
+                          {item.icon}
+                        </span>
+                        {item.label}
+                      </button>
+                    ) : (
+                      <Link href={item.href} className={["flex min-w-0 flex-1 items-center gap-3 px-4", mobile ? "py-2.5" : "py-3"].join(" ")}>
+                        <span className="flex h-5 w-5 items-center justify-center text-base">
+                          {item.icon}
+                        </span>
+                        {item.label}
+                      </Link>
+                    )}
 
                     {hasChildren && (
                       <button
                         type="button"
                         aria-expanded={expanded}
                         aria-label={`Toggle ${item.label} submenu`}
-                        onClick={() =>
-                          setExpandedNavHrefs((current) =>
-                            current.includes(item.href)
-                              ? current.filter((href) => href !== item.href)
-                              : [...current, item.href],
-                          )
-                        }
+                        onClick={toggleSubmenu}
                         className={[
-                          "rounded-lg px-2 py-1 text-sm transition",
+                          "shrink-0 rounded-lg px-2 py-1 text-sm transition",
                           active
                             ? "text-[#23313f] hover:bg-black/5"
                             : "text-white/45 hover:bg-white/10 hover:text-white",
@@ -311,7 +327,10 @@ export default function AdminSidebar({
                   </div>
 
                   {expanded && (
-                    <div className="mt-2 space-y-1 pl-4">
+                    <div
+                      id={`sidebar-submenu-${item.href.replace(/[^a-z0-9_-]/gi, "-")}`}
+                      className="mt-2 space-y-1 pl-4"
+                    >
                       {itemChildren.map((child, index) => {
                         const childActive = isChildActive(pathname, child.href);
 
