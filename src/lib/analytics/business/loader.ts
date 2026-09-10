@@ -37,6 +37,16 @@ type ProductInventoryDataset = {
   reservations: any[];
 };
 
+function emptyProductInventoryDataset(): ProductInventoryDataset {
+  return {
+    products: [],
+    productComponents: [],
+    inventoryItems: [],
+    inventoryUnits: [],
+    reservations: [],
+  };
+}
+
 type CustomerDataset = {
   currentEventBookings: any[];
   previousEventBookings: any[];
@@ -904,7 +914,13 @@ export async function loadBusinessOverview(
   ]);
 
   const [productInventoryData, customerData] = await Promise.all([
-    loadProductInventoryDataset(supabase, range),
+    loadProductInventoryDataset(supabase, range).catch((error) => {
+      console.warn(
+        "BI product/inventory analytics fallback:",
+        String((error as any)?.message || error),
+      );
+      return emptyProductInventoryDataset();
+    }),
     loadCustomerDataset(supabase, range, previousRange).catch((error) => {
       console.warn("BI customer analytics fallback:", String((error as any)?.message || error));
       return emptyCustomerDataset();
