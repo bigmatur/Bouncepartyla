@@ -41,6 +41,10 @@ function replyPlaceholder(
     return "Write an Instagram reply…";
   }
 
+  if (channel === "whatsapp") {
+    return "Write a WhatsApp reply…";
+  }
+
   return "Write an email reply…";
 }
 
@@ -53,6 +57,10 @@ function replyButtonLabel(
 
   if (channel === "instagram") {
     return "Send Instagram DM";
+  }
+
+  if (channel === "whatsapp") {
+    return "Send WhatsApp";
   }
 
   return "Send email";
@@ -447,6 +455,9 @@ export default function CrmReplyForm({
   const isInstagramReply =
     replyChannel === "instagram";
 
+  const isIconOnlyReply =
+    isInstagramReply;
+
   return (
     <form
       ref={formRef}
@@ -582,7 +593,7 @@ export default function CrmReplyForm({
           title={buttonText}
           className={[
             "inline-flex min-h-[46px] shrink-0 items-center justify-center rounded-full bg-[#23313f] text-white transition hover:bg-[#192833] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60",
-            isInstagramReply
+            isIconOnlyReply
               ? "h-[46px] w-[46px] p-0 text-xl"
               : "gap-2 px-5 py-2.5 text-sm font-semibold",
           ].join(" ")}
@@ -594,10 +605,10 @@ export default function CrmReplyForm({
             />
           )}
 
-          {isInstagramReply && !pending ? (
+          {isIconOnlyReply && !pending ? (
             <span aria-hidden="true">✉</span>
           ) : (
-            !isInstagramReply && buttonText
+            !isIconOnlyReply && buttonText
           )}
         </button>
       </div>

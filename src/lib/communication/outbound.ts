@@ -7,6 +7,7 @@ import {
 import { sendCommunicationEmail } from "@/lib/communication/providers/email";
 import { sendCommunicationSms } from "@/lib/communication/providers/sms";
 import { sendCommunicationInstagram } from "@/lib/communication/providers/instagram";
+import { sendCommunicationWhatsapp } from "@/lib/communication/providers/whatsapp";
 import type {
   CrmAttachment,
   CrmAttachmentWithUrl,
@@ -19,6 +20,7 @@ const SUPPORTED_CHANNELS =
     "email",
     "sms",
     "instagram",
+    "whatsapp",
   ]);
 
 function asSupportedChannel(
@@ -299,6 +301,27 @@ export async function sendCrmConversationReply(
 
     result =
       await sendCommunicationInstagram({
+        conversationId,
+        body: appendFallbackLinks(
+          body,
+          unsupported,
+        ),
+        attachments:
+          signedAttachments.filter(
+            (item) =>
+              item.type === "image",
+          ),
+      });
+  } else if (
+    channel === "whatsapp"
+  ) {
+    const unsupported =
+      linkOnlyAttachments(
+        signedAttachments,
+      );
+
+    result =
+      await sendCommunicationWhatsapp({
         conversationId,
         body: appendFallbackLinks(
           body,

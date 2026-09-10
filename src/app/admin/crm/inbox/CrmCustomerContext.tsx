@@ -5,6 +5,7 @@ type Props = {
   selectedLead: any;
   contextCustomer: any;
   contextBooking: any;
+  floating?: boolean;
   updateLeadNotesAction: (formData: FormData) => void | Promise<void>;
   updateLeadFollowUpAction: (formData: FormData) => void | Promise<void>;
   createTaskAction: (formData: FormData) => void | Promise<void>;
@@ -48,6 +49,7 @@ export default function CrmCustomerContext({
   selectedLead,
   contextCustomer,
   contextBooking,
+  floating = false,
   updateLeadNotesAction,
   updateLeadFollowUpAction,
   createTaskAction,
@@ -57,9 +59,13 @@ export default function CrmCustomerContext({
   pipelineHistory,
   resendContractAction,
 }: Props) {
+  const asideClassName = floating
+    ? "min-h-full overflow-y-auto bg-[#faf8f5] p-4"
+    : "min-h-0 overflow-y-auto border-l border-[#e1d9cf] bg-[#faf8f5] p-4";
+
   if (!selectedConversation) {
     return (
-      <aside className="min-h-0 overflow-y-auto border-l border-[#e1d9cf] bg-[#faf8f5] p-4">
+      <aside className={asideClassName}>
         <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#9a723e]">
           Customer / Event
         </div>
@@ -232,7 +238,7 @@ export default function CrmCustomerContext({
   };
 
   return (
-    <aside className="min-h-0 overflow-y-auto border-l border-[#e1d9cf] bg-[#faf8f5] p-4">
+    <aside className={asideClassName}>
       <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#9a723e]">
         Customer / Event
       </div>
@@ -1066,7 +1072,7 @@ export default function CrmCustomerContext({
 
           {!contextBooking?.id && (
             <Link
-              href="/admin/bookings/new"
+              href={selectedLead?.id ? `/admin/bookings/new?leadId=${selectedLead.id}` : "/admin/bookings/new"}
               className="rounded-full bg-[#c9964f] px-3 py-2.5 text-center text-xs font-semibold text-white"
             >
               Create Booking
