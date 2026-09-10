@@ -314,6 +314,9 @@ const [
   const [navigationStop, setNavigationStop] =
     useState<MobileRouteStop | null>(null);
 
+  const [carModeEnabled, setCarModeEnabled] =
+    useState(false);
+
   const [error, setError] = useState("");
 
   const [
@@ -1287,6 +1290,7 @@ useEffect(() => {
         onArrived={
           markNavigationStopArrived
         }
+        carModeDefault={carModeEnabled}
       />
     </NavigationProvider>
   );
@@ -1380,6 +1384,26 @@ useEffect(() => {
             }
           >
             Sign Out
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() =>
+            setCarModeEnabled((value) => !value)
+          }
+          style={({ pressed }) => [
+            styles.carModeButton,
+            carModeEnabled ? styles.carModeButtonActive : null,
+            pressed ? styles.pressed : null,
+          ]}
+        >
+          <Text
+            style={[
+              styles.carModeButtonText,
+              carModeEnabled ? styles.carModeButtonTextActive : null,
+            ]}
+          >
+            CAR
           </Text>
         </Pressable>
       </View>
@@ -3118,6 +3142,34 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 9,
+  },
+
+  carModeButton: {
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderColor: "#d1c8bb",
+    borderRadius: 12,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 40,
+    minWidth: 52,
+    paddingHorizontal: 10,
+  },
+
+  carModeButtonActive: {
+    backgroundColor: "#23313f",
+    borderColor: "#23313f",
+  },
+
+  carModeButtonText: {
+    color: "#23313f",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.5,
+  },
+
+  carModeButtonTextActive: {
+    color: "#ffffff",
   },
 
   signOutText: {

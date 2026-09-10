@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import * as Location from "expo-location";
 import {
+  AudioGuidance,
   CameraPerspective,
   NavigationSessionStatus,
   NavigationView,
@@ -25,6 +26,7 @@ type Props = {
   stop: MobileRouteStop;
   onClose: () => void;
   onArrived: () => Promise<void>;
+  carModeDefault?: boolean;
 };
 
 type TripProgress = {
@@ -103,7 +105,12 @@ function formatEta(seconds: number) {
   });
 }
 
-export function NavigationScreen({ stop, onClose, onArrived }: Props) {
+export function NavigationScreen({
+  stop,
+  onClose,
+  onArrived,
+  carModeDefault = false,
+}: Props) {
   const {
     navigationController,
     removeAllListeners,
@@ -126,6 +133,8 @@ export function NavigationScreen({ stop, onClose, onArrived }: Props) {
   const [arrivedDetected, setArrivedDetected] = useState(false);
   const [arrivalPending, setArrivalPending] = useState(false);
   const [error, setError] = useState("");
+  const [muted, setMuted] = useState(false);
+  const [carMode, setCarMode] = useState(carModeDefault);
 
   const [navigationViewController, setNavigationViewController] =
     useState<NavigationViewController | null>(null);
@@ -136,6 +145,27 @@ export function NavigationScreen({ stop, onClose, onArrived }: Props) {
   const cleanupStartedRef = useRef(false);
 
   const address = useMemo(() => destinationAddress(stop), [stop]);
+
+  useEffect(() => {
+    setCarMode(carModeDefault);
+  }, [carModeDefault]);
+
+  const toggleMute = useCallback(async () => {
+    const nextMuted = !muted;
+
+    try {
+      navigationController.setAudioGuidanceType(
+        nextMuted
+          ? AudioGuidance.SILENT
+          : AudioGuidance.VOICE_ALERTS_AND_GUIDANCE |
+              AudioGuidance.BLUETOOTH_AUDIO,
+      );
+    } catch (muteError) {
+      console.warn("[Navigation] Could not update guidance audio:", muteError);
+    }
+
+    setMuted(nextMuted);
+  }, [muted, navigationController]);
 
   const refreshTripProgress = useCallback(async () => {
     try {
@@ -557,7 +587,13 @@ export function NavigationScreen({ stop, onClose, onArrived }: Props) {
       />
 
       <SafeAreaView style={styles.overlay} pointerEvents="box-none">
-        <View style={styles.bottomArea} pointerEvents="box-none">
+        <View
+          style={[
+            styles.bottomArea,
+            carMode ? styles.bottomAreaCarMode : null,
+          ]}
+          pointerEvents="box-none"
+        >
           {error ? (
             <View style={styles.errorCard}>
               <Text style={styles.errorTitle}>Navigation unavailable</Text>
@@ -576,7 +612,12 @@ export function NavigationScreen({ stop, onClose, onArrived }: Props) {
             </View>
           ) : null}
 
-          <View style={styles.destinationCard}>
+          <View
+            style={[
+              styles.destinationCard,
+              carMode ? styles.destinationCardCarMode : null,
+            ]}
+          >
             <View style={styles.destinationHeader}>
               <View style={styles.destinationIdentity}>
                 <Text style={styles.typeLabel}>
@@ -587,6 +628,10 @@ export function NavigationScreen({ stop, onClose, onArrived }: Props) {
                   {stop.customer_name || "Customer"}
                 </Text>
               </View>
+
+              <Text style={styles.destinationAddressCompact} numberOfLines={1}>
+                {address || "Address unavailable"}
+              </Text>
 
               {arrivedDetected ? (
                 <View style={styles.arrivalBadge}>
@@ -630,6 +675,22 @@ export function NavigationScreen({ stop, onClose, onArrived }: Props) {
                 >
                   <Text style={styles.recenterButtonIcon}>◎</Text>
                 </Pressable>
+
+                <View style={styles.progressDivider} />
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    muted ? "Unmute guidance" : "Mute guidance"
+                  }
+                  onPress={() => void toggleMute()}
+                  style={({ pressed }) => [
+                    styles.recenterButton,
+                    pressed ? styles.pressed : null,
+                  ]}
+                >
+                  <Text style={styles.recenterButtonIcon}>{muted ? "🔇" : "🔊"}</Text>
+                </Pressable>
               </View>
             ) : null}
           </View>
@@ -648,11 +709,30 @@ export function NavigationScreen({ stop, onClose, onArrived }: Props) {
             </Pressable>
 
             <Pressable
+              onPress={() => setCarMode((value) => !value)}
+              style={({ pressed }) => [
+                styles.carModeToggle,
+                carMode ? styles.carModeToggleActive : null,
+                pressed ? styles.pressed : null,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.carModeToggleText,
+                  carMode ? styles.carModeToggleTextActive : null,
+                ]}
+              >
+                CAR
+              </Text>
+            </Pressable>
+
+            <Pressable
               disabled={arrivalPending}
               onPress={() => void confirmArrival()}
               style={({ pressed }) => [
                 styles.arrivedButton,
                 arrivedDetected ? styles.arrivedButtonDetected : null,
+                carMode ? styles.arrivedButtonCarMode : null,
                 pressed ? styles.pressed : null,
                 arrivalPending ? styles.disabled : null,
               ]}
@@ -660,7 +740,12 @@ export function NavigationScreen({ stop, onClose, onArrived }: Props) {
               {arrivalPending ? (
                 <ActivityIndicator color="#ffffff" />
               ) : (
-                <Text style={styles.arrivedButtonText}>
+                <Text
+                  style={[
+                    styles.arrivedButtonText,
+                    carMode ? styles.arrivedButtonTextCarMode : null,
+                  ]}
+                >
                   {arrivedDetected ? "Confirm Arrived" : "Arrived"}
                 </Text>
               )}
@@ -693,11 +778,21 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
   },
 
+  bottomAreaCarMode: {
+    paddingBottom: 22,
+  },
+
   destinationCard: {
     backgroundColor: "rgba(35,49,63,0.94)",
     borderRadius: 17,
     paddingHorizontal: 13,
     paddingVertical: 9,
+  },
+
+  destinationCardCarMode: {
+    borderRadius: 18,
+    paddingHorizontal: 15,
+    paddingVertical: 12,
   },
 
   destinationHeader: {
@@ -710,6 +805,15 @@ const styles = StyleSheet.create({
   destinationIdentity: {
     flex: 1,
     minWidth: 0,
+  },
+
+  destinationAddressCompact: {
+    color: "rgba(255,255,255,0.66)",
+    flexShrink: 1,
+    fontSize: 10,
+    fontWeight: "700",
+    maxWidth: 146,
+    textAlign: "right",
   },
 
   typeLabel: {
@@ -793,6 +897,34 @@ const styles = StyleSheet.create({
     gap: 6,
   },
 
+  carModeToggle: {
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.12)",
+    borderColor: "rgba(255,255,255,0.24)",
+    borderRadius: 14,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 44,
+    minWidth: 54,
+    paddingHorizontal: 12,
+  },
+
+  carModeToggleActive: {
+    backgroundColor: "#f0c987",
+    borderColor: "#f0c987",
+  },
+
+  carModeToggleText: {
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.5,
+  },
+
+  carModeToggleTextActive: {
+    color: "#23313f",
+  },
+
   backButton: {
     alignItems: "center",
     backgroundColor: "rgba(255,255,255,0.97)",
@@ -818,6 +950,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
 
+  arrivedButtonCarMode: {
+    minHeight: 52,
+  },
+
   arrivedButtonDetected: {
     backgroundColor: "#5f735c",
   },
@@ -826,6 +962,10 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontSize: 15,
     fontWeight: "900",
+  },
+
+  arrivedButtonTextCarMode: {
+    fontSize: 17,
   },
 
   loadingCard: {
