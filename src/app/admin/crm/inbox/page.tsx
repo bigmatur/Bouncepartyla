@@ -15,6 +15,7 @@ import { createTaskAction,
 import CrmReplyForm from "./[conversationId]/CrmReplyForm";
 import MarkConversationRead from "./MarkConversationRead";
 import CrmCustomerContext from "./CrmCustomerContext";
+import CrmContextFloatingPanel from "./CrmContextFloatingPanel";
 import CrmMobileInbox from "./CrmMobileInbox";
 
 import {
@@ -87,6 +88,7 @@ function channelLabel(
   if (normalized === "instagram") return "INSTAGRAM";
   if (normalized === "sms") return "SMS";
   if (normalized === "email") return "EMAIL";
+  if (normalized === "whatsapp") return "WHATSAPP";
 
   return normalized
     ? normalized.toUpperCase()
@@ -907,6 +909,7 @@ export default async function CrmInboxPage({
             "sms",
             "email",
             "instagram",
+            "whatsapp",
           ].includes(
             String(
               item.channel || "",
@@ -929,6 +932,7 @@ export default async function CrmInboxPage({
     "sms",
     "email",
     "instagram",
+    "whatsapp",
   ].includes(
     replyChannel,
   );
@@ -1056,8 +1060,8 @@ export default async function CrmInboxPage({
       )}
 
       <section className="hidden overflow-hidden rounded-[28px] border border-[#ded7cd] bg-white shadow-[0_10px_35px_rgba(0,0,0,0.035)] lg:block">
-        <div className="grid h-[clamp(620px,72vh,840px)] min-h-0 xl:grid-cols-[360px_minmax(0,1fr)_330px]">
-          <aside className="flex min-h-0 flex-col border-b border-[#e7dfd4] bg-[#faf8f5] xl:border-b-0 xl:border-r">
+        <div className="grid h-[clamp(640px,74vh,900px)] min-h-0 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[340px_minmax(0,1fr)_320px]">
+          <aside className="flex min-h-0 flex-col border-b border-[#e7dfd4] bg-[#faf8f5] lg:border-b-0 lg:border-r">
             <div className="shrink-0 border-b border-[#e7dfd4] bg-white p-3">
               <form
                 action="/admin/crm/inbox"
@@ -1417,7 +1421,7 @@ export default async function CrmInboxPage({
 
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="max-w-[320px] truncate text-lg font-bold text-[#25221f]">
+          <h2 className="max-w-[420px] truncate text-lg font-bold text-[#25221f] xl:max-w-[520px]">
             {conversationPersonName({
               conversation: selectedConversation,
               lead: selectedLead,
@@ -1487,7 +1491,7 @@ export default async function CrmInboxPage({
           )}
 
           {selectedLead?.requested_product && (
-            <span className="max-w-[260px] truncate">
+            <span className="max-w-[340px] truncate xl:max-w-[420px]">
               {selectedLead.requested_product}
             </span>
           )}
@@ -1495,7 +1499,25 @@ export default async function CrmInboxPage({
       </div>
     </div>
 
-    <div className="flex shrink-0 items-center gap-2">
+    <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+      <CrmContextFloatingPanel className="2xl:hidden">
+        <CrmCustomerContext
+          selectedConversation={selectedConversation}
+          selectedLead={selectedLead}
+          contextCustomer={contextCustomer}
+          contextBooking={contextBooking}
+          updateLeadNotesAction={updateCrmLeadNotesAction}
+          updateLeadFollowUpAction={updateCrmLeadFollowUpAction}
+          createTaskAction={createTaskAction}
+          openTasks={crmOpenTasks}
+          completeTaskAction={completeTaskAction}
+          updateLeadStatusAction={updateCrmLeadStatusAction}
+          pipelineHistory={crmPipelineHistory}
+          resendContractAction={resendUpdatedContractManualAction}
+          floating
+        />
+      </CrmContextFloatingPanel>
+
       <form action={setCrmConversationClosedAction}>
         <input
           type="hidden"
@@ -1524,20 +1546,20 @@ export default async function CrmInboxPage({
       </form>
 
         {selectedLead?.id && (
-          <Link
+          <a
             href={`/admin/crm/events/${selectedLead.id}`}
             className="rounded-full border border-[#d8cec0] bg-white px-3 py-2 text-xs font-semibold text-[#443d37] transition hover:bg-[#f7f3ed]"
           >
             Event Center
-          </Link>
+          </a>
         )}
 
-        <Link
+        <a
           href={`/admin/crm/inbox/${selectedConversation.id}`}
           className="rounded-full border border-[#d8cec0] bg-white px-3 py-2 text-xs font-semibold text-[#443d37] transition hover:bg-[#f7f3ed]"
         >
           Full page
-        </Link>
+        </a>
       </div>
     </div>
   </header>
@@ -1570,7 +1592,7 @@ export default async function CrmInboxPage({
                           >
                             <div
                               className={[
-                                "max-w-[78%] rounded-[18px] px-3.5 py-2.5 shadow-sm",
+                                "max-w-[84%] rounded-[18px] px-3.5 py-2.5 shadow-sm xl:max-w-[80%]",
                                 outbound
                                   ? "rounded-br-md bg-[#dcebd7] text-[#20251f]"
                                   : "rounded-bl-md bg-white text-[#292622]",
@@ -1723,7 +1745,7 @@ export default async function CrmInboxPage({
                 </div>
 
                 <footer className="relative z-20 shrink-0 border-t border-[#e1d9cf] bg-white px-5 pb-4 pt-2 shadow-[0_-6px_18px_rgba(0,0,0,0.025)]">
-  <div className="mx-auto w-full max-w-4xl">
+  <div className="mx-auto w-full">
     {selectedConversation.status !== "closed" &&
       canReply && (
         <CrmReplyForm
@@ -1779,7 +1801,8 @@ export default async function CrmInboxPage({
               </div>
             )}
           </main>
-           <CrmCustomerContext
+          <div className="hidden 2xl:block">
+            <CrmCustomerContext
             selectedConversation={selectedConversation}
             selectedLead={selectedLead}
             contextCustomer={contextCustomer}
@@ -1793,6 +1816,7 @@ export default async function CrmInboxPage({
           pipelineHistory={crmPipelineHistory}
           resendContractAction={resendUpdatedContractManualAction}
           />
+           </div>
        </div>
       </section>
 

@@ -31,6 +31,7 @@ function channelLabel(channel: string) {
   if (normalized === "sms") return "SMS";
   if (normalized === "email") return "Email";
   if (normalized === "instagram") return "Instagram";
+  if (normalized === "whatsapp") return "WhatsApp";
   return normalized || "CRM";
 }
 
@@ -120,7 +121,7 @@ export default async function CrmConversationPage({
     .find(
       (item) =>
         item.direction === "inbound" &&
-        ["sms", "email", "instagram"].includes(
+        ["sms", "email", "instagram", "whatsapp"].includes(
           String(item.channel || "").trim().toLowerCase(),
         ),
     );
@@ -131,7 +132,7 @@ export default async function CrmConversationPage({
     .trim()
     .toLowerCase();
 
-  const canReply = ["sms", "email", "instagram"].includes(replyChannel);
+  const canReply = ["sms", "email", "instagram", "whatsapp"].includes(replyChannel);
   const isClosed = conversation.data.status === "closed";
 
   return (
@@ -340,12 +341,12 @@ export default async function CrmConversationPage({
                 </div>
               )}
               {lead?.id && (
-                <Link
+                <a
                   href={`/admin/crm/events/${lead.id}`}
                   className="mt-4 block rounded-full bg-[#23313f] px-4 py-2 text-center text-xs font-semibold text-white transition hover:bg-[#192833] active:scale-[0.98]"
                 >
                   Open Event Center
-                </Link>
+                </a>
               )}
             </section>
           )}
