@@ -163,6 +163,11 @@ function isMissingTableError(error: any) {
   );
 }
 
+function isAccessDeniedError(error: any) {
+  const message = String(error?.message || "").toLowerCase();
+  return message.includes("permission denied");
+}
+
 function normalizePermissionList(values: unknown) {
   if (!Array.isArray(values)) {
     return [] as AppPermission[];
@@ -267,6 +272,10 @@ async function fetchProfileRows(supabase: any) {
       return result.data || [];
     }
 
+    if (isMissingTableError(result.error) || isAccessDeniedError(result.error)) {
+      return [];
+    }
+
     if (!isMissingColumnError(result.error)) {
       throw new Error(result.error.message);
     }
@@ -293,6 +302,10 @@ async function fetchDriverRows(supabase: any) {
       return result.data || [];
     }
 
+    if (isMissingTableError(result.error) || isAccessDeniedError(result.error)) {
+      return [];
+    }
+
     if (!isMissingColumnError(result.error)) {
       throw new Error(result.error.message);
     }
@@ -305,7 +318,7 @@ async function fetchDirectoryRows(supabase: any) {
   const result = await supabase.rpc("admin_access_user_directory");
 
   if (result.error) {
-    if (isMissingTableError(result.error)) {
+    if (isMissingTableError(result.error) || isAccessDeniedError(result.error)) {
       return [];
     }
 
@@ -323,7 +336,7 @@ async function fetchStoredRoles(supabase: any) {
     .order("name", { ascending: true });
 
   if (result.error) {
-    if (isMissingTableError(result.error)) {
+    if (isMissingTableError(result.error) || isAccessDeniedError(result.error)) {
       return [];
     }
 
@@ -525,7 +538,7 @@ export async function fetchAccessAuditLog(supabase: any): Promise<AccessAuditEnt
     .limit(100);
 
   if (result.error) {
-    if (isMissingTableError(result.error)) {
+    if (isMissingTableError(result.error) || isAccessDeniedError(result.error)) {
       return [];
     }
 
