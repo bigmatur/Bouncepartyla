@@ -1,9 +1,5 @@
 import Link from "next/link";
 
-const MARKETING_SITE_URL =
-  String(process.env.NEXT_PUBLIC_MARKETING_SITE_URL || "").trim() ||
-  "https://bouncepartyla.com";
-
 export default function PublicBookingShell({
   children,
   marketingMode = false,
@@ -11,7 +7,7 @@ export default function PublicBookingShell({
   children: React.ReactNode;
   marketingMode?: boolean;
 }) {
-  const homeHref = marketingMode ? "/" : MARKETING_SITE_URL;
+  const homeHref = "/";
 
   return (
     <div className="min-h-screen bg-[#f7f3ec] text-[#1c1b18]">
