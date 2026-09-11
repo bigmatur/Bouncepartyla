@@ -50,10 +50,6 @@ export async function generateMetadata({
       product?.short_description ||
       product?.description ||
       "Bounce Party LA rental details.",
-    robots: {
-      index: false,
-      follow: true,
-    },
   };
 }
 

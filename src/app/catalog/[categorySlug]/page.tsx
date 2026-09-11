@@ -37,10 +37,6 @@ export async function generateMetadata({
     description:
       category?.description ||
       "Browse Bounce Party LA rentals and continue into booking.",
-    robots: {
-      index: false,
-      follow: true,
-    },
   };
 }
 
