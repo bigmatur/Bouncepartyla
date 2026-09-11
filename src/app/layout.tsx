@@ -9,6 +9,9 @@ export const metadata: Metadata = {
   },
   description:
     "Modern bounce houses, soft play, bubble houses and party rentals in Los Angeles.",
+  verification: {
+    google: "wnVQFap2MOkILLPhsuryVzyLTUnBiXL4e61MaAWM0TE",
+  },
 };
 
 export default function RootLayout({
