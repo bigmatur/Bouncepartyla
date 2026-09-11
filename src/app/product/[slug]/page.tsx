@@ -44,8 +44,8 @@ export async function generateMetadata({
 
   return {
     title: product
-      ? `${product.public_title || product.name} | Bounce Party LA Booking`
-      : "Rental | Bounce Party LA",
+      ? product.public_title || product.name
+      : "Rental",
     description:
       product?.short_description ||
       product?.description ||

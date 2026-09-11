@@ -4,7 +4,7 @@ import Link from "next/link";
 import PublicBookingShell from "@/components/public/PublicBookingShell";
 
 export const metadata: Metadata = {
-  title: "Custom Party Decor Los Angeles | Bounce Party LA",
+  title: "Custom Party Decor Los Angeles",
   description:
     "Custom party decor, photo zone elements and event styling from Bounce Party LA in Los Angeles.",
   alternates: {

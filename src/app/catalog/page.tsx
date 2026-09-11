@@ -9,7 +9,7 @@ import {
 } from "@/lib/customer/public-catalog";
 
 export const metadata: Metadata = {
-  title: "Party Rentals | Bounce Party LA",
+  title: "Party Rentals",
   description:
     "Browse modern bounce houses, soft play, bubble houses and party rentals from Bounce Party LA.",
 };

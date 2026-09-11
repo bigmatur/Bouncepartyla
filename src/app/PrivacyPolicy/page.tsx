@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import PublicBookingShell from "@/components/public/PublicBookingShell";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy | Bounce Party LA",
+  title: "Privacy Policy",
   description: "Privacy Policy for Bounce Party LA.",
   alternates: {
     canonical: "/PrivacyPolicy",

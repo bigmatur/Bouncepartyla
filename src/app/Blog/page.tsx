@@ -4,7 +4,7 @@ import Link from "next/link";
 import PublicBookingShell from "@/components/public/PublicBookingShell";
 
 export const metadata: Metadata = {
-  title: "Bounce House Rental in Los Angeles | Bounce Party LA",
+  title: "Bounce House Rental in Los Angeles",
   description:
     "Bounce house rentals in Los Angeles for birthdays, parties and special events. Explore modern bounce houses, slide combos, soft play and Bubble House rentals from Bounce Party LA.",
   alternates: {

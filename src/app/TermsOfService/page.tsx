@@ -4,7 +4,7 @@ import Link from "next/link";
 import PublicBookingShell from "@/components/public/PublicBookingShell";
 
 export const metadata: Metadata = {
-  title: "Terms of Service | Bounce Party LA",
+  title: "Terms of Service",
   description:
     "Terms of Service for the Bounce Party LA website and online booking services.",
   alternates: {

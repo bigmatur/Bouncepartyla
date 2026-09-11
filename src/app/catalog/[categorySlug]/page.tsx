@@ -32,8 +32,8 @@ export async function generateMetadata({
 
   return {
     title: category
-      ? `${category.name} | Bounce Party LA Booking`
-      : "Rentals | Bounce Party LA",
+      ? category.name
+      : "Rentals",
     description:
       category?.description ||
       "Browse Bounce Party LA rentals and continue into booking.",
