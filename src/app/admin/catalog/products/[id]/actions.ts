@@ -32,15 +32,6 @@ function getBoolean(formData: FormData, key: string) {
   return value === "on" || value === "true" || value === "1";
 }
 
-function parseGalleryUrls(value: string | null) {
-  if (!value) return [];
-
-  return value
-    .split(/\r?\n|,/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
 function isMissingColumnError(error: any, tableName: string, columnName: string) {
   const message = String(error?.message || "").toLowerCase();
   const code = String(error?.code || "").toLowerCase();
@@ -217,7 +208,6 @@ export async function updateCatalogProductAction(formData: FormData) {
   const shortDescription = getNullableString(formData, "shortDescription");
   const fullDescription = getNullableString(formData, "fullDescription");
   const publicTitle = getNullableString(formData, "publicTitle");
-  const galleryUrls = parseGalleryUrls(getNullableString(formData, "galleryUrls"));
   const whatIncluded = getNullableString(formData, "whatIncluded");
   const whatNotIncluded = getNullableString(formData, "whatNotIncluded");
   const setupSurface = getNullableString(formData, "setupSurface");
@@ -263,7 +253,6 @@ export async function updateCatalogProductAction(formData: FormData) {
     public_title: publicTitle,
     short_description: shortDescription,
     description: fullDescription,
-    gallery_urls: galleryUrls,
     what_included: whatIncluded,
     what_not_included: whatNotIncluded,
     setup_surface: setupSurface,
@@ -525,6 +514,89 @@ export async function removeCatalogProductPhotoAction(formData: FormData) {
   if (error) {
     throw new Error(error.message);
   }
+
+  revalidateProduct(productId);
+}
+
+export async function uploadCatalogProductGalleryPhotosAction(formData: FormData) {
+  const supabase = await createClient();
+  const productId = getString(formData, "productId");
+
+  const files = formData.getAll("photos").filter((value): value is File => value instanceof File && value.size > 0);
+
+  if (!productId) throw new Error("Missing product id.");
+  if (!files.length) throw new Error("Choose at least one image file.");
+
+  const { data: product, error: productError } = await supabase
+    .from("products")
+    .select("gallery_urls")
+    .eq("id", productId)
+    .maybeSingle();
+
+  if (productError) throw new Error(productError.message);
+  if (!product) throw new Error("Product not found.");
+
+  const gallery = Array.isArray(product.gallery_urls)
+    ? product.gallery_urls.map(String).filter(Boolean)
+    : [];
+
+  for (const [index, file] of files.entries()) {
+    const fileName = cleanFileName(file.name || "photo.jpg");
+    const filePath = "products/" + productId + "/gallery/" + Date.now() + "-" + index + "-" + fileName;
+
+    const { error: uploadError } = await supabase.storage
+      .from("catalog-images")
+      .upload(filePath, file, { cacheControl: "3600", upsert: false, contentType: file.type || "image/jpeg" });
+
+    if (uploadError) throw new Error(uploadError.message);
+
+    const { data } = supabase.storage.from("catalog-images").getPublicUrl(filePath);
+    gallery.push(data.publicUrl);
+  }
+
+  const { error: updateError } = await supabase
+    .from("products")
+    .update({
+      gallery_urls: Array.from(new Set(gallery)),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", productId);
+
+  if (updateError) throw new Error(updateError.message);
+
+  revalidateProduct(productId);
+}
+
+export async function removeCatalogProductGalleryPhotoAction(formData: FormData) {
+  const supabase = await createClient();
+  const productId = getString(formData, "productId");
+  const photoUrl = getString(formData, "photoUrl");
+
+  if (!productId) throw new Error("Missing product id.");
+  if (!photoUrl) throw new Error("Missing gallery photo.");
+
+  const { data: product, error: productError } = await supabase
+    .from("products")
+    .select("gallery_urls")
+    .eq("id", productId)
+    .maybeSingle();
+
+  if (productError) throw new Error(productError.message);
+  if (!product) throw new Error("Product not found.");
+
+  const gallery = Array.isArray(product.gallery_urls)
+    ? product.gallery_urls.map(String).filter(Boolean)
+    : [];
+
+  const { error: updateError } = await supabase
+    .from("products")
+    .update({
+      gallery_urls: gallery.filter((url) => url !== photoUrl),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", productId);
+
+  if (updateError) throw new Error(updateError.message);
 
   revalidateProduct(productId);
 }

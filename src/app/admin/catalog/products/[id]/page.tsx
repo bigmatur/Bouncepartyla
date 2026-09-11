@@ -2,11 +2,14 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import ProductComponentsManager from "./components/ProductComponentsManager";
 import SafePhotoUploadForm from "@/components/admin/SafePhotoUploadForm";
+import SafeGalleryUploadForm from "@/components/admin/SafeGalleryUploadForm";
 import {
   cloneCatalogProductAction,
   removeCatalogProductPhotoAction,
+  removeCatalogProductGalleryPhotoAction,
   updateCatalogProductAction,
   uploadCatalogProductPhotoAction,
+  uploadCatalogProductGalleryPhotosAction,
 } from "./actions";
 
 function money(value: number | string | null | undefined) {
@@ -26,11 +29,6 @@ function numberValue(value: any, fallback = "") {
 function textValue(value: any) {
   if (value === null || value === undefined) return "";
   return String(value);
-}
-
-function galleryText(value: any) {
-  if (!Array.isArray(value)) return "";
-  return value.filter(Boolean).join("\n");
 }
 
 function getRelationOne(value: any) {
@@ -245,6 +243,9 @@ export default async function CatalogProductDetailPage({
   );
 
   const active = product.active !== false;
+  const galleryUrls = Array.isArray((product as any).gallery_urls)
+    ? (product as any).gallery_urls.map(String).filter(Boolean)
+    : [];
 
   return (
     <div className="space-y-6">
@@ -385,6 +386,52 @@ export default async function CatalogProductDetailPage({
 
           <section className="rounded-[30px] border border-black/5 bg-white p-5 shadow-[0_12px_40px_rgba(0,0,0,0.04)]">
             <h3 className="text-lg font-semibold text-[#1f1e1b]">
+              Product gallery
+            </h3>
+            <p className="mt-1 text-sm text-[#6c6258]">
+              Additional customer-facing photos.
+            </p>
+            {galleryUrls.length > 0 && (
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                {galleryUrls.map((photoUrl) => (
+                  <div
+                    key={photoUrl}
+                    className="relative aspect-square overflow-hidden rounded-2xl bg-[#efe7dc]"
+                  >
+                    <img
+                      src={photoUrl}
+                      alt={product.name}
+                      className="h-full w-full object-cover"
+                    />
+                    <form action={removeCatalogProductGalleryPhotoAction}>
+                      <input
+                        type="hidden"
+                        name="productId"
+                        value={product.id}
+                      />
+                      <input type="hidden" name="photoUrl" value={photoUrl} />
+                      <button
+                        type="submit"
+                        className="absolute right-2 top-2 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-red-700 shadow"
+                      >
+                        Remove
+                      </button>
+                    </form>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="mt-4">
+              <SafeGalleryUploadForm
+                action={uploadCatalogProductGalleryPhotosAction}
+                hiddenFields={[{ name: "productId", value: product.id }]}
+                buttonLabel="Upload photos"
+              />
+            </div>
+          </section>
+          <section className="rounded-[30px] border border-black/5 bg-white p-5 shadow-[0_12px_40px_rgba(0,0,0,0.04)]">
+            <h3 className="text-lg font-semibold text-[#1f1e1b]">
               Quick summary
             </h3>
 
@@ -523,18 +570,6 @@ export default async function CatalogProductDetailPage({
                     rows={5}
                     defaultValue={textValue(product.description)}
                     placeholder="Full product description for detailed customer view..."
-                  />
-                </Field>
-
-                <Field
-                  label="Gallery URLs"
-                  hint="One URL per line or comma-separated list."
-                >
-                  <Textarea
-                    name="galleryUrls"
-                    rows={3}
-                    defaultValue={galleryText((product as any).gallery_urls)}
-                    placeholder="https://.../photo-1.jpg"
                   />
                 </Field>
 
