@@ -777,3 +777,34 @@ export async function setTaskCompletedFromMobile(params: {
 
   return { success: true as const, data: result.data.data };
 }
+
+export type MobileRouteWeatherForecast = {
+  temperatureF: number | null;
+  condition: string | null;
+  windMph: number | null;
+  gustMph: number | null;
+  forecastTime: string | null;
+};
+
+export async function loadDriverRouteWeatherFromMobile(date: string) {
+  const result = await authenticatedFetch<{
+    success: true;
+    data: Record<string, MobileRouteWeatherForecast | null>;
+  }>(`/api/mobile/driver/weather?date=${encodeURIComponent(date)}`, {
+    method: "GET",
+  });
+
+  if (!result.success) {
+    return {
+      success: false as const,
+      error:
+        result.error ||
+        "Could not load route weather.",
+    };
+  }
+
+  return {
+    success: true as const,
+    data: result.data?.data || {},
+  };
+}

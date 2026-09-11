@@ -1,4 +1,8 @@
 import { supabase } from "../../lib/supabase";
+import {
+  loadDriverRouteWeatherFromMobile,
+  type MobileRouteWeatherForecast,
+} from "../../lib/mobileApi";
 
 export type MobileDriverProfile = {
   id: string;
@@ -36,6 +40,7 @@ export type MobileRouteStop = {
   proof_photo_uploaded?: boolean | null;
   driver_notes?: string | null;
   sort_order: number | null;
+  weather?: MobileRouteWeatherForecast | null;
 };
 
 export type MobileChecklistItem = {
@@ -900,13 +905,21 @@ export async function loadDriverRoute(
         ],
       )
       .order(
-        "scheduled_start_time",
+        "sort_order",
         {
           ascending: true,
+          nullsFirst: false,
         },
       )
       .order(
-        "sort_order",
+        "scheduled_start_time",
+        {
+          ascending: true,
+          nullsFirst: false,
+        },
+      )
+      .order(
+        "created_at",
         {
           ascending: true,
         },
@@ -920,13 +933,39 @@ export async function loadDriverRoute(
     );
   }
 
+  const stops =
+    (stopsResult.data ||
+      []) as MobileRouteStop[];
+
+  try {
+    const weatherResult =
+      await loadDriverRouteWeatherFromMobile(
+        date,
+      );
+
+    if (weatherResult.success) {
+      return {
+        driver,
+        date,
+        stops: stops.map(
+          (stop) => ({
+            ...stop,
+            weather:
+              weatherResult.data[
+                stop.id
+              ] || null,
+          }),
+        ),
+      };
+    }
+  } catch {
+    // Weather is optional and must never block the driver route.
+  }
+
   return {
     driver,
     date,
-
-    stops:
-      (stopsResult.data ||
-        []) as MobileRouteStop[],
+    stops,
   };
 }
 

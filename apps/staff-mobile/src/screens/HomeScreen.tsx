@@ -63,6 +63,16 @@ function formatRouteDate(value: string) {
   }).format(date);
 }
 
+function dayOfMonth(value: string) {
+  const date = new Date(`${value}T12:00:00`);
+
+  if (Number.isNaN(date.getTime())) {
+    return "--";
+  }
+
+  return String(date.getDate());
+}
+
 function formatTime(value: string | null) {
   if (!value) {
     return "--";
@@ -830,6 +840,44 @@ useEffect(() => {
       activeStop?.customer_phone,
     ]);
 
+  const messageCustomer =
+    useCallback(async () => {
+      const phone = String(
+        activeStop?.customer_phone ||
+          "",
+      )
+        .replace(
+          /[^0-9+]/g,
+          "",
+        )
+        .trim();
+
+      if (!phone) {
+        setError(
+          "Customer phone number is not available.",
+        );
+        return;
+      }
+
+      const url = `sms:${phone}`;
+
+      const supported =
+        await Linking.canOpenURL(
+          url,
+        );
+
+      if (!supported) {
+        setError(
+          "SMS is not available on this device.",
+        );
+        return;
+      }
+
+      await Linking.openURL(url);
+    }, [
+      activeStop?.customer_phone,
+    ]);
+
   const takeProofPhoto =
     useCallback(async () => {
       if (
@@ -1430,7 +1478,7 @@ useEffect(() => {
           styles.calendarIconText
         }
       >
-        31
+        {dayOfMonth(selectedDate)}
       </Text>
     </View>
 
@@ -1796,29 +1844,51 @@ useEffect(() => {
                   "Address not available"}
               </Text>
 
-              {isManualStopSelection &&
-              nextScheduledStop ? (
-                <Pressable
-                  onPress={() =>
-                    setSelectedStopId(
-                      null,
-                    )
-                  }
-                  style={({
-                    pressed,
-                  }) => [
-                    styles.returnToNextButton,
+              {activeStop.weather ? (
+                <View style={{ marginTop: 12 }}>
+                  <Text
+                    style={{
+                      color: "#f0c987",
+                      fontSize: 14,
+                      fontWeight: "800",
+                    }}
+                  >
+                    {activeStop.weather.temperatureF != null
+                      ? `${Math.round(activeStop.weather.temperatureF)}°F`
+                      : "Weather"}
+                    {activeStop.weather.condition
+                      ? ` · ${activeStop.weather.condition}`
+                      : ""}
+                  </Text>
 
-                    pressed
-                      ? styles.pressed
-                      : null,
+                  <Text
+                    style={{
+                      color: "rgba(255,255,255,0.78)",
+                      fontSize: 12,
+                      fontWeight: "700",
+                      marginTop: 3,
+                    }}
+                  >
+                    Wind{" "}
+                    {activeStop.weather.windMph != null
+                      ? `${Math.round(activeStop.weather.windMph)} mph`
+                      : "—"}
+                    {activeStop.weather.gustMph != null
+                      ? ` · Gusts ${Math.round(activeStop.weather.gustMph)} mph`
+                      : ""}
+                  </Text>
+                </View>
+              ) : null}
+
+              {isManualStopSelection && nextScheduledStop ? (
+                <Pressable
+                  onPress={() => setSelectedStopId(null)}
+                  style={({ pressed }) => [
+                    styles.returnToNextButton,
+                    pressed ? styles.pressed : null,
                   ]}
                 >
-                  <Text
-                    style={
-                      styles.returnToNextButtonText
-                    }
-                  >
+                  <Text style={styles.returnToNextButtonText}>
                     Return to next scheduled stop
                   </Text>
                 </Pressable>
@@ -1909,28 +1979,40 @@ useEffect(() => {
                   </Text>
                 </View>
 
-                <Pressable
-                  onPress={() =>
-                    void callCustomer()
-                  }
-                  style={({
-                    pressed,
-                  }) => [
-                    styles.callButton,
-
-                    pressed
-                      ? styles.pressed
-                      : null,
-                  ]}
-                >
-                  <Text
-                    style={
-                      styles.callButtonText
+                <View style={styles.contactActions}>
+                  <Pressable
+                    onPress={() =>
+                      void callCustomer()
                     }
+                    style={({
+                      pressed,
+                    }) => [
+                      styles.iconActionButton,
+                      pressed
+                        ? styles.pressed
+                        : null,
+                    ]}
                   >
-                    Call Customer
-                  </Text>
-                </Pressable>
+                    <Text style={styles.iconActionText}>📞</Text>
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() =>
+                      void messageCustomer()
+                    }
+                    style={({
+                      pressed,
+                    }) => [
+                      styles.iconActionButton,
+                      styles.iconActionButtonDark,
+                      pressed
+                        ? styles.pressed
+                        : null,
+                    ]}
+                  >
+                    <Text style={styles.iconActionText}>💬</Text>
+                  </Pressable>
+                </View>
               </View>
 
               {/* PAYMENT */}
@@ -2675,6 +2757,18 @@ useEffect(() => {
                               "No address"}
                           </Text>
                         </View>
+
+                        {stop.weather ? (
+                          <Text
+                            style={{ color: "#5f735c", fontSize: 11, fontWeight: "800", marginTop: 5 }}
+                            numberOfLines={1}
+                          >
+                            {stop.weather.temperatureF != null ? `${Math.round(stop.weather.temperatureF)}°` : "Weather"}
+                            {" · Wind "}
+                            {stop.weather.windMph != null ? `${Math.round(stop.weather.windMph)} mph` : "—"}
+                            {stop.weather.gustMph != null ? ` · Gusts ${Math.round(stop.weather.gustMph)} mph` : ""}
+                          </Text>
+                        ) : null}
 
                         <View
                           style={
@@ -3488,19 +3582,28 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
 
-  callButton: {
+  contactActions: {
     alignItems: "center",
-    borderColor: "rgba(255,255,255,0.22)",
-    borderRadius: 14,
-    borderWidth: 1,
-    justifyContent: "center",
-    minHeight: 48,
-    paddingHorizontal: 14,
+    flexDirection: "row",
+    gap: 8,
   },
 
-  callButtonText: {
+  iconActionButton: {
+    alignItems: "center",
+    backgroundColor: "#2f8d67",
+    borderRadius: 14,
+    justifyContent: "center",
+    minHeight: 46,
+    minWidth: 46,
+  },
+
+  iconActionButtonDark: {
+    backgroundColor: "#23313f",
+  },
+
+  iconActionText: {
     color: "#ffffff",
-    fontSize: 12,
+    fontSize: 18,
     fontWeight: "900",
   },
 
