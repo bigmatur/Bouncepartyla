@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 
 import PublicBookingShell from "@/components/public/PublicBookingShell";
@@ -208,7 +209,13 @@ export default async function HomePage() {
               <Link key={category.id} href={`/catalog/${encodeURIComponent(category.slug)}`} className="group min-w-[72vw] snap-start sm:min-w-0">
                 <div className="relative aspect-[4/3] overflow-hidden rounded-[24px] bg-[#e9e3da]">
                   {category.image_url ? (
-                    <img src={category.image_url} alt={category.name} className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
+                    <Image
+                        src={category.image_url}
+                        alt={category.name}
+                        fill
+                        sizes="(min-width: 1024px) 33vw, (min-width: 640px) 50vw, 72vw"
+                        className="object-cover transition duration-500 group-hover:scale-[1.03]"
+                      />
                   ) : (
                     <div className="h-full w-full bg-[#e9e3da]" />
                   )}
@@ -246,7 +253,13 @@ export default async function HomePage() {
                   <Link key={product.id} href={`/product/${encodeURIComponent(product.public_slug)}`} className="group min-w-[74vw] snap-start sm:min-w-0">
                     <article>
                       <div className="relative aspect-[4/4.6] overflow-hidden rounded-[26px] bg-[#ddd4c7]">
-                        <img src={product.image_url || ""} alt={product.public_title || product.name} className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.025]" />
+                        <Image
+                          src={product.image_url || ""}
+                          alt={product.public_title || product.name}
+                          fill
+                          sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 74vw"
+                          className="object-cover transition duration-500 group-hover:scale-[1.025]"
+                        />
                         <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-black/65 to-transparent" />
                         <div className="absolute bottom-5 left-5 right-5 flex items-end justify-between gap-4 text-white">
                           <div>
@@ -289,7 +302,13 @@ export default async function HomePage() {
 
             <div className="relative min-h-[340px] overflow-hidden rounded-[24px] sm:min-h-[540px] sm:rounded-[28px] bg-[#ddd4c7] ">
               {featuredPackage?.image_url ? (
-                <img src={featuredPackage.image_url} alt={featuredPackage.public_title || featuredPackage.name} className="absolute inset-0 h-full w-full object-cover" />
+                <Image
+                  src={featuredPackage.image_url}
+                  alt={featuredPackage.public_title || featuredPackage.name}
+                  fill
+                  sizes="(min-width: 1024px) 59vw, 100vw"
+                  className="object-cover"
+                />
               ) : null}
               {featuredPackage ? (
                 <div className="absolute right-3 top-3 max-w-[190px] rounded-[18px] bg-[#f7f3ec]/95 p-4 sm:right-4 sm:top-4 sm:max-w-[240px] sm:rounded-[20px] sm:p-5 shadow-sm backdrop-blur">
@@ -313,7 +332,7 @@ export default async function HomePage() {
               product ? (
                 <Link key={`${product.id}-${index}`} href={`/product/${encodeURIComponent(product.public_slug)}`} className="group min-w-[76vw] snap-start sm:min-w-0">
                   <div className="relative aspect-[4/3] overflow-hidden rounded-[22px] bg-[#e8e1d8]">
-                    <img src={product.image_url || ""} alt={product.public_title || product.name} className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.025]" />
+                    <Image src={product.image_url || ""} alt={product.public_title || product.name} fill sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 76vw" className="object-cover transition duration-500 group-hover:scale-[1.025]" />
                   </div>
                 </Link>
               ) : null,
@@ -382,7 +401,7 @@ export default async function HomePage() {
         <section className="mx-auto max-w-[1380px] px-5 pb-16 sm:px-7 sm:pb-20">
           <div className="relative overflow-hidden rounded-[30px] bg-[#eee7dc]">
             {heroProduct?.image_url ? (
-              <img src={heroProduct.image_url} alt="" className="absolute inset-0 h-full w-full object-cover opacity-25" />
+              <Image src={heroProduct.image_url} alt="" fill sizes="(min-width: 1380px) 1380px, 100vw" className="object-cover opacity-25" />
             ) : null}
             <div className="absolute inset-0 bg-[#eee7dc]/65" />
             <div className="relative mx-auto max-w-3xl px-6 py-16 text-center sm:px-10 sm:py-20">

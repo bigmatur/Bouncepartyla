@@ -4,6 +4,14 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "pzpnxexubweqseotnixv.supabase.co",
+      },
+    ],
+  },
   async redirects() {
     return [
       { source: "/BubbleHouse", destination: "/catalog/bubble-house", permanent: true },
