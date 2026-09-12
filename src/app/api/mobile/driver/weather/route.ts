@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-import { getUnifiedAccess, isStaffRole } from "@/lib/auth/access";
 import {
   getRouteWeatherForecast,
   routeLocalDateTimeToDate,
@@ -65,19 +64,21 @@ async function authenticate(request: Request) {
     return { response: unauthorized("Invalid or expired session.") } as const;
   }
 
-  const access = await getUnifiedAccess(supabase);
-  if (
-    !access.user ||
-    !access.isActive ||
-    !isStaffRole(access.role) ||
-    access.role !== "driver" ||
-    !access.can("routes.view") ||
-    !access.driverName
-  ) {
+  const driverResult = await supabase
+    .from("route_drivers")
+    .select("id, name")
+    .eq("auth_user_id", userResult.data.user.id)
+    .eq("active", true)
+    .is("deleted_at", null)
+    .order("sort_order", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (driverResult.error || !driverResult.data?.name) {
     return { response: forbidden("Driver route access required.") } as const;
   }
 
-  return { supabase, driverName: access.driverName } as const;
+  return { supabase, driverName: driverResult.data.name } as const;
 }
 
 export async function GET(request: Request) {
