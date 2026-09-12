@@ -94,7 +94,7 @@ export async function GET(request: Request) {
 
   const stopsResult = await auth.supabase
     .from("route_stops")
-    .select("id, booking_id, address, city, state, zip")
+    .select("id, booking_id, stop_date, scheduled_start_time, address, city, state, zip")
     .eq("stop_date", date)
     .eq("driver_name", auth.driverName)
     .in("stop_type", ["delivery", "pickup"]);
@@ -144,18 +144,25 @@ export async function GET(request: Request) {
         : null;
       const address = fullAddress(stop);
 
-      if (!booking?.event_date || !address) {
+      if (!address) {
         return [String(stop.id), null] as const;
       }
 
       let targetTime: Date;
+      const routeDate = String(stop.stop_date || "").trim();
+      const routeTime = String(stop.scheduled_start_time || "").trim();
+      if ((!routeDate || !routeTime) && !booking?.event_date) return [String(stop.id), null] as const;
       try {
         targetTime = routeLocalDateTimeToDate(
-          booking.event_date,
-          booking.event_start_time,
+          routeDate || booking?.event_date || "",
+          routeTime || booking?.event_start_time || "",
         );
       } catch {
         return [String(stop.id), null] as const;
+      }
+
+      if (targetTime.getTime() < Date.now() - 60 * 60 * 1000) {
+        targetTime = new Date();
       }
 
       const cacheKey = `${address.toLowerCase()}|${targetTime.toISOString()}`;
