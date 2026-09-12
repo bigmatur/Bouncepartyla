@@ -171,9 +171,10 @@ export async function GET(request: Request) {
       if (!cache.has(cacheKey)) {
         cache.set(
           cacheKey,
-          getRouteWeatherForecast({ address, targetTime }).catch(
-            () => null,
-          ),
+          getRouteWeatherForecast({ address, targetTime }).catch((error) => {
+            console.error("Driver weather lookup failed:", { address, targetTime: targetTime.toISOString(), error });
+            return null;
+          }),
         );
       }
 
