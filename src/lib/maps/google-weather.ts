@@ -97,6 +97,9 @@ async function readJsonResponse(response: Response) {
 }
 
 async function getGoogleMapsServerKey() {
+  const environmentApiKey = String(process.env.GOOGLE_MAPS_API_KEY || "").trim();
+  if (environmentApiKey) return environmentApiKey;
+
   const integration = await resolveIntegrationConnection("google_maps");
   const credentials = integration.credentials as Record<string, string>;
   const apiKey = String(credentials.server_api_key || "").trim();
