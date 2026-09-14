@@ -5,6 +5,7 @@ import {
   Image,
   Linking,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -489,6 +490,112 @@ const [
     onImmersiveChange,
   ]);
 
+  const openExternalNavigationForStop =
+    useCallback(async (
+      stopForNavigation: MobileRouteStop,
+      preferredProvider: "apple" | "google" | "auto" = "auto",
+    ) => {
+      const destination = addressText(stopForNavigation).trim();
+
+      if (!destination) {
+        setError("This stop does not have a valid destination address.");
+        return false;
+      }
+
+      const encodedDestination = encodeURIComponent(destination);
+
+      const appleUrl =
+        `http://maps.apple.com/?daddr=${encodedDestination}&dirflg=d`;
+
+      const googleAppUrl =
+        `comgooglemaps://?daddr=${encodedDestination}&directionsmode=driving`;
+
+      const googleWebUrl =
+        `https://www.google.com/maps/dir/?api=1&destination=${encodedDestination}&travelmode=driving`;
+
+      const urlCandidates =
+        preferredProvider === "apple"
+          ? [appleUrl, googleWebUrl]
+          : preferredProvider === "google"
+            ? [googleAppUrl, googleWebUrl, appleUrl]
+            : Platform.OS === "ios"
+              ? [appleUrl, googleWebUrl]
+              : [`google.navigation:q=${encodedDestination}&mode=d`, googleWebUrl];
+
+      for (const url of urlCandidates) {
+        const supported = await Linking.canOpenURL(url);
+
+        if (!supported) {
+          continue;
+        }
+
+        await Linking.openURL(url);
+        return true;
+      }
+
+      setError("No external navigation app is available on this device.");
+      return false;
+    }, []);
+
+  const chooseExternalMapProviderIOS =
+    useCallback(() =>
+      new Promise<"apple" | "google" | null>((resolve) => {
+        Alert.alert(
+          "Open navigation",
+          "Choose map app",
+          [
+            {
+              text: "Apple Maps",
+              onPress: () => resolve("apple"),
+            },
+            {
+              text: "Google Maps",
+              onPress: () => resolve("google"),
+            },
+            {
+              text: "Cancel",
+              style: "cancel",
+              onPress: () => resolve(null),
+            },
+          ],
+          {
+            cancelable: true,
+            onDismiss: () => resolve(null),
+          },
+        );
+      }),
+    []);
+
+  const openNavigationForStop =
+    useCallback(async (stopForNavigation: MobileRouteStop) => {
+      if (carModeEnabled) {
+        const provider =
+          Platform.OS === "ios"
+            ? await chooseExternalMapProviderIOS()
+            : "google";
+
+        if (!provider) {
+          return;
+        }
+
+        const openedExternally =
+          await openExternalNavigationForStop(
+            stopForNavigation,
+            provider,
+          );
+
+        if (openedExternally) {
+          return;
+        }
+      }
+
+      setNavigationStop(stopForNavigation);
+    }, [
+      carModeEnabled,
+      chooseExternalMapProviderIOS,
+      openExternalNavigationForStop,
+    ]);
+
   const deliveryPointStops = useMemo(
     () =>
       route?.stops.filter(
@@ -759,7 +866,7 @@ useEffect(() => {
         ) {
           await loadShiftDashboard();
 
-          setNavigationStop({
+          await openNavigationForStop({
             ...activeStop,
             status: "on_the_way",
           });
@@ -781,6 +888,7 @@ useEffect(() => {
       actionPending,
       loadRoute,
       loadShiftDashboard,
+      openNavigationForStop,
     ]);
 
   const markNavigationStopArrived =
@@ -2402,11 +2510,9 @@ useEffect(() => {
               {activeStatus ===
               "on_the_way" ? (
                 <Pressable
-                  onPress={() =>
-                    setNavigationStop(
-                      activeStop,
-                    )
-                  }
+                  onPress={() => {
+                    void openNavigationForStop(activeStop);
+                  }}
                   style={({
                     pressed,
                   }) => [

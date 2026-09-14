@@ -8,6 +8,7 @@ import {
   View,
 } from "react-native";
 import * as Location from "expo-location";
+import { useKeepAwake } from "expo-keep-awake";
 import {
   AudioGuidance,
   CameraPerspective,
@@ -111,6 +112,8 @@ export function NavigationScreen({
   onArrived,
   carModeDefault = false,
 }: Props) {
+  useKeepAwake("staff-mobile-navigation");
+
   const {
     navigationController,
     removeAllListeners,
@@ -151,21 +154,24 @@ export function NavigationScreen({
   }, [carModeDefault]);
 
   const toggleMute = useCallback(async () => {
-    const nextMuted = !muted;
+    setMuted((value) => !value);
+  }, []);
+
+  useEffect(() => {
+    if (!navigationReady) {
+      return;
+    }
 
     try {
       navigationController.setAudioGuidanceType(
-        nextMuted
+        muted
           ? AudioGuidance.SILENT
-          : AudioGuidance.VOICE_ALERTS_AND_GUIDANCE |
-              AudioGuidance.BLUETOOTH_AUDIO,
+          : AudioGuidance.VOICE_ALERTS_AND_GUIDANCE,
       );
     } catch (muteError) {
       console.warn("[Navigation] Could not update guidance audio:", muteError);
     }
-
-    setMuted(nextMuted);
-  }, [muted, navigationController]);
+  }, [muted, navigationController, navigationReady]);
 
   const refreshTripProgress = useCallback(async () => {
     try {
