@@ -45,7 +45,7 @@ const rentalLinks = [
 
 export default function BlogPage() {
   return (
-    <PublicBookingShell marketingMode>
+    <PublicBookingShell>
       <main>
         <section className="border-b border-black/[0.06]">
           <div className="mx-auto max-w-[1380px] px-5 py-16 sm:px-7 sm:py-24 lg:py-32">

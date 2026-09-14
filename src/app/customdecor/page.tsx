@@ -18,7 +18,7 @@ export const metadata: Metadata = {
 
 export default function CustomDecorPage() {
   return (
-    <PublicBookingShell marketingMode>
+    <PublicBookingShell>
       <main>
         <section className="border-b border-black/[0.06]">
           <div className="mx-auto max-w-5xl px-5 py-16 sm:px-7 sm:py-24">

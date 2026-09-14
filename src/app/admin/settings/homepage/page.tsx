@@ -185,10 +185,14 @@ export default async function HomepageContentSettingsPage() {
         </div>
       </section>
 
-      <form action={updateHomepageContentAction} className="space-y-6">
+      <form
+        action={updateHomepageContentAction}
+        className="space-y-6"
+        encType="multipart/form-data"
+      >
         <SettingCard
           title="Hero"
-          description="Main homepage message and the product photo used in the hero."
+          description="Main homepage message, optional header logo, and the image used in the hero."
         >
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Eyebrow">
@@ -238,6 +242,81 @@ export default async function HomepageContentSettingsPage() {
                 defaultValue={content.hero.body}
               />
             </Field>
+          </div>
+
+          <div className="mt-6 grid gap-4 md:grid-cols-2">
+            <div className="rounded-2xl border border-[#e6ddd1] bg-[#faf8f5] p-4">
+              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#9a7a49]">
+                Header logo
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                {content.hero.logoUrl ? (
+                  <img
+                    src={content.hero.logoUrl}
+                    alt="Header logo"
+                    className="h-12 w-12 rounded-lg object-cover ring-1 ring-[#e8ddce]"
+                  />
+                ) : (
+                  <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-white text-[11px] text-[#8f7f6b] ring-1 ring-[#e8ddce]">
+                    Text
+                  </div>
+                )}
+
+                <Input
+                  name="heroLogoFile"
+                  type="file"
+                  accept="image/*"
+                  className="max-w-sm"
+                />
+
+                <label className="inline-flex items-center gap-2 text-sm text-[#6c6258]">
+                  <input type="checkbox" name="clearHeroLogo" className="h-4 w-4" />
+                  Remove logo
+                </label>
+              </div>
+
+              <p className="mt-2 text-xs text-[#81776e]">
+                If empty, the text brand is shown in the top-left header.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-[#e6ddd1] bg-[#faf8f5] p-4">
+              <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#9a7a49]">
+                Custom hero image
+              </div>
+
+              <div className="mt-3 space-y-3">
+                <div className="overflow-hidden rounded-xl border border-[#e8ddce] bg-white">
+                  {content.hero.imageUrl ? (
+                    <img
+                      src={content.hero.imageUrl}
+                      alt="Custom hero"
+                      className="h-28 w-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-28 items-center justify-center text-xs text-[#8f7f6b]">
+                      Uses selected product photo
+                    </div>
+                  )}
+                </div>
+
+                <Input
+                  name="heroImageFile"
+                  type="file"
+                  accept="image/*"
+                />
+
+                <label className="inline-flex items-center gap-2 text-sm text-[#6c6258]">
+                  <input type="checkbox" name="clearHeroImage" className="h-4 w-4" />
+                  Remove custom image
+                </label>
+              </div>
+
+              <p className="mt-2 text-xs text-[#81776e]">
+                If empty, hero uses the selected product image above.
+              </p>
+            </div>
           </div>
         </SettingCard>
 

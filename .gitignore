@@ -49,3 +49,6 @@ supabase/.temp/
 apps/staff-mobile/.expo/
 apps/staff-mobile/ios/
 apps/staff-mobile/android/
+
+# Local Netlify folder
+.netlify

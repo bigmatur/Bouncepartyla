@@ -21,6 +21,8 @@ export type HomepageContent = {
     primaryCta: string;
     secondaryCta: string;
     productSlug: string;
+    logoUrl: string;
+    imageUrl: string;
   };
   categories: {
     eyebrow: string;
@@ -81,6 +83,8 @@ export const DEFAULT_HOMEPAGE_CONTENT: HomepageContent = {
     primaryCta: "Browse rentals",
     secondaryCta: "Check availability",
     productSlug: "white-castle-slide-ball-pit",
+    logoUrl: "",
+    imageUrl: "",
   },
   categories: {
     eyebrow: "Explore our rentals",

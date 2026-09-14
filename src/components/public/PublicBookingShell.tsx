@@ -1,42 +1,34 @@
 import Link from "next/link";
 
-export default function PublicBookingShell({
+import { getHomepageContent } from "@/lib/customer/homepage-content";
+
+export default async function PublicBookingShell({
   children,
-  marketingMode = false,
 }: {
   children: React.ReactNode;
-  marketingMode?: boolean;
 }) {
   const homeHref = "/";
+  const homepageContent = await getHomepageContent();
+  const headerLogoUrl = String(homepageContent.hero.logoUrl || "").trim();
 
   return (
     <div className="min-h-screen bg-[#f7f3ec] text-[#1c1b18]">
       <header className="sticky top-0 z-50 border-b border-black/[0.06] bg-[#f7f3ec]/92 backdrop-blur-xl">
         <div className="mx-auto flex min-h-[72px] w-full max-w-[1500px] items-center justify-between gap-4 px-4 sm:min-h-[78px] sm:px-7">
-          {marketingMode ? (
-            <Link href={homeHref} className="group min-w-0">
-              <Brand />
-            </Link>
-          ) : (
-            <a href={homeHref} className="group min-w-0">
-              <Brand />
-            </a>
-          )}
+          <Link href={homeHref} className="group min-w-0">
+            <Brand logoUrl={headerLogoUrl} />
+          </Link>
 
           <nav className="hidden items-center gap-1 lg:flex">
             <Link href="/catalog" className="rounded-full px-4 py-2.5 text-sm font-semibold transition hover:bg-black/[0.045]">
               Rentals
             </Link>
-            {marketingMode && (
-              <>
-                <a href="/#why-us" className="rounded-full px-4 py-2.5 text-sm font-semibold transition hover:bg-black/[0.045]">
-                  Why us
-                </a>
-                <a href="https://www.instagram.com/bouncepartyla/" className="rounded-full px-4 py-2.5 text-sm font-semibold transition hover:bg-black/[0.045]">
-                  Instagram
-                </a>
-              </>
-            )}
+            <a href="/#why-us" className="rounded-full px-4 py-2.5 text-sm font-semibold transition hover:bg-black/[0.045]">
+              Why us
+            </a>
+            <a href="https://www.instagram.com/bouncepartyla/" className="rounded-full px-4 py-2.5 text-sm font-semibold transition hover:bg-black/[0.045]">
+              Instagram
+            </a>
             <Link href="/account" className="rounded-full px-4 py-2.5 text-sm font-semibold transition hover:bg-black/[0.045]">
               My account
             </Link>
@@ -110,7 +102,19 @@ export default function PublicBookingShell({
   );
 }
 
-function Brand() {
+function Brand({ logoUrl = "" }: { logoUrl?: string }) {
+  if (logoUrl) {
+    return (
+      <div className="flex h-[44px] items-center">
+        <img
+          src={logoUrl}
+          alt="Bounce Party LA"
+          className="h-full w-auto max-w-[220px] object-contain"
+        />
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="truncate text-[10px] font-bold uppercase tracking-[0.23em] text-[#9a7654]">

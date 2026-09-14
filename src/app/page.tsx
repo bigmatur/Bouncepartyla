@@ -50,6 +50,10 @@ export default async function HomePage() {
   const popularProducts = homepageContent.popular.productSlugs.map((slug) => productsWithImages.find((product) => product.public_slug === slug)).filter(Boolean);
 
   const heroProduct = productsWithImages.find((product) => product.public_slug === homepageContent.hero.productSlug) || popularProducts[0] || productsWithImages[0] || null;
+  const heroImageUrl =
+    String(homepageContent.hero.imageUrl || "").trim() ||
+    heroProduct?.image_url ||
+    "";
 
   const featuredPackage =
     productsWithImages.find(
@@ -75,16 +79,19 @@ export default async function HomePage() {
     .slice(0, 4);
 
   return (
-    <PublicBookingShell marketingMode>
+    <PublicBookingShell>
       <main className="overflow-hidden">
         <section className="border-b border-black/[0.06]">
           <div className="lg:hidden">
             <div className="relative min-h-[620px] overflow-hidden bg-[#ddd4c7]">
-              {heroProduct?.image_url ? (
-                <img
-                  src={heroProduct.image_url}
-                  alt={heroProduct.public_title || heroProduct.name}
-                  className="absolute inset-0 h-full w-full object-cover"
+              {heroImageUrl ? (
+                <Image
+                  src={heroImageUrl}
+                  alt={heroProduct?.public_title || heroProduct?.name || "Hero image"}
+                  fill
+                  priority
+                  sizes="(min-width: 1024px) 61vw, 100vw"
+                  className="object-cover"
                 />
               ) : null}
               <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-black/5" />
@@ -179,11 +186,14 @@ export default async function HomePage() {
             </div>
 
             <div className="relative min-h-[720px] overflow-hidden bg-[#ddd4c7]">
-              {heroProduct?.image_url ? (
-                <img
-                  src={heroProduct.image_url}
-                  alt={heroProduct.public_title || heroProduct.name}
-                  className="absolute inset-0 h-full w-full object-cover"
+              {heroImageUrl ? (
+                <Image
+                  src={heroImageUrl}
+                  alt={heroProduct?.public_title || heroProduct?.name || "Hero image"}
+                  fill
+                  priority
+                  sizes="(min-width: 1024px) 61vw, 100vw"
+                  className="object-cover"
                 />
               ) : null}
               <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent" />

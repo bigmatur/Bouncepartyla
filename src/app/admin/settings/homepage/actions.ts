@@ -8,6 +8,9 @@ import {
   type HomepageContent,
 } from "@/lib/customer/homepage-content";
 
+const HOMEPAGE_IMAGE_BUCKET = "catalog-images";
+const MAX_HOMEPAGE_IMAGE_BYTES = 10 * 1024 * 1024;
+
 function getString(formData: FormData, key: string, fallback = "") {
   const value = formData.get(key);
 
@@ -27,6 +30,78 @@ function getStringList(formData: FormData, key: string) {
     .filter(Boolean);
 }
 
+function getBoolean(formData: FormData, key: string) {
+  const value = formData.get(key);
+  return value === "on" || value === "true" || value === "1";
+}
+
+function isRealFile(value: FormDataEntryValue | null): value is File {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "arrayBuffer" in value &&
+      "name" in value &&
+      "size" in value &&
+      Number((value as File).size) > 0,
+  );
+}
+
+function safeFileName(name: string) {
+  return String(name || "image")
+    .toLowerCase()
+    .replace(/[^a-z0-9.\-_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+async function uploadHomepageImage({
+  supabase,
+  file,
+  folder,
+}: {
+  supabase: any;
+  file: File;
+  folder: string;
+}) {
+  if (!String(file.type || "").startsWith("image/")) {
+    throw new Error("Only image files are allowed.");
+  }
+
+  if (file.size > MAX_HOMEPAGE_IMAGE_BYTES) {
+    throw new Error("Image must be 10 MB or smaller.");
+  }
+
+  const extension = file.name.includes(".")
+    ? file.name.split(".").pop()
+    : "jpg";
+
+  const path = `${folder}/${Date.now()}-${crypto.randomUUID()}-${safeFileName(
+    file.name || `image.${extension}`,
+  )}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from(HOMEPAGE_IMAGE_BUCKET)
+    .upload(path, file, {
+      cacheControl: "3600",
+      upsert: false,
+      contentType: file.type || "image/jpeg",
+    });
+
+  if (uploadError) {
+    throw new Error(uploadError.message);
+  }
+
+  const { data } = supabase.storage
+    .from(HOMEPAGE_IMAGE_BUCKET)
+    .getPublicUrl(path);
+
+  if (!data.publicUrl) {
+    throw new Error("Could not create public image URL.");
+  }
+
+  return data.publicUrl;
+}
+
 function getCategoryImageSelections(formData: FormData) {
   const categorySlugs = formData.getAll("categoryImageCategorySlug").map((value) => String(value).trim());
   const productSlugs = formData.getAll("categoryImageProductSlug").map((value) => String(value).trim());
@@ -42,6 +117,47 @@ function getCategoryImageSelections(formData: FormData) {
 export async function updateHomepageContentAction(formData: FormData) {
   const { supabase, user } =
     await requireAdminPermission("settings.edit");
+
+  const { data: currentSettings } = await supabase
+    .from("homepage_content_settings")
+    .select("content")
+    .eq("id", "default")
+    .maybeSingle();
+
+  const currentContent =
+    currentSettings?.content &&
+    typeof currentSettings.content === "object"
+      ? (currentSettings.content as Partial<HomepageContent>)
+      : null;
+
+  const clearHeroLogo = getBoolean(formData, "clearHeroLogo");
+  const clearHeroImage = getBoolean(formData, "clearHeroImage");
+  const heroLogoFile = formData.get("heroLogoFile");
+  const heroImageFile = formData.get("heroImageFile");
+
+  let heroLogoUrl = clearHeroLogo
+    ? ""
+    : String(currentContent?.hero?.logoUrl || "").trim();
+
+  let heroImageUrl = clearHeroImage
+    ? ""
+    : String(currentContent?.hero?.imageUrl || "").trim();
+
+  if (isRealFile(heroLogoFile)) {
+    heroLogoUrl = await uploadHomepageImage({
+      supabase,
+      file: heroLogoFile,
+      folder: "homepage/logo",
+    });
+  }
+
+  if (isRealFile(heroImageFile)) {
+    heroImageUrl = await uploadHomepageImage({
+      supabase,
+      file: heroImageFile,
+      folder: "homepage/hero",
+    });
+  }
 
   const content: HomepageContent = {
     hero: {
@@ -75,6 +191,8 @@ export async function updateHomepageContentAction(formData: FormData) {
         "heroProductSlug",
         DEFAULT_HOMEPAGE_CONTENT.hero.productSlug,
       ),
+      logoUrl: heroLogoUrl,
+      imageUrl: heroImageUrl,
     },
 
     categories: {
@@ -289,6 +407,8 @@ export async function updateHomepageContentAction(formData: FormData) {
     throw new Error(error.message);
   }
 
+  revalidatePath("/", "layout");
   revalidatePath("/");
+  revalidatePath("/catalog");
   revalidatePath("/admin/settings/homepage");
 }
