@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
 function getString(formData: FormData, key: string) {
@@ -106,6 +107,31 @@ function revalidateInventoryCategories() {
   revalidatePath("/admin/inventory/categories");
   revalidatePath("/admin/inventory/receive");
   revalidatePath("/admin/inventory/locations");
+  revalidatePath("/catalog");
+  revalidatePath("/");
+}
+
+function revalidateCategorySlugPaths(slugs: Array<string | null | undefined>) {
+  for (const rawSlug of slugs) {
+    const slug = String(rawSlug || "").trim();
+
+    if (!slug) {
+      continue;
+    }
+
+    revalidatePath(`/catalog/${encodeURIComponent(slug)}`);
+  }
+}
+
+function toCategoriesSavedPath(saved: string, categoryId?: string) {
+  const params = new URLSearchParams();
+  params.set("saved", saved);
+
+  if (categoryId) {
+    params.set("categoryId", categoryId);
+  }
+
+  return `/admin/inventory/categories?${params.toString()}`;
 }
 
 export async function createInventoryCategoryAction(formData: FormData) {
@@ -176,6 +202,8 @@ export async function createInventoryCategoryAction(formData: FormData) {
   }
 
   revalidateInventoryCategories();
+  revalidateCategorySlugPaths([slug]);
+  redirect(toCategoriesSavedPath("created"));
 }
 
 export async function updateInventoryCategoryAction(formData: FormData) {
@@ -200,6 +228,18 @@ export async function updateInventoryCategoryAction(formData: FormData) {
   if (parentId === categoryId) {
     throw new Error("Category cannot be parent of itself.");
   }
+
+  const existingCategoryResult = await supabase
+    .from("inventory_categories")
+    .select("slug")
+    .eq("id", categoryId)
+    .maybeSingle();
+
+  if (existingCategoryResult.error) {
+    throw new Error(existingCategoryResult.error.message);
+  }
+
+  const previousSlug = String(existingCategoryResult.data?.slug || "").trim();
 
   const baseSlug = createSlug(name);
   let slug = await buildUniqueCategorySlug({
@@ -272,6 +312,8 @@ export async function updateInventoryCategoryAction(formData: FormData) {
   }
 
   revalidateInventoryCategories();
+  revalidateCategorySlugPaths([previousSlug, slug]);
+  redirect(toCategoriesSavedPath("updated", categoryId));
 }
 
 export async function toggleInventoryCategoryAction(formData: FormData) {
@@ -283,6 +325,18 @@ export async function toggleInventoryCategoryAction(formData: FormData) {
   if (!categoryId) {
     throw new Error("Missing category id.");
   }
+
+  const existingCategoryResult = await supabase
+    .from("inventory_categories")
+    .select("slug")
+    .eq("id", categoryId)
+    .maybeSingle();
+
+  if (existingCategoryResult.error) {
+    throw new Error(existingCategoryResult.error.message);
+  }
+
+  const categorySlug = String(existingCategoryResult.data?.slug || "").trim();
 
   const { error } = await supabase
     .from("inventory_categories")
@@ -297,6 +351,8 @@ export async function toggleInventoryCategoryAction(formData: FormData) {
   }
 
   revalidateInventoryCategories();
+  revalidateCategorySlugPaths([categorySlug]);
+  redirect(toCategoriesSavedPath(active ? "activated" : "deactivated", categoryId));
 }
 
 export async function deleteInventoryCategoryAction(formData: FormData) {
@@ -307,6 +363,18 @@ export async function deleteInventoryCategoryAction(formData: FormData) {
   if (!categoryId) {
     throw new Error("Missing category id.");
   }
+
+  const existingCategoryResult = await supabase
+    .from("inventory_categories")
+    .select("slug")
+    .eq("id", categoryId)
+    .maybeSingle();
+
+  if (existingCategoryResult.error) {
+    throw new Error(existingCategoryResult.error.message);
+  }
+
+  const categorySlug = String(existingCategoryResult.data?.slug || "").trim();
 
   const { count: childrenCount, error: childrenError } = await supabase
     .from("inventory_categories")
@@ -348,4 +416,6 @@ export async function deleteInventoryCategoryAction(formData: FormData) {
   }
 
   revalidateInventoryCategories();
+  revalidateCategorySlugPaths([categorySlug]);
+  redirect(toCategoriesSavedPath("deleted"));
 }

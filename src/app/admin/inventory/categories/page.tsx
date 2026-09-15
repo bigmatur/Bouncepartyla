@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import FormStatusButton from "./FormStatusButton";
 import {
   createInventoryCategoryAction,
   deleteInventoryCategoryAction,
@@ -83,7 +84,41 @@ function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   );
 }
 
-export default async function InventoryCategoriesPage() {
+export default async function InventoryCategoriesPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{
+    saved?: string;
+    categoryId?: string;
+  }>;
+}) {
+  const resolvedSearchParams = searchParams
+    ? await searchParams
+    : undefined;
+
+  const savedCode = String(
+    resolvedSearchParams?.saved || "",
+  )
+    .trim()
+    .toLowerCase();
+
+  const savedCategoryId = String(
+    resolvedSearchParams?.categoryId || "",
+  ).trim();
+
+  const savedMessage =
+    savedCode === "created"
+      ? "Category saved."
+      : savedCode === "updated"
+        ? "Changes saved."
+        : savedCode === "activated"
+          ? "Category activated."
+          : savedCode === "deactivated"
+            ? "Category deactivated."
+            : savedCode === "deleted"
+              ? "Category deleted."
+              : "";
+
   const supabase = await createClient();
 
   const [categoriesResult, itemsResult] = await Promise.all([
@@ -125,6 +160,12 @@ export default async function InventoryCategoriesPage() {
 
   return (
     <div className="min-w-0 space-y-4 pb-10 sm:space-y-6">
+      {savedMessage ? (
+        <section className="rounded-[18px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800 sm:rounded-[22px]">
+          {savedMessage}
+        </section>
+      ) : null}
+
       <section className="min-w-0 rounded-[22px] border border-black/5 bg-white p-4 shadow-[0_8px_28px_rgba(0,0,0,0.035)] sm:rounded-[30px] sm:p-6 sm:shadow-[0_10px_35px_rgba(0,0,0,0.035)]">
         <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
           <div>
@@ -265,12 +306,11 @@ export default async function InventoryCategoriesPage() {
               />
             </label>
 
-            <button
-              type="submit"
+            <FormStatusButton
+              idleText="Create category"
+              pendingText="Creating..."
               className="w-full rounded-xl bg-[#c9964f] px-4 py-3 text-sm font-bold text-white shadow-[0_8px_22px_rgba(201,150,79,0.20)] transition hover:bg-[#b78744] sm:rounded-full sm:px-6 sm:py-4 sm:font-semibold"
-            >
-              Create category
-            </button>
+            />
           </form>
         </section>
 
@@ -401,12 +441,17 @@ export default async function InventoryCategoriesPage() {
                         </div>
                       </div>
 
-                      <button
-                        type="submit"
+                      {savedCode === "updated" && savedCategoryId === String(category.id) ? (
+                        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 sm:rounded-2xl">
+                          Saved
+                        </div>
+                      ) : null}
+
+                      <FormStatusButton
+                        idleText="Save"
+                        pendingText="Saving..."
                         className="w-full rounded-xl bg-[#23313f] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#18222d] sm:rounded-full sm:px-5 sm:py-3 sm:font-semibold"
-                      >
-                        Save
-                      </button>
+                      />
                     </form>
 
                     <div className="grid grid-cols-2 gap-2 sm:gap-3 xl:grid-cols-1">
@@ -423,19 +468,16 @@ export default async function InventoryCategoriesPage() {
                           value={category.active === false ? "true" : "false"}
                         />
 
-                        <button
-                          type="submit"
+                        <FormStatusButton
+                          idleText={category.active === false ? "Activate" : "Deactivate"}
+                          pendingText="Saving..."
                           className={[
                             "w-full rounded-xl px-3 py-2.5 text-xs font-bold transition sm:rounded-full sm:px-5 sm:py-3 sm:text-sm sm:font-semibold",
                             category.active === false
                               ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100"
                               : "bg-red-50 text-red-700 ring-1 ring-red-100 hover:bg-red-100",
                           ].join(" ")}
-                        >
-                          {category.active === false
-                            ? "Activate"
-                            : "Deactivate"}
-                        </button>
+                        />
                       </form>
 
                       <form action={deleteInventoryCategoryAction}>
@@ -445,8 +487,9 @@ export default async function InventoryCategoriesPage() {
                           value={category.id}
                         />
 
-                        <button
-                          type="submit"
+                        <FormStatusButton
+                          idleText="Delete"
+                          pendingText="Deleting..."
                           disabled={!canDelete}
                           title={
                             canDelete
@@ -459,9 +502,7 @@ export default async function InventoryCategoriesPage() {
                               ? "bg-red-700 text-white hover:bg-red-800"
                               : "cursor-not-allowed bg-neutral-100 text-neutral-400 ring-1 ring-neutral-200",
                           ].join(" ")}
-                        >
-                          Delete
-                        </button>
+                        />
                       </form>
 
                       {!canDelete && (
