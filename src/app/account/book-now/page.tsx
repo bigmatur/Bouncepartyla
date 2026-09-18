@@ -87,7 +87,6 @@ export default async function AccountBookNowPage({
         .from("products")
         .select("*")
         .neq("active", false)
-        .neq("customer_visible", false)
         .order("sort_order", { ascending: true })
         .order("name", { ascending: true }),
 
