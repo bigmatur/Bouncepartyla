@@ -69,6 +69,7 @@ export default async function CustomerBookingDetailsPage({
   // same synchronization helper.
   if (!isAdminPreview && query.stripe === "success" && query.session_id) {
     let stripeReconciled = false;
+    let stripeNeedsReconciliation = false;
 
     try {
       const stripeSync = await syncStripeCheckoutSessionPayment({
@@ -76,6 +77,9 @@ export default async function CustomerBookingDetailsPage({
         expectedBookingId: bookingId,
       });
       stripeReconciled = stripeSync.success === true;
+      stripeNeedsReconciliation =
+        stripeSync.success !== true &&
+        stripeSync.source === "customer_temporary_deposit";
     } catch (error) {
       console.error("Stripe return reconciliation failed", {
         bookingId,
@@ -87,6 +91,10 @@ export default async function CustomerBookingDetailsPage({
     // can start a clean request and re-read authoritative booking/payment data.
     if (stripeReconciled) {
       redirect(`/account/bookings/${bookingId}?payment=success`);
+    }
+
+    if (stripeNeedsReconciliation) {
+      redirect(`/account/bookings/${bookingId}?complete=1&status=payment_reconciliation_required`);
     }
   }
 
@@ -124,9 +132,7 @@ export default async function CustomerBookingDetailsPage({
   const needsAdminCreatedCompletion =
   !isAdminPreview &&
   !isCustomerSelfService &&
-  ["draft", "quote", "pending_deposit", "inventory_reserved"].includes(
-    String(details.booking.status || "").toLowerCase(),
-  );
+  String(details.booking.status || "").toLowerCase() === "pending_deposit";
 
   return (
     <CustomerShell

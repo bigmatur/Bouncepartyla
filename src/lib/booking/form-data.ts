@@ -34,6 +34,7 @@ export type ParsedBookingProductItem = {
 
 export type ParsedBookingModifierItem = {
   productId: string;
+  productSelectionIndex: number;
   modifierGroupId: string;
   modifierGroupName: string;
   modifierOptionId: string;
@@ -111,6 +112,10 @@ export function parseBookingModifierItems(
 
     modifiers.push({
       productId,
+      productSelectionIndex: Math.max(
+        0,
+        Math.floor(getBookingFormNumber(formData, `modifierProductIndex_${index}`, 0)),
+      ),
       modifierGroupId,
       modifierGroupName: getBookingFormString(
         formData,

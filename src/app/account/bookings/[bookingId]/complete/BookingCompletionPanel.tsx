@@ -213,21 +213,13 @@ export default async function BookingCompletionPanel({
   const depositPaid = amountPaid >= depositAmount;
   const depositDue = Math.max(0, depositAmount - amountPaid);
 
-  // Payment methods — always include Stripe (Card Payment) even if disabled in settings,
-  // because customers pay the deposit online. Other methods (Zelle, Cash) are alternatives
-  // the admin records manually after receiving payment on-site.
+  // Customer completion uses Stripe card checkout only.
   const allMethods = (!paymentMethodsResult.error && Array.isArray(paymentMethodsResult.data))
     ? paymentMethodsResult.data
     : [];
-  // Non-stripe enabled methods (Zelle, Cash, etc.)
-  const nonStripeMethods = allMethods
-    .filter((m: any) => m.is_enabled !== false && String(m.method || "") !== "stripe")
-    .map((m: any) => ({ method: String(m.method), display_name: String(m.display_name || m.method) }));
-  // Stripe method — find it in settings for label, always include
   const stripeRow = allMethods.find((m: any) => String(m.method) === "stripe");
   const stripeMethod = { method: "stripe", display_name: String(stripeRow?.display_name || "Card Payment") };
-  // Card Payment first, then others
-  const paymentMethods = [stripeMethod, ...nonStripeMethods];
+  const paymentMethods = [stripeMethod];
 
   // Tip settings
   const posData = (!paymentPosSettingsResult.error && paymentPosSettingsResult.data) ? paymentPosSettingsResult.data : null;
@@ -300,7 +292,27 @@ export default async function BookingCompletionPanel({
 
       {(error || status) ? (
         <div className="mx-6 mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error ? decodeURIComponent(error) : status === "deposit_required" ? "The deposit has not been recorded yet." : status === "contract_required" ? "The contract still needs to be signed." : "The booking is not ready to confirm yet."}
+          {error
+            ? decodeURIComponent(error)
+            : status === "deposit_required"
+              ? "The deposit has not been recorded yet."
+              : status === "contract_required"
+                ? "The contract still needs to be signed."
+                : status === "completion_session_invalid"
+                  ? "This completion link is no longer active. Ask support to send a new completion link."
+                  : status === "inventory_hold_missing_after_payment"
+                    ? "Your payment was received, but inventory is no longer available for this date. Our team will contact you to resolve this immediately."
+                    : status === "payment_reconciliation_required"
+                      ? "Payment was received. We are reconciling your booking and will confirm it shortly."
+                      : status === "deposit_already_paid"
+                        ? "The required deposit is already satisfied for this booking."
+                    : String(status || "").startsWith("payment_unavailable:")
+                      ? decodeURIComponent(String(status).replace("payment_unavailable:", ""))
+                : status === "inventory_hold_migration_required"
+                  ? "Booking inventory hold migration is required before this payment flow can continue."
+                  : String(status || "").startsWith("inventory_unavailable:")
+                    ? decodeURIComponent(String(status).replace("inventory_unavailable:", ""))
+                    : "The booking is not ready to confirm yet."}
         </div>
       ) : null}
 

@@ -89,6 +89,16 @@ function formatTime(value: string | null) {
   }).format(date);
 }
 
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(new Date(value));
+}
+
 function bookingStatusLabel(value: string) {
   const labels: Record<string, string> = {
     draft: "Booking started",
@@ -697,6 +707,46 @@ export default async function AccountPage({
       ),
   );
 
+  const actionRequiredBookings = bookings.filter((booking) => {
+    return (
+      String(booking.booking_source || "").toLowerCase() === "admin" &&
+      String(booking.status || "").toLowerCase() === "pending_deposit"
+    );
+  });
+
+  const actionRequiredBookingIds = actionRequiredBookings.map((booking) => booking.id);
+  const holdMetaByBookingId = new Map<
+    string,
+    { hasTemporaryRows: boolean; activeHoldExpiresAt: string | null; fullyCovered: boolean }
+  >();
+
+  if (actionRequiredBookingIds.length > 0) {
+    const holdStateResult = await supabase.rpc(
+      "get_my_action_required_booking_hold_state",
+      { p_booking_ids: actionRequiredBookingIds },
+    );
+
+    if (!holdStateResult.error && Array.isArray(holdStateResult.data)) {
+      for (const row of holdStateResult.data as Array<Record<string, unknown>>) {
+        const bookingId = String(row.booking_id || "").trim();
+        if (!bookingId) continue;
+
+        const activeHoldExpiresAt = String(row.hold_expires_at || "").trim() || null;
+        const hasActiveHold = Boolean(row.has_active_hold);
+
+        holdMetaByBookingId.set(bookingId, {
+          hasTemporaryRows: hasActiveHold,
+          activeHoldExpiresAt,
+          fullyCovered: hasActiveHold,
+        });
+      }
+    }
+  }
+
+  const ordinaryBookings = bookings.filter(
+    (booking) => !actionRequiredBookingIds.includes(booking.id),
+  );
+
   const customerName =
     profile.full_name ||
     [profile.first_name, profile.last_name]
@@ -775,19 +825,80 @@ export default async function AccountPage({
           </div>
         </div>
 
-        {bookings.length === 0 ? (
+        {actionRequiredBookings.length > 0 ? (
+          <div className="mt-5 rounded-[26px] border border-amber-300/70 bg-amber-50 p-4 sm:p-6">
+            <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-800/75">
+                  Action required
+                </p>
+                <h3 className="mt-1 text-lg font-semibold tracking-[-0.02em] text-[#1f1e1b] sm:text-xl">
+                  Complete your booking
+                </h3>
+              </div>
+
+              <p className="text-xs text-amber-900/70 sm:text-sm">
+                {actionRequiredBookings.length} booking{actionRequiredBookings.length === 1 ? "" : "s"} need your contract and deposit.
+              </p>
+            </div>
+
+            <div className="mt-4 grid gap-3">
+              {actionRequiredBookings.map((booking) => {
+                const holdMeta = holdMetaByBookingId.get(booking.id);
+                const activeHoldLabel = holdMeta?.activeHoldExpiresAt
+                  ? formatDateTime(holdMeta.activeHoldExpiresAt)
+                  : null;
+
+                return (
+                  <article
+                    key={`action-required-${booking.id}`}
+                    className="rounded-2xl border border-amber-300/70 bg-white p-4 shadow-[0_8px_20px_rgba(0,0,0,0.04)]"
+                  >
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h4 className="text-base font-semibold text-[#1f1e1b]">
+                            {booking.booking_number || "Booking"}
+                          </h4>
+                          <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-900">
+                            Action required
+                          </span>
+                        </div>
+
+                        <p className="mt-2 text-sm text-black/70">
+                          {activeHoldLabel && holdMeta?.fullyCovered
+                            ? `Inventory is temporarily held until ${activeHoldLabel}.`
+                            : "Your inventory hold is not active anymore. Availability will be checked when you continue."}
+                        </p>
+                      </div>
+
+                      <Link
+                        href={`/account/bookings/${booking.id}?complete=1`}
+                        className="inline-flex min-h-10 items-center justify-center rounded-xl bg-[#1d1d1b] px-4 text-sm font-semibold text-white transition hover:bg-black"
+                      >
+                        Complete booking
+                      </Link>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+
+        {ordinaryBookings.length === 0 ? (
           <div className="mt-5 rounded-[26px] border border-dashed border-black/15 bg-white/60 px-6 py-12 text-center">
             <p className="font-semibold">
-              No bookings found
+              No other bookings yet
             </p>
 
             <p className="mt-2 text-sm text-black/50">
-              Your confirmed bookings will appear here.
+              Confirmed bookings will appear here once your action-required booking is completed.
             </p>
           </div>
         ) : (
-          <div className="mt-5 grid gap-4">
-            {bookings.map((booking) => {
+            <div className="mt-5 grid gap-4">
+            {ordinaryBookings.map((booking) => {
               const startTime = formatTime(
                 booking.event_start_time,
               );

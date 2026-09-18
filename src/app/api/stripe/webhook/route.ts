@@ -82,6 +82,8 @@ export async function POST(request: Request) {
   if (eventType === "checkout.session.expired") {
     const bookingId = String(session?.metadata?.booking_id || session?.client_reference_id || "").trim();
     const source = String(session?.metadata?.source || "").trim();
+    const checkoutAttemptId = String(session?.metadata?.booking_checkout_attempt_id || "").trim();
+    const checkoutSessionId = String(session?.id || "").trim();
 
     if (bookingId && source === "customer_initial_deposit") {
       const supabase = createServiceClient();
@@ -91,6 +93,22 @@ export async function POST(request: Request) {
 
       if (cleanup.error) {
         return NextResponse.json({ error: cleanup.error.message }, { status: 500 });
+      }
+    }
+
+    if (bookingId && source === "customer_temporary_deposit") {
+      const supabase = createServiceClient();
+      if (checkoutAttemptId) {
+        const release = await supabase.rpc("release_booking_checkout_attempt_hold", {
+          p_booking_id: bookingId,
+          p_attempt_id: checkoutAttemptId,
+          p_stripe_checkout_session_id: checkoutSessionId || null,
+          p_reason: "stripe_checkout_expired",
+        });
+
+        if (release.error) {
+          return NextResponse.json({ error: release.error.message }, { status: 500 });
+        }
       }
     }
 

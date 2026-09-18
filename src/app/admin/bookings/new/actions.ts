@@ -35,9 +35,27 @@ import {
   type ParsedBookingModifierItem,
   type ParsedBookingProductItem,
 } from "@/lib/booking/form-data";
+import {
+  getAdminTemporaryHoldMinutes,
+} from "@/lib/booking/temporary-hold-config";
 
 type ParsedBookingItem = ParsedBookingProductItem;
 type ParsedModifierItem = ParsedBookingModifierItem;
+
+type TemporaryInventoryRequirementRow = {
+  booking_id: string;
+  booking_item_id: string;
+  inventory_item_id: string;
+  quantity: number;
+  reserved_from: string;
+  reserved_until: string;
+  requirement_key: string;
+  requirement_type: "product" | "modifier";
+  product_id: string | null;
+  modifier_group_id: string | null;
+  modifier_option_id: string | null;
+  inventory_behavior: "reusable" | "consumable";
+};
 
 type BookingExecutionContext = {
   supabase?: any;
@@ -1317,6 +1335,260 @@ async function insertBookingItems({
     id: string;
     product_id: string;
   }>;
+}
+
+function mapBookingItemsBySelectionOrder(params: {
+  items: ParsedBookingItem[];
+  insertedBookingItems: Array<{ id: string; product_id: string }>;
+}) {
+  const queueByProductId = new Map<string, Array<{ id: string; product_id: string }>>();
+
+  for (const row of params.insertedBookingItems) {
+    const queue = queueByProductId.get(row.product_id) || [];
+    queue.push(row);
+    queueByProductId.set(row.product_id, queue);
+  }
+
+  return params.items.map((item) => {
+    const queue = queueByProductId.get(item.productId) || [];
+    const bookingItem = queue.shift() || null;
+    queueByProductId.set(item.productId, queue);
+
+    return {
+      productId: item.productId,
+      bookingItemId: bookingItem?.id || null,
+    };
+  });
+}
+
+function buildTemporaryBookingInventoryRequirements(params: {
+  bookingId: string;
+  items: ParsedBookingItem[];
+  modifiers: ParsedModifierItem[];
+  availabilityResults: Array<{ reservedFrom: string; reservedUntil: string; components: any[] }>;
+  insertedBookingItems: Array<{ id: string; product_id: string }>;
+}) {
+  const bySelectionOrder = mapBookingItemsBySelectionOrder({
+    items: params.items,
+    insertedBookingItems: params.insertedBookingItems,
+  });
+
+  const bookingItemByProductAndIndex = new Map<string, string | null>();
+
+  for (let index = 0; index < bySelectionOrder.length; index += 1) {
+    const row = bySelectionOrder[index];
+    bookingItemByProductAndIndex.set(
+      `${row.productId}:${index}`,
+      row.bookingItemId,
+    );
+  }
+
+  const rows: TemporaryInventoryRequirementRow[] = [];
+
+  for (let index = 0; index < params.items.length; index += 1) {
+    const availability = params.availabilityResults[index];
+    const bookingItem = bySelectionOrder[index];
+    const productItem = params.items[index];
+
+    if (!availability || !bookingItem || !productItem) {
+      continue;
+    }
+
+    for (let componentIndex = 0; componentIndex < (availability.components || []).length; componentIndex += 1) {
+      const component = availability.components[componentIndex];
+
+      if (component?.isRequired === false) {
+        continue;
+      }
+
+      const inventoryItemId = String(component?.inventoryItemId || "").trim();
+      const quantityNeeded = Math.max(0, Number(component?.quantityNeeded || 0));
+
+      if (!inventoryItemId || quantityNeeded <= 0) {
+        continue;
+      }
+
+      if (!bookingItem.bookingItemId) {
+        throw new Error("Booking item mapping failed for product requirement.");
+      }
+
+      rows.push({
+        booking_id: params.bookingId,
+        booking_item_id: bookingItem.bookingItemId,
+        inventory_item_id: inventoryItemId,
+        quantity: quantityNeeded,
+        reserved_from: availability.reservedFrom,
+        reserved_until: availability.reservedUntil,
+        requirement_key: `p:${index}:c:${componentIndex}:i:${inventoryItemId}`,
+        requirement_type: "product",
+        product_id: productItem.productId,
+        modifier_group_id: null,
+        modifier_option_id: null,
+        inventory_behavior:
+          component?.inventoryBehavior === "consumable"
+            ? "consumable"
+            : "reusable",
+      });
+    }
+  }
+
+  for (let modifierIndex = 0; modifierIndex < params.modifiers.length; modifierIndex += 1) {
+    const modifier = params.modifiers[modifierIndex];
+
+    if (!modifier.trackInventory || !modifier.inventoryItemId) {
+      continue;
+    }
+
+    const selectedItemIndex =
+      Number.isFinite(modifier.productSelectionIndex) && modifier.productSelectionIndex >= 0
+        ? modifier.productSelectionIndex
+        : params.items.findIndex((item) => item.productId === modifier.productId);
+
+    const selectedItem =
+      selectedItemIndex >= 0 ? params.items[selectedItemIndex] : null;
+
+    const productQty = Math.max(1, Number(selectedItem?.quantity || 1));
+
+    const selectedModifierQty = Math.max(1, Number(modifier.quantity || 1));
+    const quantityNeeded = Math.max(
+      0,
+      Number(modifier.inventoryQuantity || 0) * productQty * selectedModifierQty,
+    );
+
+    if (quantityNeeded <= 0) {
+      continue;
+    }
+
+    const availability =
+      selectedItemIndex >= 0 ? params.availabilityResults[selectedItemIndex] : null;
+
+    if (!availability?.reservedFrom || !availability?.reservedUntil) {
+      throw new Error("Missing reservation window for modifier product.");
+    }
+
+    const bookingItemId = bookingItemByProductAndIndex.get(
+      `${modifier.productId}:${selectedItemIndex}`,
+    ) || null;
+
+    if (!bookingItemId) {
+      throw new Error("Booking item mapping failed for modifier requirement.");
+    }
+
+    rows.push({
+      booking_id: params.bookingId,
+      booking_item_id: bookingItemId,
+      inventory_item_id: modifier.inventoryItemId,
+      quantity: quantityNeeded,
+      reserved_from: availability.reservedFrom,
+      reserved_until: availability.reservedUntil,
+      requirement_key: `m:${selectedItemIndex}:g:${modifier.modifierGroupId}:o:${modifier.modifierOptionId}:n:${modifierIndex}`,
+      requirement_type: "modifier",
+      product_id: modifier.productId,
+      modifier_group_id: modifier.modifierGroupId,
+      modifier_option_id: modifier.modifierOptionId,
+      inventory_behavior:
+        modifier.inventoryBehavior === "consumable"
+          ? "consumable"
+          : "reusable",
+    });
+  }
+
+  return rows;
+}
+
+async function persistTemporaryBookingInventoryRequirements(params: {
+  bookingId: string;
+  rows: TemporaryInventoryRequirementRow[];
+}) {
+  const supabase = await createClient();
+
+  const deleteResult = await supabase
+    .from("booking_inventory_requirements")
+    .delete()
+    .eq("booking_id", params.bookingId);
+
+  if (deleteResult.error && !isMissingTableError(deleteResult.error)) {
+    throw new Error(deleteResult.error.message);
+  }
+
+  const insertResult = await supabase
+    .from("booking_inventory_requirements")
+    .insert(params.rows);
+
+  if (insertResult.error) {
+    if (isMissingTableError(insertResult.error)) {
+      throw new Error(
+        "Database migration is required for temporary inventory holds (111_admin_temporary_inventory_holds.sql).",
+      );
+    }
+
+    throw new Error(insertResult.error.message);
+  }
+}
+
+async function acquireTemporaryInventoryHold(params: {
+  bookingId: string;
+}) {
+  const supabase = await createClient();
+
+  const { data, error } = await supabase.rpc(
+    "acquire_booking_temporary_inventory_hold",
+    {
+      p_booking_id: params.bookingId,
+      p_attempt_kind: "admin_initial_hold",
+      p_hold_minutes: getAdminTemporaryHoldMinutes(),
+      p_require_active_completion_session: false,
+    },
+  );
+
+  if (error) {
+    if (
+      isMissingFunctionError(
+        error,
+        "acquire_booking_temporary_inventory_hold",
+      )
+    ) {
+      throw new Error(
+        "Database migration is required for temporary inventory holds (111_admin_temporary_inventory_holds.sql).",
+      );
+    }
+
+    throw new Error(error.message);
+  }
+
+  const payload =
+    data && typeof data === "object" && !Array.isArray(data)
+      ? (data as {
+          status?: string;
+          message?: string;
+          missing_requirements?: unknown;
+        })
+      : null;
+
+  if (payload?.status !== "ok") {
+    throw new Error(
+      `Inventory hold could not be acquired: ${payload?.status || payload?.message || "unknown_error"}`,
+    );
+  }
+
+  return payload;
+}
+
+async function cleanupFailedSendToCustomerBooking(params: {
+  bookingId: string;
+}) {
+  const supabase = await createClient();
+
+  const result = await supabase
+    .from("bookings")
+    .delete()
+    .eq("id", params.bookingId);
+
+  if (result.error) {
+    throw new Error(
+      `Failed to clean up incomplete send-to-customer booking: ${result.error.message}`,
+    );
+  }
 }
 
 async function reserveProductComponentsInventory({
@@ -2919,7 +3191,7 @@ async function createBookingActionInternal(
 
   const status: BookingStatus =
     isStaffSendToCustomer
-      ? "inventory_reserved"
+      ? "pending_deposit"
       : requestedStatus;
 
   const deliveryFee =
@@ -3742,13 +4014,6 @@ async function createBookingActionInternal(
       items,
     });
 
-  await reserveProductComponentsInventory({
-    bookingId,
-    items,
-    insertedBookingItems,
-    availabilityResults,
-  });
-
   await insertBookingModifiers({
     bookingId,
     modifiers,
@@ -3784,12 +4049,69 @@ async function createBookingActionInternal(
       ),
     );
 
-  await reserveModifierInventory({
-    bookingId,
-    modifiers,
-    items,
-    reservationWindowsByProduct,
-  });
+  if (isStaffSendToCustomer) {
+    try {
+      const requirementRows =
+        buildTemporaryBookingInventoryRequirements({
+          bookingId,
+          items,
+          modifiers,
+          availabilityResults,
+          insertedBookingItems,
+        });
+
+      if (requirementRows.length === 0) {
+        throw new Error(
+          "Booking could not build inventory requirements for send-to-customer.",
+        );
+      }
+
+      await persistTemporaryBookingInventoryRequirements({
+        bookingId,
+        rows: requirementRows,
+      });
+
+      await acquireTemporaryInventoryHold({
+        bookingId,
+      });
+    } catch (error) {
+      const originalMessage =
+        error instanceof Error
+          ? error.message
+          : String(error);
+
+      try {
+        await cleanupFailedSendToCustomerBooking({
+          bookingId,
+        });
+      } catch (cleanupError) {
+        const cleanupMessage =
+          cleanupError instanceof Error
+            ? cleanupError.message
+            : String(cleanupError);
+
+        throw new Error(
+          `${originalMessage} Cleanup also failed: ${cleanupMessage}`,
+        );
+      }
+
+      throw error;
+    }
+  } else {
+    await reserveProductComponentsInventory({
+      bookingId,
+      items,
+      insertedBookingItems,
+      availabilityResults,
+    });
+
+    await reserveModifierInventory({
+      bookingId,
+      modifiers,
+      items,
+      reservationWindowsByProduct,
+    });
+  }
 
   let staffCompletionUrl = "";
 
@@ -4362,6 +4684,34 @@ export async function createMobileBookingAction(
     );
   }
 
+  const mobileProducts = Array.isArray(body.products)
+    ? (body.products as Array<Record<string, unknown>>)
+    : [];
+  const mobileModifiers = Array.isArray(body.modifiers)
+    ? (body.modifiers as Array<Record<string, unknown>>)
+    : [];
+
+  const productSelectionCountById = new Map<string, number>();
+  for (const row of mobileProducts) {
+    const productId = String(row?.productId || "").trim();
+    if (!productId) continue;
+
+    productSelectionCountById.set(
+      productId,
+      Number(productSelectionCountById.get(productId) || 0) + 1,
+    );
+  }
+
+  const hasDuplicateProductSelections = Array.from(productSelectionCountById.values()).some(
+    (count) => count > 1,
+  );
+
+  if (hasDuplicateProductSelections && mobileModifiers.length > 0) {
+    throw new Error(
+      "Mobile duplicate product selections with modifiers are blocked until explicit productSelectionIndex is supported.",
+    );
+  }
+
   const prepared =
     await prepareAdminNewBookingSelection({
       supabase,
@@ -4370,12 +4720,8 @@ export async function createMobileBookingAction(
       setupState,
       setupZip,
       discountAmount: discountAmountInput,
-      products: Array.isArray(body.products)
-        ? (body.products as any)
-        : [],
-      modifiers: Array.isArray(body.modifiers)
-        ? (body.modifiers as any)
-        : [],
+      products: mobileProducts as any,
+      modifiers: mobileModifiers as any,
     });
 
   if (prepared.pricing.ok !== true) {
@@ -4504,7 +4850,7 @@ export async function createMobileBookingAction(
       ? normalizeBookingStatus(
           String(body.status || "inventory_reserved"),
         )
-      : "inventory_reserved",
+      : "pending_deposit",
   );
   formData.set(
     "completionStrategy",
@@ -4573,6 +4919,19 @@ export async function createMobileBookingAction(
       formData.set(
         `modifierProductId_${index}`,
         item.productId,
+      );
+      formData.set(
+        `modifierProductIndex_${index}`,
+        String(
+          Math.max(
+            0,
+            prepared.trustedProducts.findIndex(
+              (product) =>
+                product.productId ===
+                item.productId,
+            ),
+          ),
+        ),
       );
       formData.set(
         `modifierGroupId_${index}`,

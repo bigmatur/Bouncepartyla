@@ -22,16 +22,35 @@ export function getStripeIntegrationStatus() {
 }
 
 export async function getApplicationOrigin() {
-  const explicit = String(process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || "")
+  const h = await headers();
+  const proto = h.get("x-forwarded-proto") || "http";
+  const host = h.get("x-forwarded-host") || h.get("host") || "";
+
+  const requestOrigin = host
+    ? `${proto}://${host}`
+    : "";
+
+  const isLocalRequest =
+    /^localhost(?::\d+)?$/i.test(host) ||
+    /^127\.0\.0\.1(?::\d+)?$/i.test(host);
+
+  if (isLocalRequest && requestOrigin) {
+    return requestOrigin;
+  }
+
+  const explicit = String(
+    process.env.NEXT_PUBLIC_APP_URL ||
+      process.env.APP_URL ||
+      process.env.NEXT_PUBLIC_SITE_URL ||
+      "",
+  )
     .trim()
     .replace(/\/$/, "");
 
   if (explicit) return explicit;
+  if (requestOrigin) return requestOrigin;
 
-  const h = await headers();
-  const proto = h.get("x-forwarded-proto") || "http";
-  const host = h.get("x-forwarded-host") || h.get("host") || "localhost:3001";
-  return `${proto}://${host}`;
+  return "http://localhost:3000";
 }
 
 function setParam(params: URLSearchParams, key: string, value: string | number | null | undefined) {
@@ -190,6 +209,7 @@ export async function syncStripeCheckoutSessionPayment(input: {
   const sessionId = String(session?.id || "").trim();
   const paymentIntentId = String(session?.payment_intent || "").trim();
   const source = String(session?.metadata?.source || "stripe_checkout").trim();
+  const checkoutAttemptId = String(session?.metadata?.booking_checkout_attempt_id || "").trim();
   const amount = Number(session?.amount_total || 0) / 100;
   const tipAmount = Math.max(0, Number(session?.metadata?.tip_amount || 0));
 
@@ -225,25 +245,60 @@ export async function syncStripeCheckoutSessionPayment(input: {
     }
   }
 
-  const finalizeResult = await supabase.rpc("finalize_booking_after_external_payment", {
-    p_booking_id: bookingId,
-  });
+  if (source === "customer_temporary_deposit" && !checkoutAttemptId) {
+    return {
+      success: false,
+      status: "integrity_error_missing_checkout_attempt_id",
+      bookingId,
+      source,
+      paymentAmount: Number(amount.toFixed(2)),
+      finalizeResult: null,
+      routeSyncResult: null,
+    };
+  }
+
+  const finalizeResult = source === "customer_temporary_deposit"
+    ? await supabase.rpc("finalize_booking_after_temporary_checkout_attempt", {
+        p_booking_id: bookingId,
+        p_attempt_id: checkoutAttemptId || null,
+        p_stripe_checkout_session_id: sessionId,
+      })
+    : await supabase.rpc("finalize_booking_after_external_payment", {
+        p_booking_id: bookingId,
+      });
 
   if (finalizeResult.error) {
     throw new Error(finalizeResult.error.message);
   }
 
-  const finalizePayload = finalizeResult.data as {
-    success?: boolean;
-    status?: string;
-  } | null;
+  const finalizePayload = (Array.isArray(finalizeResult.data)
+    ? finalizeResult.data[0]
+    : finalizeResult.data) as {
+      success?: boolean;
+      status?: string;
+      booking_status?: string;
+    } | null;
+
+  const temporaryFinalizeStatus = String(finalizePayload?.status || "");
+
+  const finalizeSucceeded = source === "customer_temporary_deposit"
+    ? Boolean(finalizePayload?.success)
+      && (temporaryFinalizeStatus === "confirmed" || temporaryFinalizeStatus === "already_finalized")
+    : Boolean(finalizePayload?.success);
 
   // Route Board is derived operational data. A Route Board sync failure must
   // never roll back or hide a successfully paid/finalized booking. The SQL RPC
   // is idempotent and catches its own route-stop errors; we also keep this call
   // non-fatal here so Stripe reconciliation remains authoritative.
   let routeSyncResult: unknown = null;
-  if (finalizePayload?.success && finalizePayload.status === "confirmed") {
+  if (
+    finalizeSucceeded
+    && (
+      source !== "customer_temporary_deposit"
+      || temporaryFinalizeStatus === "confirmed"
+      || temporaryFinalizeStatus === "already_finalized"
+    )
+  ) {
     const routeSync = await supabase.rpc("sync_booking_route_stops_after_external_payment", {
       p_booking_id: bookingId,
     });
@@ -264,6 +319,18 @@ export async function syncStripeCheckoutSessionPayment(input: {
   // deposit_paid). The Stripe webhook covers this in production, but the
   // localhost-friendly return path above never reaches the webhook handler.
   await processNotificationQueueBestEffort({ bookingId, limit: 25 });
+
+  if (!finalizeSucceeded) {
+    return {
+      success: false,
+      status: String(finalizePayload?.status || "finalize_failed"),
+      bookingId,
+      source,
+      paymentAmount: Number(amount.toFixed(2)),
+      finalizeResult: finalizeResult.data,
+      routeSyncResult,
+    };
+  }
 
   return {
     success: true,

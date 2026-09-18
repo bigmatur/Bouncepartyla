@@ -2,7 +2,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { checkBookingItemAvailabilityAction } from "@/lib/booking/check-booking-item-availability";
 import { checkBookingItemAvailabilityCore } from "@/lib/booking/booking-availability-core";
-import { cleanupExpiredCustomerCheckoutHoldsBestEffort } from "@/lib/booking/inventory-integrity";
+import {
+  cleanupExpiredCustomerCheckoutHoldsBestEffort,
+  cleanupExpiredTemporaryInventoryHoldsBestEffort,
+} from "@/lib/booking/inventory-integrity";
 
 export type BookingAvailabilityActor = "customer" | "cashier";
 
@@ -31,6 +34,10 @@ export async function validateBookingItemsAvailability(params: {
   const results: BookingAvailabilityResult[] = [];
 
   if (params.supabase) {
+    await cleanupExpiredTemporaryInventoryHoldsBestEffort(
+      params.supabase as any,
+    );
+
     await cleanupExpiredCustomerCheckoutHoldsBestEffort(
       params.supabase as any,
       25,

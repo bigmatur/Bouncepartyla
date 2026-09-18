@@ -71,3 +71,46 @@ export async function cleanupExpiredCustomerCheckoutHoldsBestEffort(
     return null;
   }
 }
+
+export async function cleanupExpiredTemporaryInventoryHoldsBestEffort(
+  supabase: SupabaseLike,
+) {
+  try {
+    const result = await supabase.rpc(
+      "cleanup_expired_temporary_inventory_holds",
+      {},
+    );
+
+    if (result.error) {
+      const message = String(
+        result.error.message || "",
+      ).toLowerCase();
+
+      if (
+        message.includes("function") &&
+        message.includes("does not exist")
+      ) {
+        return null;
+      }
+
+      console.warn(
+        "[inventory-integrity] temporary hold cleanup skipped:",
+        result.error.message ||
+          "unknown RPC error",
+      );
+
+      return null;
+    }
+
+    return result.data;
+  } catch (error) {
+    console.warn(
+      "[inventory-integrity] temporary hold cleanup failed:",
+      error instanceof Error
+        ? error.message
+        : String(error),
+    );
+
+    return null;
+  }
+}

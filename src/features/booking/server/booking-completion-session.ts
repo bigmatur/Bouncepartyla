@@ -3,15 +3,22 @@ import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-const DEFAULT_HOLD_HOURS = 24;
+const DEFAULT_COMPLETION_SESSION_HOURS = 24;
 
 function tokenHash(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
-function holdHours() {
-  const parsed = Number(process.env.BOOKING_TEMPORARY_HOLD_HOURS || DEFAULT_HOLD_HOURS);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 168) : DEFAULT_HOLD_HOURS;
+function completionSessionHours() {
+  const configured = String(
+    process.env.BOOKING_COMPLETION_SESSION_HOURS ||
+      DEFAULT_COMPLETION_SESSION_HOURS,
+  );
+
+  const parsed = Number(configured);
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.min(parsed, 168)
+    : DEFAULT_COMPLETION_SESSION_HOURS;
 }
 
 export async function createBookingCompletionSession(params: {
@@ -21,7 +28,9 @@ export async function createBookingCompletionSession(params: {
   createdByAuthUserId?: string | null;
 }) {
   const rawToken = randomBytes(32).toString("base64url");
-  const expiresAt = new Date(Date.now() + holdHours() * 60 * 60 * 1000).toISOString();
+  const expiresAt = new Date(
+    Date.now() + completionSessionHours() * 60 * 60 * 1000,
+  ).toISOString();
 
   await params.supabase
     .from("booking_completion_sessions")

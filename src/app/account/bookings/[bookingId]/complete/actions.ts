@@ -3,11 +3,17 @@
 import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { checkBookingItemAvailabilityAction } from "@/lib/booking/check-booking-item-availability";
-import { reserveInventoryForBooking } from "@/lib/booking/reserveInventory";
 import { createClient } from "@/lib/supabase/server";
-import { createStripeCheckoutSession } from "@/lib/payments/stripe";
+import {
+  createStripeCheckoutSession,
+  retrieveStripeCheckoutSession,
+} from "@/lib/payments/stripe";
 import { processNotificationQueueBestEffort } from "@/lib/notifications/engine";
+import {
+  getTemporaryCheckoutHoldBufferMinutes,
+  getTemporaryCheckoutSessionMinutes,
+  minutesFromNowToUnixSeconds,
+} from "@/lib/booking/temporary-hold-config";
 
 function text(formData: FormData, key: string) {
   return String(formData.get(key) || "").trim();
@@ -67,193 +73,20 @@ function buildOrderSummaryHtml(values: {
   `;
 }
 
-async function ensureReservationsForFinalizedBooking(params: {
-  supabase: Awaited<ReturnType<typeof createClient>>;
-  bookingId: string;
-}) {
-  const activeStatuses = ["reserved", "picked", "loaded", "delivered", "installed"];
+function isMissingFunctionError(error: any, functionName?: string) {
+  const message = String(error?.message || "").toLowerCase();
+  const code = String(error?.code || "").toLowerCase();
+  const target = String(functionName || "").toLowerCase();
 
-  const existingReservationsResult = await params.supabase
-    .from("inventory_reservations")
-    .select("id")
-    .eq("booking_id", params.bookingId)
-    .in("status", activeStatuses)
-    .limit(1);
-
-  if (existingReservationsResult.error) {
-    throw new Error(existingReservationsResult.error.message);
+  if (code === "42883") {
+    return !target || message.includes(target);
   }
 
-  if ((existingReservationsResult.data || []).length > 0) {
-    return;
-  }
-
-  const bookingResult = await params.supabase
-    .from("bookings")
-    .select("id, event_date, event_start_time, event_end_time")
-    .eq("id", params.bookingId)
-    .maybeSingle();
-
-  if (bookingResult.error) {
-    throw new Error(bookingResult.error.message);
-  }
-
-  const booking = bookingResult.data as any;
-  if (!booking?.id || !booking?.event_date) {
-    return;
-  }
-
-  const eventDate = String(booking.event_date || "").trim();
-  const eventStartTime = String(booking.event_start_time || "").slice(0, 5) || "09:00";
-  const eventEndTime = String(booking.event_end_time || "").slice(0, 5) || "19:00";
-
-  const bookingItemsResult = await params.supabase
-    .from("booking_items")
-    .select("id, product_id, quantity")
-    .eq("booking_id", params.bookingId);
-
-  if (bookingItemsResult.error) {
-    throw new Error(bookingItemsResult.error.message);
-  }
-
-  const bookingItems = (bookingItemsResult.data || []) as Array<{
-    id: string;
-    product_id: string;
-    quantity: number;
-  }>;
-
-  if (bookingItems.length === 0) {
-    return;
-  }
-
-  const bookingItemIds = bookingItems.map((item) => item.id);
-
-  const bookingModifiersResult = await params.supabase
-    .from("booking_modifiers")
-    .select("booking_item_id, modifier_id, quantity")
-    .in("booking_item_id", bookingItemIds);
-
-  if (bookingModifiersResult.error) {
-    throw new Error(bookingModifiersResult.error.message);
-  }
-
-  const bookingModifiers = (bookingModifiersResult.data || []) as Array<{
-    booking_item_id: string;
-    modifier_id: string;
-    quantity: number;
-  }>;
-
-  const modifierIds = Array.from(
-    new Set(
-      bookingModifiers
-        .map((row) => String(row.modifier_id || "").trim())
-        .filter(Boolean),
-    ),
+  return (
+    message.includes("function") &&
+    message.includes("does not exist") &&
+    (!target || message.includes(target))
   );
-
-  const modifiersById = new Map<string, any>();
-
-  if (modifierIds.length > 0) {
-    const modifiersResult = await params.supabase
-      .from("modifiers")
-      .select("id, name, inventory_item_id, inventory_quantity, track_inventory")
-      .in("id", modifierIds);
-
-    if (modifiersResult.error) {
-      throw new Error(modifiersResult.error.message);
-    }
-
-    for (const modifier of modifiersResult.data || []) {
-      modifiersById.set(String((modifier as any).id), modifier);
-    }
-  }
-
-  for (const bookingItem of bookingItems) {
-    const itemModifierRows = bookingModifiers.filter(
-      (row) => row.booking_item_id === bookingItem.id,
-    );
-
-    const formData = new FormData();
-    formData.set("productId", String(bookingItem.product_id));
-    formData.set("quantity", String(Math.max(1, Number(bookingItem.quantity || 1))));
-    formData.set("eventDate", eventDate);
-    formData.set("eventStartTime", eventStartTime);
-    formData.set("eventEndTime", eventEndTime);
-    formData.set("bookingActor", "customer");
-
-    const modifierPayload = itemModifierRows
-      .map((row) => {
-        const modifier = modifiersById.get(String(row.modifier_id || ""));
-        if (!modifier) {
-          return null;
-        }
-
-        return {
-          id: String(modifier.id || ""),
-          name: String(modifier.name || "Option"),
-          inventoryItemId: String(modifier.inventory_item_id || ""),
-          inventoryQuantity: Number(modifier.inventory_quantity || 1),
-          trackInventory: modifier.track_inventory !== false,
-          selectedQuantity: Math.max(1, Number(row.quantity || 1)),
-        };
-      })
-      .filter(Boolean) as Array<{
-      id: string;
-      name: string;
-      inventoryItemId: string;
-      inventoryQuantity: number;
-      trackInventory: boolean;
-      selectedQuantity: number;
-    }>;
-
-    formData.set("modifierCount", String(modifierPayload.length));
-
-    modifierPayload.forEach((modifier, index) => {
-      formData.set(`modifierOptionId_${index}`, modifier.id);
-      formData.set(`modifierOptionName_${index}`, modifier.name);
-      formData.set(`modifierInventoryItemId_${index}`, modifier.inventoryItemId);
-      formData.set(`modifierInventoryQuantity_${index}`, String(modifier.inventoryQuantity));
-      formData.set(
-        `modifierTrackInventory_${index}`,
-        modifier.trackInventory ? "true" : "false",
-      );
-    });
-
-    const availability = await checkBookingItemAvailabilityAction(formData);
-
-    if (!availability?.available) {
-      throw new Error(
-        String(
-          availability?.message ||
-            "Inventory is not available while finalizing booking.",
-        ),
-      );
-    }
-
-    const reservedFrom = String(availability.reservedFrom || "").trim();
-    const reservedUntil = String(availability.reservedUntil || "").trim();
-
-    if (!reservedFrom || !reservedUntil) {
-      throw new Error("Failed to build inventory reservation window.");
-    }
-
-    const selectedModifierIds = modifierPayload.map((item) => item.id).filter(Boolean);
-    const modifierQuantityMultipliers = Object.fromEntries(
-      modifierPayload.map((item) => [item.id, item.selectedQuantity]),
-    );
-
-    await reserveInventoryForBooking({
-      supabase: params.supabase,
-      bookingId: params.bookingId,
-      bookingItemId: String(bookingItem.id),
-      productId: String(bookingItem.product_id),
-      modifierIds: selectedModifierIds,
-      modifierQuantityMultipliers,
-      quantity: Math.max(1, Number(bookingItem.quantity || 1)),
-      reservedFrom,
-      reservedUntil,
-    });
-  }
 }
 
 export async function signTemporaryBookingContractAction(formData: FormData) {
@@ -469,35 +302,236 @@ export async function signTemporaryBookingContractAction(formData: FormData) {
 
 export async function recordTemporaryBookingDepositAction(formData: FormData) {
   const bookingId = text(formData, "bookingId");
-  const amount = Number(text(formData, "amount"));
   const supabase = await createClient();
+  const MAX_CUSTOMER_TIP_CENTS = 1000 * 100;
 
-  if (!bookingId || !Number.isFinite(amount) || amount <= 0) {
+  const toCents = (value: number | string | null | undefined) => {
+    const numeric = Number(value || 0);
+    if (!Number.isFinite(numeric)) return 0;
+    return Math.max(0, Math.round(numeric * 100));
+  };
+
+  const fromCents = (value: number) => Number((value / 100).toFixed(2));
+
+  const rawTip = text(formData, "tipAmount");
+  const parsedTip = rawTip === "" ? 0 : Number(rawTip);
+
+  if (!bookingId || !Number.isFinite(parsedTip) || parsedTip < 0) {
     redirect(`/account/bookings/${bookingId}?complete=1&status=invalid_payment`);
   }
 
-  // Query through the customer's authenticated Supabase session/RLS.
-  const bookingResult = await supabase
-    .from("bookings")
-    .select("id, booking_number, balance_due")
-    .eq("id", bookingId)
-    .maybeSingle();
+  const tipCents = Math.round(parsedTip * 100);
 
-  if (bookingResult.error || !bookingResult.data) {
+  if (tipCents > MAX_CUSTOMER_TIP_CENTS) {
+    redirect(`/account/bookings/${bookingId}?complete=1&status=invalid_payment`);
+  }
+
+  const bookingStateResult = await supabase.rpc(
+    "get_my_booking_authoritative_state",
+    {
+      p_booking_id: bookingId,
+    },
+  );
+
+  const bookingState =
+    bookingStateResult.error ||
+    !bookingStateResult.data ||
+    typeof bookingStateResult.data !== "object" ||
+    Array.isArray(bookingStateResult.data)
+      ? null
+      : (bookingStateResult.data as {
+          booking?: {
+            id?: string;
+            booking_number?: string | null;
+            deposit_amount?: number | string | null;
+            amount_paid?: number | string | null;
+            balance_due?: number | string | null;
+            booking_source?: string | null;
+          } | null;
+        });
+
+  const booking = bookingState?.booking || null;
+
+  if (!booking?.id) {
     redirect(`/account/bookings/${bookingId}?complete=1&status=booking_not_found`);
   }
 
-  const safeAmount = Math.min(amount, Math.max(0, Number((bookingResult.data as any).balance_due || amount)));
-  const session = await createStripeCheckoutSession({
-    bookingId,
-    amount: safeAmount,
-    baseAmount: safeAmount,
-    tipAmount: 0,
-    source: "customer_temporary_deposit",
-    successPath: `/account/bookings/${bookingId}?complete=1`,
-    cancelPath: `/account/bookings/${bookingId}?complete=1`,
-    description: `Bounce Party LA deposit ${(bookingResult.data as any).booking_number || String(bookingId).slice(0, 8)}`,
+  if (String(booking.booking_source || "") !== "admin") {
+    redirect(`/account/bookings/${bookingId}?complete=1&status=unsupported_flow`);
+  }
+
+  const depositAmountCents = toCents(booking.deposit_amount);
+  const amountPaidCents = toCents(booking.amount_paid);
+  const balanceDueCents = toCents(booking.balance_due);
+  const depositDueCents = Math.min(
+    balanceDueCents,
+    Math.max(0, depositAmountCents - amountPaidCents),
+  );
+
+  if (depositDueCents <= 0) {
+    redirect(`/account/bookings/${bookingId}?complete=1&status=deposit_already_paid`);
+  }
+
+  const depositDueAmount = fromCents(depositDueCents);
+  const tipAmount = fromCents(tipCents);
+  const stripeChargeAmount = fromCents(depositDueCents + tipCents);
+
+  const checkoutSessionMinutes = getTemporaryCheckoutSessionMinutes();
+  const holdBufferMinutes = getTemporaryCheckoutHoldBufferMinutes();
+
+  const acquireResult = await supabase.rpc(
+    "acquire_booking_temporary_inventory_hold",
+    {
+      p_booking_id: bookingId,
+      p_attempt_kind: "customer_temporary_deposit",
+      p_hold_minutes: checkoutSessionMinutes + holdBufferMinutes,
+      p_require_active_completion_session: true,
+    },
+  );
+
+  if (acquireResult.error) {
+    if (
+      isMissingFunctionError(
+        acquireResult.error,
+        "acquire_booking_temporary_inventory_hold",
+      )
+    ) {
+      redirect(`/account/bookings/${bookingId}?complete=1&status=inventory_hold_migration_required`);
+    }
+
+    redirect(
+      `/account/bookings/${bookingId}?complete=1&status=${encodeURIComponent(
+        `inventory_unavailable:${acquireResult.error.message}`,
+      )}`,
+    );
+  }
+
+  const acquirePayload =
+    acquireResult.data &&
+    typeof acquireResult.data === "object" &&
+    !Array.isArray(acquireResult.data)
+      ? (acquireResult.data as {
+          status?: string;
+          message?: string;
+          attempt_id?: string;
+          stripe_checkout_session_id?: string | null;
+        })
+      : null;
+
+  const acquireStatus = String(acquirePayload?.status || "").trim();
+  const checkoutAttemptId = String(acquirePayload?.attempt_id || "").trim();
+  const existingStripeSessionId = String(acquirePayload?.stripe_checkout_session_id || "").trim();
+
+  const resumeExistingStripeCheckout = async (attemptId: string, sessionId: string) => {
+    let existingSession: Awaited<ReturnType<typeof retrieveStripeCheckoutSession>> | null = null;
+
+    try {
+      existingSession = await retrieveStripeCheckoutSession(sessionId);
+    } catch {
+      existingSession = null;
+    }
+
+    const sessionStatus = String(existingSession?.status || "").trim();
+    const sessionUrl = String(existingSession?.url || "").trim();
+
+    if (sessionStatus === "open" && sessionUrl) {
+      redirect(sessionUrl);
+    }
+
+    if (sessionStatus === "expired") {
+      await supabase.rpc("release_booking_checkout_attempt_hold", {
+        p_booking_id: bookingId,
+        p_attempt_id: attemptId,
+        p_stripe_checkout_session_id: sessionId,
+        p_reason: "stripe_checkout_session_not_open",
+      });
+
+      redirect(`/account/bookings/${bookingId}?complete=1&status=payment_session_expired_retry`);
+    }
+
+    redirect(`/account/bookings/${bookingId}?complete=1&status=payment_reconciliation_required`);
+  };
+
+  if (acquireStatus === "completion_session_invalid") {
+    redirect(`/account/bookings/${bookingId}?complete=1&status=completion_session_invalid`);
+  }
+
+  if (
+    (acquireStatus === "ok" || acquireStatus === "stripe_attempt_active")
+    && checkoutAttemptId
+  ) {
+    if (existingStripeSessionId) {
+      await resumeExistingStripeCheckout(checkoutAttemptId, existingStripeSessionId);
+    }
+
+    if (acquireStatus === "stripe_attempt_active") {
+      redirect(`/account/bookings/${bookingId}?complete=1&status=payment_reconciliation_required`);
+    }
+  } else {
+    redirect(
+      `/account/bookings/${bookingId}?complete=1&status=${encodeURIComponent(
+        `inventory_unavailable:${acquirePayload?.status || acquirePayload?.message || "unknown"}`,
+      )}`,
+    );
+  }
+
+  const stripeExpiresAt = minutesFromNowToUnixSeconds(
+    checkoutSessionMinutes,
+  );
+
+  let session: { id: string; url: string };
+
+  try {
+    session = await createStripeCheckoutSession({
+      bookingId,
+      amount: stripeChargeAmount,
+      baseAmount: depositDueAmount,
+      tipAmount,
+      source: "customer_temporary_deposit",
+      successPath: `/account/bookings/${bookingId}?complete=1`,
+      cancelPath: `/account/bookings/${bookingId}?complete=1`,
+      expiresAt: stripeExpiresAt,
+      description: `Bounce Party LA deposit ${booking.booking_number || String(bookingId).slice(0, 8)}`,
+      metadata: {
+        flow: "admin_temporary_completion",
+        checkout_method: "stripe",
+        booking_checkout_attempt_id: checkoutAttemptId,
+      },
+    });
+  } catch (stripeError) {
+    await supabase.rpc("release_booking_checkout_attempt_hold", {
+      p_booking_id: bookingId,
+      p_attempt_id: checkoutAttemptId,
+      p_reason: "stripe_checkout_session_create_failed",
+    });
+
+    const message = stripeError instanceof Error ? stripeError.message : "stripe_session_create_failed";
+    redirect(`/account/bookings/${bookingId}?complete=1&status=${encodeURIComponent(`payment_unavailable:${message}`)}`);
+  }
+
+  const bindResult = await supabase.rpc("bind_booking_checkout_attempt_to_stripe_session", {
+    p_booking_id: bookingId,
+    p_attempt_id: checkoutAttemptId,
+    p_stripe_checkout_session_id: session.id,
+    p_stripe_expires_at: new Date(stripeExpiresAt * 1000).toISOString(),
   });
+
+  const bindPayload =
+    bindResult.data && typeof bindResult.data === "object" && !Array.isArray(bindResult.data)
+      ? (bindResult.data as { status?: string })
+      : null;
+
+  if (bindResult.error || bindPayload?.status !== "ok") {
+    await supabase.rpc("release_booking_checkout_attempt_hold", {
+      p_booking_id: bookingId,
+      p_attempt_id: checkoutAttemptId,
+      p_stripe_checkout_session_id: session.id,
+      p_reason: "stripe_checkout_bind_failed",
+    });
+
+    const bindErrorMessage = bindResult.error?.message || bindPayload?.status || "bind_failed";
+    redirect(`/account/bookings/${bookingId}?complete=1&status=${encodeURIComponent(`payment_unavailable:${bindErrorMessage}`)}`);
+  }
 
   revalidatePath(`/account/bookings/${bookingId}`);
   redirect(session.url);
@@ -505,35 +539,6 @@ export async function recordTemporaryBookingDepositAction(formData: FormData) {
 
 export async function finalizeTemporaryBookingAction(formData: FormData) {
   const bookingId = text(formData, "bookingId");
-  const supabase = await createClient();
-
-  const { data, error } = await supabase.rpc("finalize_temporary_booking", {
-    p_booking_id: bookingId,
-  });
-
-  if (error) {
-    redirect(`/account/bookings/${bookingId}?complete=1&error=${encodeURIComponent(error.message)}`);
-  }
-
-  const result = data as { success?: boolean; status?: string } | null;
   revalidatePath(`/account/bookings/${bookingId}`);
-
-  if (result?.success) {
-    try {
-      await ensureReservationsForFinalizedBooking({
-        supabase,
-        bookingId,
-      });
-    } catch (inventoryError: any) {
-      redirect(
-        `/account/bookings/${bookingId}?confirmed=1&inventoryWarning=${encodeURIComponent(
-          String(inventoryError?.message || "inventory_reservation_failed"),
-        )}`,
-      );
-    }
-
-    redirect(`/account/bookings/${bookingId}?confirmed=1`);
-  }
-
-  redirect(`/account/bookings/${bookingId}?complete=1&status=${encodeURIComponent(result?.status || "not_ready")}`);
+  redirect(`/account/bookings/${bookingId}?complete=1&status=payment_reconciliation_required`);
 }

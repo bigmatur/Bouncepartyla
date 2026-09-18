@@ -145,6 +145,7 @@ type PricingResult = {
 
 type SelectedModifierRow = {
   productId: string;
+  productSelectionIndex: number;
   groupId: string;
   groupName: string;
   optionId: string;
@@ -742,7 +743,7 @@ export default function NewBookingWizard({
   const selectedModifierRows = useMemo<SelectedModifierRow[]>(() => {
     const rows: SelectedModifierRow[] = [];
 
-    for (const selectedProduct of selectedProducts) {
+    for (const [productSelectionIndex, selectedProduct] of selectedProducts.entries()) {
       const groupsForProduct = modifierGroups.filter(
         (group) =>
           group.productId === selectedProduct.productId &&
@@ -760,6 +761,7 @@ export default function NewBookingWizard({
 
           rows.push({
             productId: selectedProduct.productId,
+            productSelectionIndex,
             groupId: group.id,
             groupName: group.name,
             optionId: option.id,
@@ -2327,8 +2329,9 @@ export default function NewBookingWizard({
       ))}
 
       {selectedModifierRows.map((item, index) => (
-        <div key={`${item.productId}-${item.groupId}-${item.optionId}`}>
+        <div key={`${item.productId}-${item.productSelectionIndex}-${item.groupId}-${item.optionId}`}>
           <input type="hidden" name={`modifierProductId_${index}`} value={item.productId} />
+          <input type="hidden" name={`modifierProductIndex_${index}`} value={item.productSelectionIndex} />
           <input type="hidden" name={`modifierGroupId_${index}`} value={item.groupId} />
           <input type="hidden" name={`modifierGroupName_${index}`} value={item.groupName} />
           <input type="hidden" name={`modifierOptionId_${index}`} value={item.optionId} />
