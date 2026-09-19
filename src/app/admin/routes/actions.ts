@@ -48,7 +48,9 @@ function cleanTime(value: string | null) {
 
   const cleanValue = value.trim();
 
-  const match = cleanValue.match(/^(\d{1,2}):(\d{2})$/);
+  const match = cleanValue.match(
+    /^(\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/,
+  );
 
   if (!match) {
     return null;
@@ -395,60 +397,22 @@ function dateTimeMs(date: string | null, time: string | null) {
   return Number.isFinite(value) ? value : null;
 }
 
-async function validateBookingRouteBoundaries(
-  supabase: any,
-  params: {
-    deliveryStopId: string;
-    deliveryDate: string;
-    deliveryEndTime: string | null;
-    pickupStopId?: string | null;
-    pickupDate?: string | null;
-    pickupStartTime?: string | null;
-  },
-) {
-  const { data: deliveryStop, error } = await supabase
-    .from("route_stops")
-    .select(`booking_id, bookings (event_date, event_start_time, event_end_time)`)
-    .eq("id", params.deliveryStopId)
-    .single();
-
-  if (error) throw new Error(error.message);
-  const booking = one(deliveryStop?.bookings);
-  if (!booking) return;
-
-  const eventDate = String(booking.event_date || "").slice(0, 10) || null;
-  const deliveryEnd = dateTimeMs(params.deliveryDate, params.deliveryEndTime);
-  const eventStart = dateTimeMs(eventDate, cleanTime(booking.event_start_time));
-
-  if (deliveryEnd != null && eventStart != null && deliveryEnd > eventStart) {
-    throw new Error("Delivery setup must finish before the event starts.");
-  }
-
-  if (params.pickupStopId && params.pickupDate && params.pickupStartTime) {
-    const pickupStart = dateTimeMs(params.pickupDate, params.pickupStartTime);
-    const eventEnd = dateTimeMs(eventDate, cleanTime(booking.event_end_time));
-    if (pickupStart != null && eventEnd != null && pickupStart < eventEnd) {
-      throw new Error("Pickup cannot start before the event ends.");
-    }
-  }
-}
-
-async function cascadeRouteTimesForChain(
+async function cascadeRouteTimesForTimeline(
   supabase: any,
   params: {
     stopDate: string;
     driverName: string | null;
-    stopType: string;
     anchorStopId?: string | null;
   },
 ) {
-  const { stopDate, driverName, stopType, anchorStopId } = params;
+  const { stopDate, driverName, anchorStopId } = params;
 
   let query = supabase
     .from("route_stops")
     .select(
       `
       id,
+      booking_id,
       stop_date,
       stop_type,
       status,
@@ -476,7 +440,7 @@ async function cascadeRouteTimesForChain(
     `,
     )
     .eq("stop_date", stopDate)
-    .eq("stop_type", stopType)
+    .in("stop_type", ["delivery", "pickup"])
     .order("sort_order", { ascending: true })
     .order("created_at", { ascending: true });
 
@@ -494,39 +458,10 @@ async function cascadeRouteTimesForChain(
 
   if (stops.length < 1) return;
 
-  // Load all delivery/pickup stops for this driver+date (any type) so we can
-  // detect cross-type stops interleaved between same-type stops in sort order.
-  let allStopsQuery = supabase
-    .from("route_stops")
-    .select("id, stop_type, sort_order, scheduled_end_time, address, city, state, zip, setup_notes, items_summary, customer_name, created_at")
-    .eq("stop_date", stopDate)
-    .in("stop_type", ["delivery", "pickup"])
-    .order("sort_order", { ascending: true })
-    .order("created_at", { ascending: true });
-
-  allStopsQuery = driverName
-    ? allStopsQuery.eq("driver_name", driverName)
-    : allStopsQuery.is("driver_name", null);
-
-  const { data: allStopsData } = await allStopsQuery;
-  const allStops: any[] = Array.isArray(allStopsData) ? allStopsData : [];
-
-  // Build a position map by id for the combined list.
-  const globalPosById = new Map<string, number>(
-    allStops.map((s: any, i: number) => [String(s.id), i]),
-  );
-
-  const foundAnchorIndex = anchorStopId
-    ? stops.findIndex((stop: any) => stop.id === anchorStopId)
-    : 0;
-
-  const anchorIndex = foundAnchorIndex >= 0 ? foundAnchorIndex : 0;
-  const anchorStop = stops[anchorIndex] || stops[0];
-
-  if (!anchorStop) return;
-
   function minimumPickupStartMinutes(stop: any) {
-    if (stopType !== "pickup" || isBreakRouteStop(stop)) return null;
+    if (String(stop?.stop_type || "") !== "pickup" || isBreakRouteStop(stop)) {
+      return null;
+    }
 
     const booking = one(stop?.bookings);
     const eventDate = String(booking?.event_date || "").slice(0, 10);
@@ -543,7 +478,9 @@ async function cascadeRouteTimesForChain(
 
     if (eventEnd >= routeDayEnd) {
       throw new Error(
-        `Pickup for booking ${String(stop?.booking_id || "")} cannot be scheduled on ${stopDate} because the event ends later.`,
+        `Pickup for booking ${String(
+          stop?.booking_id || "",
+        )} cannot be scheduled on ${stopDate} because the event ends later.`,
       );
     }
 
@@ -552,252 +489,246 @@ async function cascadeRouteTimesForChain(
     return Math.ceil((eventEnd - routeDayStart) / 60000);
   }
 
-  const anchorGlobalPos =
-    globalPosById.get(String(anchorStop.id)) ?? -1;
-  let previousGlobalStop: any = null;
+  function initialDeliveryStartMinutes(stop: any, duration: number) {
+    if (
+      String(stop?.stop_type || "") !== "delivery" ||
+      isBreakRouteStop(stop)
+    ) {
+      return null;
+    }
 
-  for (let index = anchorGlobalPos - 1; index >= 0; index -= 1) {
-    const candidate = allStops[index];
+    const booking = one(stop?.bookings);
+    const eventDate = String(booking?.event_date || "").slice(0, 10);
+    const eventStartTime = cleanTime(booking?.event_start_time);
 
-    if (!candidate || isBreakRouteStop(candidate)) {
+    if (!eventDate || !eventStartTime) return null;
+
+    const routeDayStart = dateTimeMs(stopDate, "00:00");
+    const eventStart = dateTimeMs(eventDate, eventStartTime);
+
+    if (routeDayStart == null || eventStart == null) return null;
+
+    const eventStartMinutes = Math.ceil(
+      (eventStart - routeDayStart) / 60000,
+    );
+
+    if (eventStartMinutes < 0 || eventStartMinutes >= 24 * 60) {
+      return null;
+    }
+
+    return Math.max(0, eventStartMinutes - duration);
+  }
+
+  const foundAnchorIndex = anchorStopId
+    ? stops.findIndex(
+        (stop: any) => String(stop?.id || "") === String(anchorStopId),
+      )
+    : 0;
+
+  const anchorIndex = foundAnchorIndex >= 0 ? foundAnchorIndex : 0;
+
+  let previousStop: any = null;
+  let previousGeoStop: any = null;
+  let previousEndMinutes: number | null = null;
+
+  if (anchorIndex > 0) {
+    previousStop = stops[anchorIndex - 1] || null;
+    previousEndMinutes = previousStop
+      ? toMinutes(previousStop.scheduled_end_time)
+      : null;
+
+    for (let index = anchorIndex - 1; index >= 0; index -= 1) {
+      const candidate = stops[index];
+
+      if (!candidate || isBreakRouteStop(candidate)) {
+        continue;
+      }
+
+      previousGeoStop = candidate;
+      break;
+    }
+  }
+
+  for (let index = anchorIndex; index < stops.length; index += 1) {
+    const currentStop = stops[index];
+    const savedStart = toMinutes(currentStop.scheduled_start_time);
+    const savedEnd = toMinutes(currentStop.scheduled_end_time);
+
+    /*
+     * Fixed time is authoritative.
+     *
+     * Never move a locked stop during route cascading. A route conflict is a
+     * validation/UI concern; silently changing the dispatcher-selected fixed
+     * time would destroy the meaning of the lock.
+     */
+    if (currentStop.time_locked && savedStart != null) {
+      let fixedEnd = savedEnd;
+
+      /*
+       * A locked stop preserves the dispatcher-selected interval exactly.
+       * Only synthesize an end time when the locked stop does not have one.
+       */
+      if (fixedEnd == null) {
+        fixedEnd = savedStart + stopServiceDurationMinutes(currentStop);
+
+        const { error: lockedUpdateError } = await supabase
+          .from("route_stops")
+          .update({
+            scheduled_end_time: toTime(fixedEnd),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", currentStop.id);
+
+        if (lockedUpdateError) {
+          throw new Error(lockedUpdateError.message);
+        }
+      } else if (fixedEnd < savedStart) {
+        fixedEnd += 24 * 60;
+      }
+
+      previousStop = currentStop;
+
+      if (!isBreakRouteStop(currentStop)) {
+        previousGeoStop = currentStop;
+      }
+
+      previousEndMinutes = fixedEnd;
       continue;
     }
 
-    previousGlobalStop = candidate;
-    break;
-  }
+    const minimumStart = minimumPickupStartMinutes(currentStop);
+    const duration = stopServiceDurationMinutes(currentStop);
 
-  let previousStop = anchorStop;
-  let previousGeoStop = isBreakRouteStop(anchorStop) ? null : anchorStop;
-  let previousEndMinutes = toMinutes(anchorStop.scheduled_end_time);
+    let nextStartMinutes: number | null = null;
 
-  {
-    const originalStartMinutes = toMinutes(anchorStop.scheduled_start_time);
-    const currentEndMinutes = toMinutes(anchorStop.scheduled_end_time);
-    const minimumStart = minimumPickupStartMinutes(anchorStop);
+    if (previousStop && previousEndMinutes != null) {
+      const departureTime = buildDepartureDateTime(
+        stopDate,
+        previousEndMinutes,
+      );
 
-    let startMinutes =
-      originalStartMinutes == null
-        ? minimumStart
-        : minimumStart == null
-          ? originalStartMinutes
-          : Math.max(originalStartMinutes, minimumStart);
+      const driveMinutes = await travelMinutesBetweenStops(
+        previousGeoStop || previousStop,
+        currentStop,
+        departureTime,
+      );
 
-    if (!anchorStop.time_locked && previousGlobalStop) {
-      const previousEnd = toMinutes(previousGlobalStop.scheduled_end_time);
+      const calculatedStart = previousEndMinutes + driveMinutes;
 
-      if (previousEnd != null) {
-        const departureTime = buildDepartureDateTime(stopDate, previousEnd);
-        const driveMinutes = await travelMinutesBetweenStops(
-          previousGlobalStop,
-          anchorStop,
-          departureTime,
-        );
+      nextStartMinutes =
+        minimumStart == null
+          ? calculatedStart
+          : Math.max(calculatedStart, minimumStart);
+    } else {
+      /*
+       * There is no predecessor in this timeline. Keep the existing start as
+       * the initial route anchor, while still respecting the event-end floor
+       * for an unlocked pickup.
+       */
+      const initialDeliveryStart = initialDeliveryStartMinutes(
+        currentStop,
+        duration,
+      );
 
-        const calculatedStart = previousEnd + driveMinutes;
-
-        startMinutes =
-          minimumStart == null
-            ? calculatedStart
-            : Math.max(calculatedStart, minimumStart);
-      }
+      nextStartMinutes =
+        initialDeliveryStart != null
+          ? initialDeliveryStart
+          : savedStart == null
+            ? minimumStart
+            : minimumStart == null
+              ? savedStart
+              : Math.max(savedStart, minimumStart);
     }
 
-    const savedLockedDuration =
-      anchorStop.time_locked &&
-      originalStartMinutes != null &&
-      currentEndMinutes != null &&
-      currentEndMinutes >= originalStartMinutes
-        ? currentEndMinutes - originalStartMinutes
-        : null;
+    if (nextStartMinutes == null) {
+      /*
+       * No usable anchor exists yet. Leave this stop untouched rather than
+       * inventing a start time.
+       */
+      previousStop = currentStop;
 
-    const serviceDuration =
-      savedLockedDuration ?? stopServiceDurationMinutes(anchorStop);
+      if (!isBreakRouteStop(currentStop)) {
+        previousGeoStop = currentStop;
+      }
 
-    const expectedEndMinutes =
-      startMinutes == null ? null : startMinutes + serviceDuration;
+      previousEndMinutes = savedEnd;
+      continue;
+    }
 
-    if (startMinutes == null || expectedEndMinutes == null) return;
+    const nextEndMinutes = nextStartMinutes + duration;
 
-    const startChanged = originalStartMinutes !== startMinutes;
-
-    if (startChanged || currentEndMinutes !== expectedEndMinutes) {
-      previousEndMinutes = expectedEndMinutes;
-
-      const { error: anchorUpdateError } = await supabase
+    if (
+      savedStart !== nextStartMinutes ||
+      savedEnd !== nextEndMinutes
+    ) {
+      const { error: updateError } = await supabase
         .from("route_stops")
         .update({
-          scheduled_start_time: toTime(startMinutes),
-          scheduled_end_time: toTime(expectedEndMinutes),
+          scheduled_start_time: toTime(nextStartMinutes),
+          scheduled_end_time: toTime(nextEndMinutes),
           updated_at: new Date().toISOString(),
         })
-        .eq("id", anchorStop.id);
+        .eq("id", currentStop.id);
 
-      if (anchorUpdateError) {
-        throw new Error(anchorUpdateError.message);
+      if (updateError) {
+        throw new Error(updateError.message);
       }
-    } else {
-      previousEndMinutes = currentEndMinutes;
-    }
-  }
-
-  if (!previousGeoStop) {
-    previousGeoStop = previousGlobalStop;
-  }
-
-  for (let index = anchorIndex + 1; index < stops.length; index += 1) {
-    const currentStop = stops[index];
-    const lockedStart = toMinutes(currentStop.scheduled_start_time);
-    const lockedEnd = toMinutes(currentStop.scheduled_end_time);
-
-    // Cross-type interleave: if a stop of a different type falls between the
-    // previous same-type stop and currentStop in global sort order, use its
-    // end time as the cascade base (so delivery→pickup timing flows correctly).
-    if (!currentStop.time_locked) {
-      const prevSameTypeStop = stops[index - 1] || anchorStop;
-      const prevGlobalPos = globalPosById.get(String(prevSameTypeStop.id)) ?? -1;
-      const curGlobalPos = globalPosById.get(String(currentStop.id)) ?? -1;
-     for (let gPos = curGlobalPos - 1; gPos > prevGlobalPos; gPos--) {
-  const between = allStops[gPos];
-
-  if (!between || String(between.stop_type) === stopType) {
-    continue;
-  }
-
-  const betweenEndMinutes = toMinutes(between.scheduled_end_time);
-
-  if (
-    betweenEndMinutes != null &&
-    betweenEndMinutes > (previousEndMinutes ?? -1)
-  ) {
-    previousEndMinutes = betweenEndMinutes;
-  }
-
-  if (isBreakRouteStop(between)) {
-    continue;
-  }
-
-  previousStop = between;
-  previousGeoStop = between;
-  break;
-}
-
     }
 
-   if (currentStop.time_locked && lockedStart != null) {
-  const savedLockedDuration =
-    lockedEnd != null && lockedEnd >= lockedStart
-      ? lockedEnd - lockedStart
-      : null;
-
-  const lockedDuration =
-    savedLockedDuration ?? stopServiceDurationMinutes(currentStop);
-
-  const minimumStart = minimumPickupStartMinutes(currentStop);
-
-  const safeLockedStart =
-    minimumStart == null
-      ? lockedStart
-      : Math.max(lockedStart, minimumStart);
-
-  const nextEndMinutes = safeLockedStart + lockedDuration;
-
-  if (safeLockedStart !== lockedStart || lockedEnd !== nextEndMinutes) {
-    const { error: lockedUpdateError } = await supabase
-      .from("route_stops")
-      .update({
-        scheduled_start_time: toTime(safeLockedStart),
-        scheduled_end_time: toTime(nextEndMinutes),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", currentStop.id);
-
-    if (lockedUpdateError) {
-      throw new Error(lockedUpdateError.message);
-    }
-  }
-
-  previousStop = currentStop;
-
-  if (!isBreakRouteStop(currentStop)) {
-    previousGeoStop = currentStop;
-  }
-
-  previousEndMinutes = nextEndMinutes;
-  continue;
-}
-
-    const departureTime = buildDepartureDateTime(stopDate, previousEndMinutes);
-    const driveMinutes = await travelMinutesBetweenStops(
-      previousGeoStop || previousStop,
-      currentStop,
-      departureTime,
-    );
-    const currentDuration = stopServiceDurationMinutes(currentStop);
-    const calculatedStartMinutes = previousEndMinutes + driveMinutes;
-    const minimumStart = minimumPickupStartMinutes(currentStop);
-    const nextStartMinutes =
-      minimumStart == null
-        ? calculatedStartMinutes
-        : Math.max(calculatedStartMinutes, minimumStart);
-    const nextEndMinutes = nextStartMinutes + currentDuration;
-
-    const { error: updateError } = await supabase
-      .from("route_stops")
-      .update({
-        scheduled_start_time: toTime(nextStartMinutes),
-        scheduled_end_time: toTime(nextEndMinutes),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", currentStop.id);
-
-    if (updateError) throw new Error(updateError.message);
     previousStop = currentStop;
-    if (!isBreakRouteStop(currentStop)) previousGeoStop = currentStop;
+
+    if (!isBreakRouteStop(currentStop)) {
+      previousGeoStop = currentStop;
+    }
+
     previousEndMinutes = nextEndMinutes;
   }
 }
 
-async function previousStopIdInChain(
+function routeTimelineKey(
+  stopDate: string,
+  driverName: string | null,
+) {
+  return `${stopDate}::${driverName || ""}`;
+}
+
+async function cascadeRouteTimelineFromFirstStop(
   supabase: Awaited<ReturnType<typeof createClient>>,
   params: {
     stopDate: string;
     driverName: string | null;
-    stopType: string;
-    stopId: string;
   },
 ) {
+  if (!params.stopDate) return;
+
   let query = supabase
     .from("route_stops")
     .select("id")
     .eq("stop_date", params.stopDate)
-    .eq("stop_type", params.stopType)
+    .in("stop_type", ["delivery", "pickup"])
     .order("sort_order", { ascending: true })
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: true })
+    .limit(1);
 
   query = params.driverName
     ? query.eq("driver_name", params.driverName)
     : query.is("driver_name", null);
 
-  const { data, error } = await query;
+  const { data: firstStop, error } = await query.maybeSingle();
 
   if (error) {
     throw new Error(error.message);
   }
 
-  const chain = Array.isArray(data) ? data : [];
-  const currentIndex = chain.findIndex(
-    (item: any) => String(item?.id || "") === params.stopId,
-  );
-
-  if (currentIndex <= 0) {
-    return null;
+  if (!firstStop?.id) {
+    return;
   }
 
-  const previous = chain[currentIndex - 1];
-  const previousId = String(previous?.id || "").trim();
-
-  return previousId || null;
+  await cascadeRouteTimesForTimeline(supabase, {
+    stopDate: params.stopDate,
+    driverName: params.driverName,
+    anchorStopId: String(firstStop.id),
+  });
 }
 
 function revalidateRoutes() {
@@ -1005,10 +936,9 @@ export async function createRouteStopAction(formData: FormData) {
   }
 
   if (data && ["delivery", "pickup"].includes(String(data.stop_type || ""))) {
-    await cascadeRouteTimesForChain(supabase, {
+    await cascadeRouteTimesForTimeline(supabase, {
       stopDate: String(data.stop_date || stopDate),
       driverName: (data.driver_name as string | null) || null,
-      stopType: String(data.stop_type),
       anchorStopId: String(data.id),
     });
   }
@@ -1069,7 +999,28 @@ export async function updateRouteStopAction(formData: FormData) {
     throw new Error("Invalid route stop status.");
   }
 
+  const { data: existingStop, error: existingStopError } = await supabase
+    .from("route_stops")
+    .select("id, stop_date, stop_type, driver_name")
+    .eq("id", stopId)
+    .maybeSingle();
+
+  if (existingStopError) {
+    throw new Error(existingStopError.message);
+  }
+
+  if (!existingStop) {
+    throw new Error("Route stop was not found.");
+  }
+
+  const oldStopDate = String(existingStop.stop_date || "");
+  const oldDriverName =
+    (existingStop.driver_name as string | null) || null;
+  const oldStopType = String(existingStop.stop_type || "");
+
   const updateData: Record<string, any> = {
+    stop_date: stopDate,
+    stop_type: stopType,
     status,
 
     customer_name: customerName,
@@ -1132,12 +1083,29 @@ export async function updateRouteStopAction(formData: FormData) {
     throw new Error(error.message);
   }
 
-  if (["delivery", "pickup"].includes(stopType)) {
-    await cascadeRouteTimesForChain(supabase, {
+  const oldWasRouteStop = ["delivery", "pickup"].includes(oldStopType);
+  const newIsRouteStop = ["delivery", "pickup"].includes(stopType);
+
+  const oldTimelineKey = oldStopDate
+    ? routeTimelineKey(oldStopDate, oldDriverName)
+    : "";
+  const newTimelineKey = routeTimelineKey(stopDate, driverName);
+
+  if (
+    oldWasRouteStop &&
+    oldStopDate &&
+    (!newIsRouteStop || oldTimelineKey !== newTimelineKey)
+  ) {
+    await cascadeRouteTimelineFromFirstStop(supabase, {
+      stopDate: oldStopDate,
+      driverName: oldDriverName,
+    });
+  }
+
+  if (newIsRouteStop) {
+    await cascadeRouteTimelineFromFirstStop(supabase, {
       stopDate,
       driverName,
-      stopType,
-      anchorStopId: stopId,
     });
   }
 
@@ -1220,41 +1188,19 @@ export async function deleteRouteStopAction(formData: FormData) {
     throw new Error(error.message);
   }
 
-  if (existingStop && isBreakRouteStop(existingStop)) {
+  if (
+    existingStop &&
+    ["delivery", "pickup"].includes(String(existingStop.stop_type || ""))
+  ) {
     const stopDate = String(existingStop.stop_date || "");
-    const stopType = String(existingStop.stop_type || "delivery");
-    const driverName = (existingStop.driver_name as string | null) || null;
+    const driverName =
+      (existingStop.driver_name as string | null) || null;
 
-    if (stopDate && ["delivery", "pickup"].includes(stopType)) {
-      let remainingQuery = supabase
-        .from("route_stops")
-        .select("id")
-        .eq("stop_date", stopDate)
-        .eq("stop_type", stopType)
-        .order("sort_order", { ascending: true })
-        .order("scheduled_start_time", { ascending: true, nullsFirst: false })
-        .order("created_at", { ascending: true })
-        .limit(1);
-
-      remainingQuery = driverName
-        ? remainingQuery.eq("driver_name", driverName)
-        : remainingQuery.is("driver_name", null);
-
-      const { data: firstRemaining, error: firstRemainingError } =
-        await remainingQuery.maybeSingle();
-
-      if (firstRemainingError) {
-        throw new Error(firstRemainingError.message);
-      }
-
-      if (firstRemaining?.id) {
-        await cascadeRouteTimesForChain(supabase, {
-          stopDate,
-          driverName,
-          stopType,
-          anchorStopId: String(firstRemaining.id),
-        });
-      }
+    if (stopDate) {
+      await cascadeRouteTimelineFromFirstStop(supabase, {
+        stopDate,
+        driverName,
+      });
     }
   }
 
@@ -1272,7 +1218,7 @@ async function updateCanonicalBookingStop(
 ) {
   const { data: sourceStop, error: sourceError } = await supabase
     .from("route_stops")
-    .select("id, booking_id, stop_type, stop_date")
+    .select("id, booking_id, stop_type, stop_date, driver_name")
     .eq("id", stopId)
     .maybeSingle();
 
@@ -1316,12 +1262,39 @@ export async function updateRouteStopDriverAction(formData: FormData) {
     throw new Error("Missing route stop id.");
   }
 
-  await updateCanonicalBookingStop(supabase, stopId, {
-    driver_name: driverName,
-    updated_at: new Date().toISOString(),
-  }, {
-    scopeToSourceStopDate: true,
-  });
+  const sourceStop = await updateCanonicalBookingStop(
+    supabase,
+    stopId,
+    {
+      driver_name: driverName,
+      updated_at: new Date().toISOString(),
+    },
+    {
+      scopeToSourceStopDate: true,
+    },
+  );
+
+  const stopDate = String(sourceStop.stop_date || "");
+  const oldDriverName =
+    (sourceStop.driver_name as string | null) || null;
+
+  if (
+    stopDate &&
+    routeTimelineKey(stopDate, oldDriverName) !==
+      routeTimelineKey(stopDate, driverName)
+  ) {
+    await cascadeRouteTimelineFromFirstStop(supabase, {
+      stopDate,
+      driverName: oldDriverName,
+    });
+  }
+
+  if (stopDate) {
+    await cascadeRouteTimelineFromFirstStop(supabase, {
+      stopDate,
+      driverName,
+    });
+  }
 
   revalidateRoutes();
 }
@@ -1378,7 +1351,9 @@ export async function updateRouteStopCompactAction(formData: FormData) {
 
   const { data: deliverySourceStop, error: deliverySourceStopError } = await supabase
     .from("route_stops")
-    .select("id, stop_type, customer_name, items_summary, setup_notes")
+    .select(
+      "id, stop_type, stop_date, driver_name, customer_name, items_summary, setup_notes",
+    )
     .eq("id", deliveryStopId)
     .maybeSingle();
 
@@ -1390,6 +1365,35 @@ export async function updateRouteStopCompactAction(formData: FormData) {
     throw new Error("Route stop was not found.");
   }
 
+  const oldDeliveryStopDate = String(deliverySourceStop.stop_date || "");
+  const oldDeliveryDriverName =
+    (deliverySourceStop.driver_name as string | null) || null;
+
+  let pickupSourceStop: {
+    id: string;
+    stop_date: string | null;
+    driver_name: string | null;
+    stop_type: string | null;
+  } | null = null;
+
+  if (pickupStopId) {
+    const { data, error } = await supabase
+      .from("route_stops")
+      .select("id, stop_date, driver_name, stop_type")
+      .eq("id", pickupStopId)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    if (!data) {
+      throw new Error("Pickup route stop was not found.");
+    }
+
+    pickupSourceStop = data;
+  }
+
   const isBreakCard = isBreakRouteStop(deliverySourceStop);
   const deliveryStopType =
     String(deliverySourceStop.stop_type || "") === "pickup" ? "pickup" : "delivery";
@@ -1399,14 +1403,6 @@ export async function updateRouteStopCompactAction(formData: FormData) {
   const deliveryTimeLocked = getBoolean(formData, "deliveryTimeLocked");
   const pickupTimeLocked = getBoolean(formData, "pickupTimeLocked");
 
-  await validateBookingRouteBoundaries(supabase, {
-    deliveryStopId,
-    deliveryDate: deliveryStopDate,
-    deliveryEndTime: deliveryTimeLocked ? deliveryScheduledEndTime : null,
-    pickupStopId,
-    pickupDate: pickupStopDate,
-    pickupStartTime: pickupTimeLocked ? pickupScheduledStartTime : null,
-  });
 
   const now = new Date().toISOString();
 
@@ -1462,12 +1458,6 @@ export async function updateRouteStopCompactAction(formData: FormData) {
       scheduledStartTime: deliveryScheduledStartTime,
     });
 
-    await cascadeRouteTimesForChain(supabase, {
-      stopDate: deliveryStopDate,
-      driverName: deliveryDriverName,
-      stopType: effectiveStopType,
-      anchorStopId: deliveryStopId,
-    });
   }
 
   if (pickupStopId) {
@@ -1499,54 +1489,6 @@ export async function updateRouteStopCompactAction(formData: FormData) {
     );
   }
 
-  if (!isBreakCard) {
-    let deliveryAnchorStopId = deliveryStopId;
-
-    if (!deliveryTimeLocked) {
-      const previousDeliveryStopId = await previousStopIdInChain(supabase, {
-        stopDate: deliveryStopDate,
-        driverName: deliveryDriverName,
-        stopType: effectiveStopType,
-        stopId: deliveryStopId,
-      });
-
-      if (previousDeliveryStopId) {
-        deliveryAnchorStopId = previousDeliveryStopId;
-      }
-    }
-
-    await cascadeRouteTimesForChain(supabase, {
-      stopDate: deliveryStopDate,
-      driverName: deliveryDriverName,
-      stopType: effectiveStopType,
-      anchorStopId: deliveryAnchorStopId,
-    });
-  }
-
-  if (pickupStopId && pickupStopDate) {
-    let pickupAnchorStopId = pickupStopId;
-
-    if (!pickupTimeLocked) {
-      const previousPickupStopId = await previousStopIdInChain(supabase, {
-        stopDate: pickupStopDate,
-        driverName: pickupDriverName,
-        stopType: "pickup",
-        stopId: pickupStopId,
-      });
-
-      if (previousPickupStopId) {
-        pickupAnchorStopId = previousPickupStopId;
-      }
-    }
-
-    await cascadeRouteTimesForChain(supabase, {
-      stopDate: pickupStopDate,
-      driverName: pickupDriverName,
-      stopType: "pickup",
-      anchorStopId: pickupAnchorStopId,
-    });
-  }
-
   if (orderedIdsRaw) {
     let orderedIds: string[] = [];
 
@@ -1573,6 +1515,45 @@ export async function updateRouteStopCompactAction(formData: FormData) {
         scopeToSourceStopDate: true,
       });
     }
+  }
+
+  const affectedTimelines = new Map<
+    string,
+    { stopDate: string; driverName: string | null }
+  >();
+
+  const addAffectedTimeline = (
+    stopDate: string | null | undefined,
+    driverName: string | null,
+  ) => {
+    const normalizedDate = String(stopDate || "").trim();
+    if (!normalizedDate) return;
+
+    affectedTimelines.set(
+      routeTimelineKey(normalizedDate, driverName),
+      {
+        stopDate: normalizedDate,
+        driverName,
+      },
+    );
+  };
+
+  addAffectedTimeline(oldDeliveryStopDate, oldDeliveryDriverName);
+  addAffectedTimeline(deliveryStopDate, deliveryDriverName);
+
+  if (pickupSourceStop) {
+    addAffectedTimeline(
+      pickupSourceStop.stop_date,
+      pickupSourceStop.driver_name || null,
+    );
+  }
+
+  if (pickupStopId && pickupStopDate) {
+    addAffectedTimeline(pickupStopDate, pickupDriverName);
+  }
+
+  for (const timeline of affectedTimelines.values()) {
+    await cascadeRouteTimelineFromFirstStop(supabase, timeline);
   }
 
   revalidateRoutes();
@@ -1658,6 +1639,8 @@ export async function saveRouteOrderAction(formData: FormData) {
     id,
     time_locked,
     stop_type,
+    stop_date,
+    driver_name,
     booking_id,
     bookings (event_date, event_start_time, event_end_time)
     `,
@@ -1767,6 +1750,64 @@ const now = new Date().toISOString();
     await updateCanonicalBookingStop(supabase, id, updateData, {
       scopeToSourceStopDate: true,
     });
+  }
+
+  const affectedTimelines = new Map<
+    string,
+    { stopDate: string; driverName: string | null }
+  >();
+
+  const addAffectedTimeline = (
+    stopDate: string | null | undefined,
+    driverName: string | null,
+  ) => {
+    const normalizedDate = String(stopDate || "").slice(0, 10).trim();
+    if (!normalizedDate) return;
+
+    affectedTimelines.set(
+      routeTimelineKey(normalizedDate, driverName),
+      {
+        stopDate: normalizedDate,
+        driverName,
+      },
+    );
+  };
+
+  for (const stop of lockedStops || []) {
+    const stopType = String((stop as any)?.stop_type || "");
+
+    if (stopType !== "delivery" && stopType !== "pickup") {
+      continue;
+    }
+
+    const id = String((stop as any)?.id || "").trim();
+
+    if (!id) {
+      continue;
+    }
+
+    const driverName =
+      typeof (stop as any)?.driver_name === "string" &&
+      String((stop as any).driver_name).trim()
+        ? String((stop as any).driver_name)
+        : null;
+
+    const oldStopDate =
+      String((stop as any)?.stop_date || "").slice(0, 10) || null;
+
+    addAffectedTimeline(oldStopDate, driverName);
+
+    if (persistRouteTiming && !lockedIds.has(id)) {
+      const timing = routeTimingById.get(id);
+
+      if (timing?.stop_date) {
+        addAffectedTimeline(timing.stop_date, driverName);
+      }
+    }
+  }
+
+  for (const timeline of affectedTimelines.values()) {
+    await cascadeRouteTimelineFromFirstStop(supabase, timeline);
   }
 
   revalidateRoutes();

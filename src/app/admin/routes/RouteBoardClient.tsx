@@ -253,25 +253,77 @@ function stopDateTimeStamp(stop: RouteStop, selectedDate: string) {
 }
 
 function sortStopsByScheduledTime(stops: RouteStop[], selectedDate: string) {
+  function normalizedSortOrder(stop: RouteStop) {
+    const rawValue = stop.sort_order;
+
+    if (
+      rawValue === null ||
+      rawValue === undefined ||
+      String(rawValue).trim() === ""
+    ) {
+      return Number.MAX_SAFE_INTEGER;
+    }
+
+    const value = Number(rawValue);
+
+    return Number.isFinite(value) ? value : Number.MAX_SAFE_INTEGER;
+  }
+
+  function initialBusinessTime(stop: RouteStop) {
+    const booking = getOne(stop.bookings);
+    const value =
+      stop.stop_type === "pickup"
+        ? booking?.event_end_time
+        : booking?.event_start_time;
+
+    const time = timeFromAny(value);
+
+    if (!time) {
+      return Number.POSITIVE_INFINITY;
+    }
+
+    const [hours, minutes] = time.split(":").map(Number);
+
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+      return Number.POSITIVE_INFINITY;
+    }
+
+    return hours * 60 + minutes;
+  }
+
+  function initialTypePriority(stop: RouteStop) {
+    if (stop.stop_type === "delivery") return 0;
+    if (stop.stop_type === "pickup") return 1;
+    return 2;
+  }
+
   return [...stops].sort((left, right) => {
+    const leftSort = normalizedSortOrder(left);
+    const rightSort = normalizedSortOrder(right);
+
+    if (leftSort !== rightSort) {
+      return leftSort - rightSort;
+    }
+
+    const leftTypePriority = initialTypePriority(left);
+    const rightTypePriority = initialTypePriority(right);
+
+    if (leftTypePriority !== rightTypePriority) {
+      return leftTypePriority - rightTypePriority;
+    }
+
+    const leftBusinessTime = initialBusinessTime(left);
+    const rightBusinessTime = initialBusinessTime(right);
+
+    if (leftBusinessTime !== rightBusinessTime) {
+      return leftBusinessTime - rightBusinessTime;
+    }
+
     const leftStamp = stopDateTimeStamp(left, selectedDate);
     const rightStamp = stopDateTimeStamp(right, selectedDate);
 
     if (leftStamp !== rightStamp) {
       return leftStamp - rightStamp;
-    }
-
-    const leftSort = Number(left.sort_order);
-    const rightSort = Number(right.sort_order);
-    const normalizedLeftSort = Number.isFinite(leftSort)
-      ? leftSort
-      : Number.MAX_SAFE_INTEGER;
-    const normalizedRightSort = Number.isFinite(rightSort)
-      ? rightSort
-      : Number.MAX_SAFE_INTEGER;
-
-    if (normalizedLeftSort !== normalizedRightSort) {
-      return normalizedLeftSort - normalizedRightSort;
     }
 
     const leftCreatedAt = Date.parse(String(left.created_at || ""));
@@ -1336,6 +1388,7 @@ function SortableStopCard({
   weatherByStopId,
   sequenceNumber,
   numberTone,
+  timingHealth,
   liveTimingByStopId,
   onTimingDraftChange,
   driverDraftByStopId,
@@ -1346,13 +1399,14 @@ function SortableStopCard({
   selectedDate,
   bookingRouteStops,
   supportsRouteStopWindows,
-  orderedStopIds,
+  getOrderedStopIdsForSave,
   canPersistBoardOrderOnSave,
 }: {
   stop: RouteStop;
   weatherByStopId: Record<string, RouteWeatherForecast | null>;
   sequenceNumber: number | null;
   numberTone: "delivery" | "pickup" | "other";
+  timingHealth: RouteTimingHealth | null;
   liveTimingByStopId: Map<string, LiveTiming>;
   onTimingDraftChange: (stopId: string, draft: TimingDraft) => void;
   driverDraftByStopId: Record<string, string>;
@@ -1363,7 +1417,7 @@ function SortableStopCard({
   selectedDate: string;
   bookingRouteStops: RouteStop[];
   supportsRouteStopWindows: boolean;
-  orderedStopIds: string[];
+  getOrderedStopIdsForSave: (stopIds: string[]) => string[];
   canPersistBoardOrderOnSave: boolean;
 }) {
   const {
@@ -1912,6 +1966,19 @@ const effectiveDeliveryDurationMin =
             <span className="sm:hidden">{bookingEventTime(stop)}</span><span className="hidden sm:inline">🕒 Event {bookingEventTime(stop)}</span>
           </div>
 
+          {timingHealth && (timingHealth.tone === "warning" || timingHealth.tone === "conflict") && (
+            <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-2">
+              <span className={["inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-xs font-bold ring-1", routeTimingHealthClasses(timingHealth.tone)].join(" ")}>
+                {timingHealth.label}
+              </span>
+              {timingHealth.details.length > 0 && (
+                <span className="min-w-0 text-xs font-medium leading-4 text-red-700">
+                  {timingHealth.details.join(" ")}
+                </span>
+              )}
+            </div>
+          )}
+
           <div className="mt-1 truncate text-lg font-bold leading-6 tracking-tight text-[#1b1b1b] sm:text-xl">
             {customer.name}
           </div>
@@ -2087,11 +2154,16 @@ const effectiveDeliveryDurationMin =
             action={updateRouteStopCompactAction}
             className="grid min-w-0 gap-3 rounded-[18px] bg-white p-3 ring-1 ring-[#eee5d9] sm:gap-4 sm:rounded-[24px] sm:p-5 md:grid-cols-2"
           >
-            {canPersistBoardOrderOnSave && orderedStopIds.length > 0 ? (
+            {canPersistBoardOrderOnSave ? (
               <input
                 type="hidden"
                 name="orderedIds"
-                value={JSON.stringify(orderedStopIds)}
+                value={JSON.stringify(
+                  getOrderedStopIdsForSave([
+                    deliveryStop.id,
+                    ...(pickupStop ? [pickupStop.id] : []),
+                  ]),
+                )}
               />
             ) : null}
             <input
@@ -2498,35 +2570,19 @@ const effectiveDeliveryDurationMin =
                             setPickupTimeLocked(locked);
 
                             if (pickupStop) {
-                              if (!locked) {
-                                const nextEnd = addMinutesToTime(
-                                  pickupStartTime,
-                                  teardownDurationMin,
-                                );
+                              const nextEnd = addMinutesToTime(
+                                pickupStartTime,
+                                teardownDurationMin,
+                              );
 
-                                setPickupEndTime(nextEnd);
+                              setPickupEndTime(nextEnd);
 
-                                onTimingDraftChange(pickupStop.id, {
-                                  locked,
-                                  date: pickupDate,
-                                  startTime: pickupStartTime,
-                                  endTime: nextEnd,
-                                });
-                              } else {
-                                const nextEnd = addMinutesToTime(
-                                  pickupStartTime,
-                                  teardownDurationMin,
-                                );
-
-                                setPickupEndTime(nextEnd);
-
-                                onTimingDraftChange(pickupStop.id, {
-                                  locked,
-                                  date: pickupDate,
-                                  startTime: pickupStartTime,
-                                  endTime: nextEnd,
-                                });
-                              }
+                              onTimingDraftChange(pickupStop.id, {
+                                locked,
+                                date: pickupDate,
+                                startTime: pickupStartTime,
+                                endTime: nextEnd,
+                              });
                             }
                           }}
                           className="mt-0.5 h-4 w-4"
@@ -2536,8 +2592,9 @@ const effectiveDeliveryDurationMin =
                             Fixed pickup time
                           </span>
                           <span className="mt-1 hidden text-xs text-blue-800 sm:block">
-                            Keep this exact time during route recalculation. Pickup
-                            still cannot begin before the event ends.
+                            Keep this exact time during route recalculation. If it
+                            conflicts with the event end or previous stop, Route Board
+                            will show a timing conflict.
                           </span>
                         </span>
                       </label>
@@ -2952,12 +3009,13 @@ setRouteSegmentsByChainId({});
 
   function handleTimingDraftChange(stopId: string, draft: TimingDraft) {
     const allKnownStops = [...orderedStops, ...bookingRouteStops];
-    const sourceStop = allKnownStops.find((candidate) => candidate.id === stopId);
+    const sourceStop = allKnownStops.find(
+      (candidate) => candidate.id === stopId,
+    );
 
     // One booking can temporarily have more than one row for the same stop type
-    // after older route-board migrations. All cards for that booking must still
-    // share one live draft, otherwise the delivery card and pickup card can show
-    // different values until the page is refreshed.
+    // after older route-board migrations. Keep those rows synchronized, but do
+    // not reorder the board while the dispatcher is still editing a time.
     const synchronizedStopIds = sourceStop?.booking_id
       ? Array.from(
           new Set(
@@ -2973,116 +3031,25 @@ setRouteSegmentsByChainId({});
       : [stopId];
 
     setTimingDraftByStopId((current) => {
-  const next = { ...current };
+      const next = { ...current };
 
-  synchronizedStopIds.forEach((id) => {
-    next[id] = {
-      ...(next[id] || {}),
-      ...draft,
-    };
-  });
-
-  return next;
-});
-if (draft.date !== undefined) {
-
-  setRouteSegmentsByChainId({});
-
-}
-if (
-  sourceStop &&
-  isBreakRouteStop(sourceStop) &&
-  (draft.startTime !== undefined || draft.date !== undefined)
-) {
-  const currentDraft = timingDraftByStopId[stopId] || {};
-
-  const nextDate = String(
-    draft.date ||
-      currentDraft.date ||
-      sourceStop.stop_date ||
-      selectedDate,
-  ).slice(0, 10);
-
-  const nextStartTime = timeValue(
-    draft.startTime ||
-      currentDraft.startTime ||
-      sourceStop.scheduled_start_time,
-  );
-
-  const targetStartMinutes = minutesFromTime(nextStartTime);
-
-  if (targetStartMinutes != null) {
-    setOrderedStops((currentStops) => {
-      const liveSourceStop =
-        currentStops.find((candidate) => candidate.id === stopId) ||
-        sourceStop;
-
-      const sourceDriver = String(liveSourceStop.driver_name || "");
-
-      const timelineStops = currentStops.filter((candidate) => {
-        const candidateDraft = timingDraftByStopId[candidate.id] || {};
-
-        const candidateDate = String(
-          candidateDraft.date ||
-            candidate.stop_date ||
-            selectedDate,
-        ).slice(0, 10);
-
-        return (
-          candidate.id === stopId ||
-          (candidateDate === nextDate &&
-            String(candidate.driver_name || "") === sourceDriver)
-        );
+      synchronizedStopIds.forEach((id) => {
+        next[id] = {
+          ...(next[id] || {}),
+          ...draft,
+        };
       });
 
-      if (timelineStops.length <= 1) {
-        return currentStops;
-      }
-
-      const withoutBreak = timelineStops.filter(
-        (candidate) => candidate.id !== stopId,
-      );
-
-      let insertIndex = withoutBreak.findIndex((candidate) => {
-        const candidateDraft = timingDraftByStopId[candidate.id] || {};
-
-        const candidateStartMinutes = minutesFromTime(
-          candidateDraft.startTime ||
-            candidate.scheduled_start_time,
-        );
-
-        return (
-          candidateStartMinutes != null &&
-          candidateStartMinutes >= targetStartMinutes
-        );
-      });
-
-      if (insertIndex < 0) {
-        insertIndex = withoutBreak.length;
-      }
-
-      const reorderedTimeline = [...withoutBreak];
-
-      reorderedTimeline.splice(
-        insertIndex,
-        0,
-        liveSourceStop,
-      );
-
-      const timelineIds = new Set(
-        timelineStops.map((candidate) => candidate.id),
-      );
-
-      let replacementIndex = 0;
-
-      return currentStops.map((candidate) =>
-        timelineIds.has(candidate.id)
-          ? reorderedTimeline[replacementIndex++]
-          : candidate,
-      );
+      return next;
     });
-  }
-}
+
+    if (
+      draft.date !== undefined ||
+      draft.startTime !== undefined ||
+      draft.endTime !== undefined
+    ) {
+      setRouteSegmentsByChainId({});
+    }
   }
 
   const countableStops = useMemo(
@@ -3091,10 +3058,7 @@ if (
   );
 
   const stopSequenceById = useMemo(() => {
-    const counters = new Map<
-      string,
-      { delivery: number; pickup: number; other: number }
-    >();
+    const counters = new Map<string, number>();
     const sequence = new Map<
       string,
       { number: number; tone: "delivery" | "pickup" | "other" }
@@ -3104,24 +3068,16 @@ if (
       if (isBreakRouteStop(stop)) return;
 
       const driverName = String(stop.driver_name || "Unassigned");
-      const current = counters.get(driverName) || {
-        delivery: 0,
-        pickup: 0,
-        other: 0,
-      };
+      const number = (counters.get(driverName) || 0) + 1;
+      const tone =
+        stop.stop_type === "delivery"
+          ? "delivery"
+          : stop.stop_type === "pickup"
+            ? "pickup"
+            : "other";
 
-      if (stop.stop_type === "delivery") {
-        current.delivery += 1;
-        sequence.set(stop.id, { number: current.delivery, tone: "delivery" });
-      } else if (stop.stop_type === "pickup") {
-        current.pickup += 1;
-        sequence.set(stop.id, { number: current.pickup, tone: "pickup" });
-      } else {
-        current.other += 1;
-        sequence.set(stop.id, { number: current.other, tone: "other" });
-      }
-
-      counters.set(driverName, current);
+      counters.set(driverName, number);
+      sequence.set(stop.id, { number, tone });
     });
 
     return sequence;
@@ -3158,10 +3114,8 @@ if (
     return matchedDriver?.id || `extra-${driverName}`;
   }
 
-  function getChainIdForStop(stop: RouteStop) {
-    return `${getDriverIdForStop(stop)}::${String(
-      stop.stop_type || "other",
-    )}`;
+  function getTimelineIdForStop(stop: RouteStop) {
+    return `${getDriverIdForStop(stop)}::timeline`;
   }
 
   function segmentTravelMinutes(
@@ -3172,8 +3126,8 @@ if (
       return 0;
     }
 
-    const chainId = getChainIdForStop(currentStop);
-    const chainSegments = routeSegmentsByChainId[chainId] || [];
+    const timelineId = getTimelineIdForStop(currentStop);
+    const timelineSegments = routeSegmentsByChainId[timelineId] || [];
 
     const exactEdgeMinutes = routeTravelMinutesByEdgeKey.get(
       `edge:${previousStop.id}:${currentStop.id}`,
@@ -3183,7 +3137,7 @@ if (
       return exactEdgeMinutes;
     }
 
-    const exactSegmentById = chainSegments.find(
+    const exactSegmentById = timelineSegments.find(
       (segment) =>
         String(segment.fromStopId || "") === String(previousStop.id) &&
         String(segment.toStopId || "") === String(currentStop.id),
@@ -3201,7 +3155,7 @@ if (
     const currentSequence = stopSequenceById.get(currentStop.id);
 
     if (previousSequence && currentSequence) {
-      const exactSegmentBySequence = chainSegments.find(
+      const exactSegmentBySequence = timelineSegments.find(
         (segment) =>
           segment.fromSequence === previousSequence.number &&
           segment.toSequence === currentSequence.number &&
@@ -3219,7 +3173,7 @@ if (
     }
 
     if (currentSequence) {
-      const destinationSegment = chainSegments.find(
+      const destinationSegment = timelineSegments.find(
         (segment) =>
           segment.toSequence === currentSequence.number &&
           segment.toStopType === currentStop.stop_type,
@@ -3239,7 +3193,7 @@ if (
 
   const liveTimingByStopId = useMemo(() => {
     const result = new Map<string, LiveTiming>();
-    const chainGroups = new Map<string, RouteStop[]>();
+    const timelineGroups = new Map<string, RouteStop[]>();
 
     orderedStops.forEach((stop) => {
       const stopType = String(stop.stop_type || "");
@@ -3247,36 +3201,24 @@ if (
       if (stopType !== "delivery" && stopType !== "pickup") return;
 
       const draft = timingDraftByStopId[stop.id] || {};
-const effectiveLocked =
-  draft.locked !== undefined ? draft.locked : Boolean(stop.time_locked);
-
-const date = String(draft.date || stop.stop_date || selectedDate).slice(
+      const date = String(draft.date || stop.stop_date || selectedDate).slice(
         0,
         10,
       );
       const driver = String(stop.driver_name || "");
-      const key = `${date}::${driver}::${stopType}`;
-      const group = chainGroups.get(key) || [];
+      const key = `${date}::${driver}`;
+      const group = timelineGroups.get(key) || [];
 
       group.push(stop);
-      chainGroups.set(key, group);
+      timelineGroups.set(key, group);
     });
 
-    // Build a filtered list (delivery + pickup only) in global sort order,
-    // so we can detect cross-type stops interleaved between chain stops.
-    const deliveryPickupStops = orderedStops.filter(
-      (s) => s.stop_type === "delivery" || s.stop_type === "pickup",
-    );
-    const globalPositionById = new Map<string, number>(
-      deliveryPickupStops.map((s, i) => [String(s.id), i]),
-    );
-
-    chainGroups.forEach((chainStops) => {
+    timelineGroups.forEach((timelineStops) => {
       let previousStop: RouteStop | null = null;
       let previousGeoStop: RouteStop | null = null;
       let previousEndTime = "";
 
-      chainStops.forEach((stop, index) => {
+      timelineStops.forEach((stop, index) => {
         const draft = timingDraftByStopId[stop.id] || {};
         const date = String(draft.date || stop.stop_date || selectedDate).slice(
           0,
@@ -3313,154 +3255,35 @@ const date = String(draft.date || stop.stop_date || selectedDate).slice(
             savedDuration ||
             60;
 
-        // For the first stop in a type-chain, borrow timing from the previous
-        // global stop (same driver/date) so mixed delivery/pickup order cascades.
-        if (
-          index === 0 &&
-          !stop.time_locked &&
-          !draft.locked &&
-          !draft.startTime &&
-          !draft.endTime
-        ) {
-          const curGlobalPos = globalPositionById.get(String(stop.id)) ?? -1;
-
-          for (let gPos = curGlobalPos - 1; gPos >= 0; gPos--) {
-            const candidate = deliveryPickupStops[gPos];
-
-            if (!candidate || isBreakRouteStop(candidate)) {
-              continue;
-            }
-
-            const candidateDraft = timingDraftByStopId[candidate.id] || {};
-            const candidateDate = String(
-              candidateDraft.date || candidate.stop_date || selectedDate,
-            ).slice(0, 10);
-            const candidateDriver = String(candidate.driver_name || "");
-
-            if (
-              candidateDate !== date ||
-              candidateDriver !== String(stop.driver_name || "")
-            ) {
-              continue;
-            }
-
-            const candidateTiming = result.get(String(candidate.id));
-            const candidateEnd =
-              candidateTiming?.endTime ||
-              timeValue(candidate.scheduled_end_time);
-
-            if (!candidateEnd) {
-              continue;
-            }
-
-            previousStop = candidate;
-            previousGeoStop = candidate;
-            previousEndTime = candidateEnd;
-            break;
-          }
-        }
-
-        // Cross-type interleave check: if a stop of a different type falls
-        // between the previous chain-stop and this stop in global sort order
-        // (e.g. a delivery placed after some pickups), use that stop's end
-        // time as the cascade base so timing flows across type boundaries.
-        if (
-          index > 0 &&
-          !stop.time_locked &&
-          !draft.locked &&
-          !draft.startTime &&
-          !draft.endTime
-        ) {
-          const prevChainStop = chainStops[index - 1];
-          const prevGlobalPos = globalPositionById.get(String(prevChainStop.id)) ?? -1;
-          const curGlobalPos = globalPositionById.get(String(stop.id)) ?? -1;
-          for (let gPos = curGlobalPos - 1; gPos > prevGlobalPos; gPos--) {
-  const between = deliveryPickupStops[gPos];
-
-  if (!between || between.stop_type === stop.stop_type) {
-  continue;
-}
-
-const betweenDraft = timingDraftByStopId[between.id] || {};
-
-const betweenDate = String(
-  betweenDraft.date || between.stop_date || selectedDate,
-).slice(0, 10);
-
-const betweenDriver = String(between.driver_name || "");
-
-if (
-  betweenDate !== date ||
-  betweenDriver !== String(stop.driver_name || "")
-) {
-  continue;
-}
-
-// Use the computed timing if available, else fall back to saved time.
-
-  const betweenTiming = result.get(String(between.id));
-  const betweenEnd =
-    betweenTiming?.endTime || timeValue(between.scheduled_end_time);
-
-  if (betweenEnd && betweenEnd > (previousEndTime || "")) {
-    previousEndTime = betweenEnd;
-  }
-
-  if (isBreakRouteStop(between)) {
-    continue;
-  }
-
-  previousStop = between;
-  previousGeoStop = between;
-  break;
-}
-        }
-const effectiveLocked =
-  draft.locked !== undefined ? draft.locked : Boolean(stop.time_locked);
-  const hasManualAnchor = Boolean(
-  effectiveLocked ||
-  draft.date ||
-  draft.startTime ||
-  draft.endTime,
-);
+        const effectiveLocked =
+          draft.locked !== undefined ? draft.locked : Boolean(stop.time_locked);
+        const hasManualAnchor = Boolean(
+          effectiveLocked ||
+          draft.date ||
+          draft.startTime ||
+          draft.endTime,
+        );
 
         if (index === 0) {
-          if (!hasManualAnchor && previousStop && previousEndTime) {
-            const mapTravelMinutes = segmentTravelMinutes(
-              previousGeoStop || previousStop,
-              stop,
-            );
-            const fallbackMinutes = estimateTravelMinutes(
-              previousGeoStop || previousStop,
-              stop,
-            );
-
-            startTime = addMinutesToTime(
-              previousEndTime,
-              mapTravelMinutes ?? fallbackMinutes,
-            );
+          if (startTime && !endTime) {
             endTime = addMinutesToTime(startTime, currentDuration);
-          } else {
-            if (startTime && !endTime) {
-              endTime = addMinutesToTime(startTime, currentDuration);
-            }
+          }
 
-            if (!startTime && endTime) {
-              startTime = addMinutesToTime(endTime, -currentDuration);
-            }
+          if (!startTime && endTime) {
+            startTime = addMinutesToTime(endTime, -currentDuration);
+          }
 
-            if (!startTime) {
-              startTime = savedStartTime || "08:00";
-            }
+          if (!startTime) {
+            startTime = savedStartTime || "08:00";
+          }
 
-            if (!endTime) {
-              endTime = addMinutesToTime(startTime, currentDuration);
-            }
+          if (!endTime) {
+            endTime = addMinutesToTime(startTime, currentDuration);
           }
         } else if (hasManualAnchor) {
           if (startTime && !effectiveLocked) {
-  endTime = addMinutesToTime(startTime, currentDuration);
-}
+            endTime = addMinutesToTime(startTime, currentDuration);
+          }
 
           if (!startTime && endTime) {
             startTime = addMinutesToTime(endTime, -currentDuration);
@@ -3511,7 +3334,21 @@ const effectiveLocked =
           }
         }
 
-        if (startTime && !stop.time_locked && !draft.locked && !draft.endTime) {
+        if (stop.stop_type === "pickup" && !effectiveLocked) {
+          const eventEndTime = timeFromAny(booking?.event_end_time);
+          const startMinutes = minutesFromTime(startTime);
+          const eventEndMinutes = minutesFromTime(eventEndTime);
+
+          if (
+            eventEndMinutes != null &&
+            (startMinutes == null || startMinutes < eventEndMinutes)
+          ) {
+            startTime = eventEndTime;
+            endTime = addMinutesToTime(startTime, currentDuration);
+          }
+        }
+
+        if (startTime && !effectiveLocked && !draft.endTime) {
           endTime = addMinutesToTime(startTime, currentDuration);
         }
 
@@ -3558,6 +3395,48 @@ const effectiveLocked =
 
   const routeTimingHealthByStopId = useMemo(() => {
     const result = new Map<string, RouteTimingHealth>();
+    const previousStopById = new Map<string, RouteStop>();
+    const previousGeoStopById = new Map<string, RouteStop>();
+
+    const timelineGroups = new Map<string, RouteStop[]>();
+
+    orderedStops.forEach((stop) => {
+      if (stop.stop_type !== "delivery" && stop.stop_type !== "pickup") {
+        return;
+      }
+
+      const draft = timingDraftByStopId[stop.id] || {};
+      const date = String(
+        draft.date || stop.stop_date || selectedDate,
+      ).slice(0, 10);
+      const driver = String(stop.driver_name || "");
+      const key = `${date}::${driver}`;
+      const timeline = timelineGroups.get(key) || [];
+
+      timeline.push(stop);
+      timelineGroups.set(key, timeline);
+    });
+
+    timelineGroups.forEach((timeline) => {
+      let previousStop: RouteStop | null = null;
+      let previousGeoStop: RouteStop | null = null;
+
+      timeline.forEach((stop) => {
+        if (previousStop) {
+          previousStopById.set(String(stop.id), previousStop);
+        }
+
+        if (previousGeoStop) {
+          previousGeoStopById.set(String(stop.id), previousGeoStop);
+        }
+
+        previousStop = stop;
+
+        if (!isBreakRouteStop(stop)) {
+          previousGeoStop = stop;
+        }
+      });
+    });
 
     orderedStops.forEach((stop) => {
       const booking = getOne(stop.bookings);
@@ -3590,27 +3469,84 @@ const effectiveLocked =
 
       const isDelivery = stop.stop_type === "delivery";
 
-      result.set(
-        stop.id,
-        evaluateRouteTimingHealth({
-          stopType: stop.stop_type,
-          routeDate: liveTiming?.date || stop.stop_date || selectedDate,
-          routeStartTime:
-            liveTiming?.startTime || timeValue(stop.scheduled_start_time),
-          routeEndTime:
-            liveTiming?.endTime || timeValue(stop.scheduled_end_time),
-          eventDate: (booking as any)?.event_date,
-          eventStartTime: timeFromAny((booking as any)?.event_start_time),
-          eventEndTime: timeFromAny((booking as any)?.event_end_time),
-          clientWindows: isDelivery ? deliveryWindows : pickupWindows,
-          bookingWindowStart: isDelivery
-            ? timeFromAny((booking as any)?.delivery_window_start)
-            : timeFromAny((booking as any)?.pickup_window_start),
-          bookingWindowEnd: isDelivery
-            ? timeFromAny((booking as any)?.delivery_window_end)
-            : timeFromAny((booking as any)?.pickup_window_end),
-        }),
-      );
+      const timingHealth = evaluateRouteTimingHealth({
+        stopType: stop.stop_type,
+        routeDate: liveTiming?.date || stop.stop_date || selectedDate,
+        routeStartTime:
+          liveTiming?.startTime || timeValue(stop.scheduled_start_time),
+        routeEndTime:
+          liveTiming?.endTime || timeValue(stop.scheduled_end_time),
+        eventDate: (booking as any)?.event_date,
+        eventStartTime: timeFromAny((booking as any)?.event_start_time),
+        eventEndTime: timeFromAny((booking as any)?.event_end_time),
+        clientWindows: isDelivery ? deliveryWindows : pickupWindows,
+        bookingWindowStart: isDelivery
+          ? timeFromAny((booking as any)?.delivery_window_start)
+          : timeFromAny((booking as any)?.pickup_window_start),
+        bookingWindowEnd: isDelivery
+          ? timeFromAny((booking as any)?.delivery_window_end)
+          : timeFromAny((booking as any)?.pickup_window_end),
+      });
+
+      const draft = timingDraftByStopId[stop.id] || {};
+      const effectiveLocked =
+        draft.locked !== undefined
+          ? draft.locked
+          : Boolean(stop.time_locked);
+
+      if (effectiveLocked) {
+        const previousStop = previousStopById.get(String(stop.id));
+        const previousTiming = previousStop
+          ? liveTimingByStopId.get(previousStop.id)
+          : null;
+
+        const previousEndMinutes = minutesFromTime(
+          previousTiming?.endTime ||
+            (previousStop
+              ? timeValue(previousStop.scheduled_end_time)
+              : ""),
+        );
+        const fixedStartMinutes = minutesFromTime(
+          liveTiming?.startTime ||
+            draft.startTime ||
+            timeValue(stop.scheduled_start_time),
+        );
+
+        if (
+          previousStop &&
+          previousEndMinutes != null &&
+          fixedStartMinutes != null
+        ) {
+          const previousGeoStop =
+            previousGeoStopById.get(String(stop.id)) || previousStop;
+          const mapTravelMinutes = segmentTravelMinutes(previousGeoStop, stop);
+          const fallbackTravelMinutes = estimateTravelMinutes(
+            previousGeoStop,
+            stop,
+          );
+          const travelMinutes =
+            mapTravelMinutes ?? fallbackTravelMinutes;
+          const earliestArrivalMinutes =
+            previousEndMinutes + travelMinutes;
+
+          if (earliestArrivalMinutes > fixedStartMinutes) {
+            const lateMinutes =
+              earliestArrivalMinutes - fixedStartMinutes;
+
+            timingHealth.tone = "conflict";
+            timingHealth.label = "Timing conflict";
+            timingHealth.details = [
+              ...timingHealth.details.filter(
+                (detail) =>
+                  detail !== "Route timing fits the available constraints.",
+              ),
+              `Previous stop + travel reaches this fixed stop ${lateMinutes} min after its fixed start time.`,
+            ];
+          }
+        }
+      }
+
+      result.set(stop.id, timingHealth);
     });
 
     return result;
@@ -3619,6 +3555,10 @@ const effectiveLocked =
     liveTimingByStopId,
     bookingRouteStops,
     selectedDate,
+    timingDraftByStopId,
+    routeSegmentsByChainId,
+    routeTravelMinutesByEdgeKey,
+    stopSequenceById,
   ]);
 
   const filteredStopsInRouteOrder = useMemo(() => {
@@ -3674,43 +3614,6 @@ const effectiveLocked =
     }, 0);
   }, [visibleStops, routeTimingHealthByStopId]);
 
-  const displaySequenceById = useMemo(() => {
-    const counters = new Map<
-      string,
-      { delivery: number; pickup: number; other: number }
-    >();
-    const sequence = new Map<
-      string,
-      { number: number; tone: "delivery" | "pickup" | "other" }
-    >();
-
-    visibleStops.forEach((stop) => {
-      if (isBreakRouteStop(stop)) return;
-
-      const driverName = String(stop.driver_name || "Unassigned");
-      const current = counters.get(driverName) || {
-        delivery: 0,
-        pickup: 0,
-        other: 0,
-      };
-
-      if (stop.stop_type === "delivery") {
-        current.delivery += 1;
-        sequence.set(stop.id, { number: current.delivery, tone: "delivery" });
-      } else if (stop.stop_type === "pickup") {
-        current.pickup += 1;
-        sequence.set(stop.id, { number: current.pickup, tone: "pickup" });
-      } else {
-        current.other += 1;
-        sequence.set(stop.id, { number: current.other, tone: "other" });
-      }
-
-      counters.set(driverName, current);
-    });
-
-    return sequence;
-  }, [visibleStops]);
-
   const hasUnsavedRouteBoardChanges = useMemo(() => {
     const orderChanged =
       orderedStops.length !== stops.length ||
@@ -3744,10 +3647,103 @@ const effectiveLocked =
       query,
     });
 
-  const orderedStopIdsForCardSave = useMemo(
-    () => orderedStops.map((stop) => stop.id),
-    [orderedStops],
-  );
+  function orderedStopIdsForCardSave(stopIds: string[]) {
+    let reorderedStops = [...orderedStops];
+
+    const targetStopIds = Array.from(
+      new Set(stopIds.map((id) => String(id || "").trim()).filter(Boolean)),
+    );
+
+    targetStopIds.forEach((stopId) => {
+      const sourceIndex = reorderedStops.findIndex(
+        (candidate) => candidate.id === stopId,
+      );
+
+      if (sourceIndex < 0) return;
+
+      const sourceStop = reorderedStops[sourceIndex];
+      const sourceDraft = timingDraftByStopId[stopId] || {};
+
+      if (sourceDraft.startTime === undefined) return;
+
+      const sourceDate = String(
+        sourceDraft.date ||
+          sourceStop.stop_date ||
+          selectedDate,
+      ).slice(0, 10);
+      const sourceDriver = String(sourceStop.driver_name || "");
+      const targetStartMinutes = minutesFromTime(sourceDraft.startTime);
+
+      if (targetStartMinutes == null) return;
+
+      const timelineStops = reorderedStops.filter((candidate) => {
+        const candidateDraft =
+          targetStopIds.includes(candidate.id)
+            ? timingDraftByStopId[candidate.id] || {}
+            : {};
+
+        const candidateDate = String(
+          candidateDraft.date ||
+            candidate.stop_date ||
+            selectedDate,
+        ).slice(0, 10);
+
+        return (
+          candidate.id === stopId ||
+          (candidateDate === sourceDate &&
+            String(candidate.driver_name || "") === sourceDriver &&
+            (candidate.stop_type === "delivery" ||
+              candidate.stop_type === "pickup"))
+        );
+      });
+
+      if (timelineStops.length <= 1) return;
+
+      const withoutSource = timelineStops.filter(
+        (candidate) => candidate.id !== stopId,
+      );
+
+      let insertIndex = withoutSource.findIndex((candidate) => {
+        const candidateDraft =
+          targetStopIds.includes(candidate.id)
+            ? timingDraftByStopId[candidate.id] || {}
+            : {};
+
+        const candidateStartMinutes = minutesFromTime(
+          targetStopIds.includes(candidate.id)
+            ? candidateDraft.startTime ||
+                candidate.scheduled_start_time
+            : candidate.scheduled_start_time,
+        );
+
+        return (
+          candidateStartMinutes != null &&
+          candidateStartMinutes >= targetStartMinutes
+        );
+      });
+
+      if (insertIndex < 0) {
+        insertIndex = withoutSource.length;
+      }
+
+      const reorderedTimeline = [...withoutSource];
+      reorderedTimeline.splice(insertIndex, 0, sourceStop);
+
+      const timelineIds = new Set(
+        timelineStops.map((candidate) => candidate.id),
+      );
+
+      let replacementIndex = 0;
+
+      reorderedStops = reorderedStops.map((candidate) =>
+        timelineIds.has(candidate.id)
+          ? reorderedTimeline[replacementIndex++]
+          : candidate,
+      );
+    });
+
+    return reorderedStops.map((stop) => stop.id);
+  }
 
   function persistRouteOrderIds(orderedIds: string[]) {
     if (orderedIds.length < 1) return;
@@ -3929,26 +3925,6 @@ const effectiveLocked =
     });
   }, [visibleStops, drivers, driverStats]);
 
-  const driverTimelineStopsByName = useMemo(() => {
-    const result = new Map<string, RouteStop[]>();
-
-    visibleStops.forEach((stop) => {
-      if (isBreakRouteStop(stop)) return;
-
-      const driverName = String(stop.driver_name || "Unassigned");
-      const existingStops = result.get(driverName);
-
-      if (!existingStops) {
-        result.set(driverName, [stop]);
-        return;
-      }
-
-      existingStops.push(stop);
-    });
-
-    return result;
-  }, [visibleStops]);
-
   const driverRouteStopsByName = useMemo(() => {
     const result = new Map<string, RouteStop[]>();
 
@@ -3971,129 +3947,66 @@ const effectiveLocked =
 
   const multiDriverMapGroups = useMemo(
     () =>
-      groupedDriverRoutes.flatMap((group) =>
-        (["delivery", "pickup"] as const)
-          .map((stopType) => {
-            const chainStops = group.stops.filter(
-              (stop) => stop.stop_type === stopType,
-            );
+      groupedDriverRoutes
+        .map((group) => {
+          const timelineStops =
+            driverRouteStopsByName.get(group.driver.name) || [];
 
-            if (chainStops.length === 0) {
-              return null;
-            }
+          if (timelineStops.length === 0) {
+            return null;
+          }
 
-            const driverRouteStops =
-              driverRouteStopsByName.get(group.driver.name) || [];
-            const driverTimelineStops =
-              driverTimelineStopsByName.get(group.driver.name) || [];
-            const firstChainStopId = String(chainStops[0]?.id || "");
-            const resolveOriginFromStops = (stops: RouteStop[]) => {
-              const firstChainStopIndex = stops.findIndex(
-                (stop) => String(stop.id) === firstChainStopId,
-              );
-
-              if (firstChainStopIndex <= 0) {
-                return null;
-              }
-
-              // Return the nearest preceding non-break stop of any type.
-              for (let index = firstChainStopIndex - 1; index >= 0; index -= 1) {
-                const candidate = stops[index];
-                if (candidate && !isBreakRouteStop(candidate)) {
-                  return candidate;
-                }
-              }
-
-              return null;
-            };
-
-            const chainOriginCandidate =
-              resolveOriginFromStops(driverTimelineStops) ||
-              resolveOriginFromStops(driverRouteStops);
-
-            return {
-              driverId: `${group.driver.id}::${stopType}`,
-              driverName: group.driver.name,
-              color: group.driver.color || "#8b8177",
-              originStop: chainOriginCandidate
-                ? {
-                    id: chainOriginCandidate.id,
-                    ...resolvedStopAddressParts(chainOriginCandidate),
-                    title: mainProductName(chainOriginCandidate),
-                    stopType: chainOriginCandidate.stop_type,
-                    sequenceNumber:
-                      displaySequenceById.get(chainOriginCandidate.id)
-                        ?.number ||
-                      0,
-                    stopDate:
-                      liveTimingByStopId.get(chainOriginCandidate.id)?.date ||
-                      chainOriginCandidate.stop_date,
-                    scheduledStartTime:
-                      liveTimingByStopId.get(chainOriginCandidate.id)
-                        ?.startTime ||
-                      timeValue(chainOriginCandidate.scheduled_start_time),
-                  }
-                : null,
-              stops: chainStops.map((stop) => ({
-                id: stop.id,
-                ...resolvedStopAddressParts(stop),
-                title: mainProductName(stop),
-                stopType: stop.stop_type,
-                sequenceNumber:
-                  displaySequenceById.get(stop.id)?.number || 1,
-                stopDate:
-                  liveTimingByStopId.get(stop.id)?.date || stop.stop_date,
-                scheduledStartTime:
-                  liveTimingByStopId.get(stop.id)?.startTime ||
-                  timeValue(stop.scheduled_start_time),
-              })),
-            };
-          })
-          .filter(
-            (
-              group,
-            ): group is {
-              driverId: string;
-              driverName: string;
-              color: string;
-              originStop: {
-                id: string;
-                address: string | null;
-                city: string | null;
-                state: string | null;
-                zip: string | null;
-                title: string;
-                stopType: string | null;
-                sequenceNumber: number;
-                stopDate: string | null;
-                scheduledStartTime: string;
-              } | null;
-              stops: Array<{
-                id: string;
-                address: string | null;
-                city: string | null;
-                state: string | null;
-                zip: string | null;
-                title: string;
-                stopType: string | null;
-                sequenceNumber: number;
-                stopDate: string | null;
-                scheduledStartTime: string;
-              }>;
-            } => group !== null,
-          ),
-      ),
+          return {
+            driverId: `${group.driver.id}::timeline`,
+            driverName: group.driver.name,
+            color: group.driver.color || "#8b8177",
+            originStop: null,
+            stops: timelineStops.map((stop) => ({
+              id: stop.id,
+              ...resolvedStopAddressParts(stop),
+              title: mainProductName(stop),
+              stopType: stop.stop_type,
+              sequenceNumber:
+                stopSequenceById.get(stop.id)?.number || 1,
+              stopDate:
+                liveTimingByStopId.get(stop.id)?.date || stop.stop_date,
+              scheduledStartTime:
+                liveTimingByStopId.get(stop.id)?.startTime ||
+                timeValue(stop.scheduled_start_time),
+            })),
+          };
+        })
+        .filter(
+          (
+            group,
+          ): group is {
+            driverId: string;
+            driverName: string;
+            color: string;
+            originStop: null;
+            stops: Array<{
+              id: string;
+              address: string | null;
+              city: string | null;
+              state: string | null;
+              zip: string | null;
+              title: string;
+              stopType: string | null;
+              sequenceNumber: number;
+              stopDate: string | null;
+              scheduledStartTime: string;
+            }>;
+          } => group !== null,
+        ),
     [
       groupedDriverRoutes,
       driverRouteStopsByName,
-      driverTimelineStopsByName,
-      displaySequenceById,
       stopSequenceById,
       liveTimingByStopId,
     ],
   );
 
-  const mapGroupsByChainId = useMemo(
+  const mapGroupsByTimelineId = useMemo(
     () => new Map(multiDriverMapGroups.map((group) => [group.driverId, group])),
     [multiDriverMapGroups],
   );
@@ -4554,11 +4467,9 @@ const effectiveLocked =
 
                 <div className="grid min-w-0 gap-3 xl:grid-cols-2">
               {groupedDriverRoutes.map((group) => {
-                const deliveryChainId = `${group.driver.id}::delivery`;
-                const pickupChainId = `${group.driver.id}::pickup`;
-                const deliveryMapGroup =
-                  mapGroupsByChainId.get(deliveryChainId);
-                const pickupMapGroup = mapGroupsByChainId.get(pickupChainId);
+                const timelineId = `${group.driver.id}::timeline`;
+                const timelineMapGroup =
+                  mapGroupsByTimelineId.get(timelineId);
                 const driverMappableStops = group.stops.filter(
                   (stop) => !isBreakRouteStop(stop),
                 );
@@ -4567,12 +4478,15 @@ const effectiveLocked =
                   routeOriginAddressForStops(driverMappableStops),
                 );
 
-                const deliveries = deliveryMapGroup?.stops || [];
-                const pickups = pickupMapGroup?.stops || [];
-                const deliveryRouteSegments =
-                  routeSegmentsByChainId[deliveryChainId] || [];
-                const pickupRouteSegments =
-                  routeSegmentsByChainId[pickupChainId] || [];
+                const timelineMapStops = timelineMapGroup?.stops || [];
+                const deliveries = timelineMapStops.filter(
+                  (stop) => stop.stopType === "delivery",
+                );
+                const pickups = timelineMapStops.filter(
+                  (stop) => stop.stopType === "pickup",
+                );
+                const allDriverRouteSegments =
+                  routeSegmentsByChainId[timelineId] || [];
                 const driverOrderedStops =
                   driverRouteStopsByName.get(group.driver.name) || [];
                 const previousStopById = new Map<string, RouteStop>();
@@ -4584,15 +4498,11 @@ const effectiveLocked =
                   previousStopById.set(String(stop.id), previous);
                 });
 
-                const allDriverRouteSegments = [
-                  ...deliveryRouteSegments,
-                  ...pickupRouteSegments,
-                ];
                 const orderedSummaryStops = driverOrderedStops.map((stop) => ({
                   id: stop.id,
                   title: mainProductName(stop),
                   stopType: stop.stop_type,
-                  sequenceNumber: displaySequenceById.get(stop.id)?.number || 1,
+                  sequenceNumber: stopSequenceById.get(stop.id)?.number || 1,
                 }));
 
                 const routeSegmentByEdge = new Map<string, RouteSegment>();
@@ -4700,7 +4610,7 @@ const effectiveLocked =
                         ).trim();
                         const incomingSequenceFromId = incomingFromStopId
                           ? Number(
-                              displaySequenceById.get(incomingFromStopId)
+                              stopSequenceById.get(incomingFromStopId)
                                 ?.number || 0,
                             )
                           : 0;
@@ -4710,7 +4620,7 @@ const effectiveLocked =
                             : Number(incomingSegment?.fromSequence || 0);
                         const fallbackPreviousSequence = previousStop
                           ? Number(
-                              displaySequenceById.get(String(previousStop.id))
+                              stopSequenceById.get(String(previousStop.id))
                                 ?.number || 0,
                             )
                           : 0;
@@ -4947,7 +4857,7 @@ const effectiveLocked =
               strategy={verticalListSortingStrategy}
             >
               {visibleStops.map((stop, index) => {
-                const sequence = displaySequenceById.get(stop.id);
+                const sequence = stopSequenceById.get(stop.id);
 
                 return (
                   <SortableStopCard
@@ -4960,6 +4870,7 @@ const effectiveLocked =
                         : sequence?.number || index + 1
                     }
                     numberTone={sequence?.tone || "other"}
+                    timingHealth={routeTimingHealthByStopId.get(stop.id) || null}
                     liveTimingByStopId={liveTimingByStopId}
                     onTimingDraftChange={handleTimingDraftChange}
                     driverDraftByStopId={driverDraftByStopId}
@@ -4970,7 +4881,7 @@ const effectiveLocked =
                     selectedDate={selectedDate}
                     bookingRouteStops={bookingRouteStops}
                     supportsRouteStopWindows={supportsRouteStopWindows}
-                    orderedStopIds={orderedStopIdsForCardSave}
+                    getOrderedStopIdsForSave={orderedStopIdsForCardSave}
                     canPersistBoardOrderOnSave={canPersistBoardOrderOnCardSave}
                   />
                 );

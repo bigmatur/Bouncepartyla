@@ -559,7 +559,7 @@ export default async function AdminRoutesPage({
     return text.includes(query.toLowerCase());
   });
 
-  const stops =
+  const dedupedStops =
     selectedType === "all"
       ? Array.from(
           filteredStops.reduce((map: Map<string, any>, stop: any) => {
@@ -608,69 +608,176 @@ export default async function AdminRoutesPage({
 
             return map;
           }, new Map<string, any>()),
-        )
-          .map(([, stop]) => stop)
-          .sort((a: any, b: any) => {
-            const sortA = Number(a?.sort_order || 999999);
-            const sortB = Number(b?.sort_order || 999999);
-
-            if (sortA !== sortB) {
-              return sortA - sortB;
-            }
-
-            const timeToMinutes = (value: unknown) => {
-              const match = String(value || "").trim().match(/^(\d{1,2}):(\d{2})/);
-
-              if (!match) return null;
-
-              const hours = Number(match[1]);
-              const minutes = Number(match[2]);
-
-              if (
-                !Number.isFinite(hours) ||
-                !Number.isFinite(minutes) ||
-                hours < 0 ||
-                hours > 23 ||
-                minutes < 0 ||
-                minutes > 59
-              ) {
-                return null;
-              }
-
-              return hours * 60 + minutes;
-            };
-
-            const startA = timeToMinutes(a?.scheduled_start_time);
-            const startB = timeToMinutes(b?.scheduled_start_time);
-
-            if (startA != null && startB != null && startA !== startB) {
-              return startA - startB;
-            }
-
-            if (startA != null && startB == null) return -1;
-            if (startA == null && startB != null) return 1;
-
-            const updatedA = new Date(
-              String(a?.updated_at || a?.created_at || 0),
-            ).getTime();
-            const updatedB = new Date(
-              String(b?.updated_at || b?.created_at || 0),
-            ).getTime();
-
-            if (Number.isFinite(updatedA) && Number.isFinite(updatedB) && updatedA !== updatedB) {
-              return updatedB - updatedA;
-            }
-
-            const createdA = new Date(String(a?.created_at || 0)).getTime();
-            const createdB = new Date(String(b?.created_at || 0)).getTime();
-
-            if (Number.isFinite(createdA) && Number.isFinite(createdB) && createdA !== createdB) {
-              return createdA - createdB;
-            }
-
-            return String(a?.id || "").localeCompare(String(b?.id || ""));
-          })
+        ).map(([, stop]) => stop)
       : filteredStops;
+
+  const timeToMinutes = (value: unknown) => {
+    const match = String(value || "")
+      .trim()
+      .match(/^(\d{1,2}):(\d{2})/);
+
+    if (!match) return null;
+
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+
+    if (
+      !Number.isFinite(hours) ||
+      !Number.isFinite(minutes) ||
+      hours < 0 ||
+      hours > 23 ||
+      minutes < 0 ||
+      minutes > 59
+    ) {
+      return null;
+    }
+
+    return hours * 60 + minutes;
+  };
+
+  const timelineKey = (stop: any) =>
+    `${String(stop?.stop_date || selectedDate).slice(0, 10)}::${String(
+      stop?.driver_name || "",
+    )}`;
+
+  const stopsByTimeline = new Map<string, any[]>();
+
+  for (const stop of dedupedStops) {
+    const key = timelineKey(stop);
+    const timeline = stopsByTimeline.get(key) || [];
+    timeline.push(stop);
+    stopsByTimeline.set(key, timeline);
+  }
+
+  const initialTimelineKeys = new Set<string>();
+
+  for (const [key, timeline] of stopsByTimeline) {
+    const isInitialTimeline =
+      timeline.length > 0 &&
+      timeline.every((stop: any) => {
+        const stopType = String(stop?.stop_type || "");
+        const sortOrder = Number(stop?.sort_order);
+
+        if (stopType === "delivery") return sortOrder === 100;
+        if (stopType === "pickup") return sortOrder === 200;
+
+        return false;
+      });
+
+    if (isInitialTimeline) {
+      initialTimelineKeys.add(key);
+    }
+  }
+
+  const initialTypePriority = (stop: any) => {
+    if (stop?.stop_type === "delivery") return 0;
+    if (stop?.stop_type === "pickup") return 1;
+    return 2;
+  };
+
+  const initialBusinessTime = (stop: any) => {
+    const booking = Array.isArray(stop?.bookings)
+      ? stop.bookings[0]
+      : stop?.bookings;
+
+    const value =
+      stop?.stop_type === "pickup"
+        ? booking?.event_end_time
+        : booking?.event_start_time;
+
+    return timeToMinutes(value);
+  };
+
+  const fallbackOrder = (a: any, b: any) => {
+    const updatedA = new Date(
+      String(a?.updated_at || a?.created_at || 0),
+    ).getTime();
+    const updatedB = new Date(
+      String(b?.updated_at || b?.created_at || 0),
+    ).getTime();
+
+    if (
+      Number.isFinite(updatedA) &&
+      Number.isFinite(updatedB) &&
+      updatedA !== updatedB
+    ) {
+      return updatedB - updatedA;
+    }
+
+    const createdA = new Date(String(a?.created_at || 0)).getTime();
+    const createdB = new Date(String(b?.created_at || 0)).getTime();
+
+    if (
+      Number.isFinite(createdA) &&
+      Number.isFinite(createdB) &&
+      createdA !== createdB
+    ) {
+      return createdA - createdB;
+    }
+
+    return String(a?.id || "").localeCompare(String(b?.id || ""));
+  };
+
+  const stops = [...dedupedStops];
+
+  for (const [key, timeline] of stopsByTimeline) {
+    const sortedTimeline = [...timeline].sort((a: any, b: any) => {
+      if (initialTimelineKeys.has(key)) {
+        const typeA = initialTypePriority(a);
+        const typeB = initialTypePriority(b);
+
+        if (typeA !== typeB) return typeA - typeB;
+
+        const businessTimeA = initialBusinessTime(a);
+        const businessTimeB = initialBusinessTime(b);
+
+        if (
+          businessTimeA != null &&
+          businessTimeB != null &&
+          businessTimeA !== businessTimeB
+        ) {
+          return businessTimeA - businessTimeB;
+        }
+
+        if (businessTimeA != null && businessTimeB == null) return -1;
+        if (businessTimeA == null && businessTimeB != null) return 1;
+
+        return fallbackOrder(a, b);
+      }
+
+      const sortA = Number(a?.sort_order ?? Number.MAX_SAFE_INTEGER);
+      const sortB = Number(b?.sort_order ?? Number.MAX_SAFE_INTEGER);
+
+      if (sortA !== sortB) {
+        return sortA - sortB;
+      }
+
+      const scheduledA = timeToMinutes(a?.scheduled_start_time);
+      const scheduledB = timeToMinutes(b?.scheduled_start_time);
+
+      if (
+        scheduledA != null &&
+        scheduledB != null &&
+        scheduledA !== scheduledB
+      ) {
+        return scheduledA - scheduledB;
+      }
+
+      if (scheduledA != null && scheduledB == null) return -1;
+      if (scheduledA == null && scheduledB != null) return 1;
+
+      return fallbackOrder(a, b);
+    });
+
+    let replacementIndex = 0;
+
+    for (let index = 0; index < stops.length; index += 1) {
+      if (timelineKey(stops[index]) !== key) continue;
+
+      stops[index] = sortedTimeline[replacementIndex];
+      replacementIndex += 1;
+    }
+  }
 
   const bookingIds = Array.from(
     new Set(
