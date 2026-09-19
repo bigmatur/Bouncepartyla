@@ -68,6 +68,39 @@ function one(value: any) {
   return Array.isArray(value) ? value[0] || null : value || null;
 }
 
+function breakMinutesFromRouteStop(stop: any) {
+  const setupNotes = String(stop?.setup_notes || "");
+  const notesMatch = setupNotes.match(
+    /break[_\s-]*minutes\s*[:=]\s*(\d{1,3})/i,
+  );
+
+  if (notesMatch) {
+    const parsed = Number(notesMatch[1]);
+
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+
+  const summary = String(stop?.items_summary || "");
+  const summaryMatch = summary.match(/(\d{1,3})\s*(?:min|mins|minutes)\b/i);
+
+  if (summaryMatch) {
+    const parsed = Number(summaryMatch[1]);
+
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+
+  return null;
+}
+
+function isBreakRouteStop(stop: any) {
+  return Boolean(
+    breakMinutesFromRouteStop(stop) ||
+      /\bbreak\b/i.test(String(stop?.customer_name || "")) ||
+      /\bbreak\b/i.test(String(stop?.items_summary || "")) ||
+      /\bbreak\b/i.test(String(stop?.setup_notes || "")),
+  );
+}
+
 function normalizedTimeValue(value: string | null | undefined) {
   const match = String(value || "")
     .trim()
@@ -1092,14 +1125,22 @@ export default async function AdminRoutesPage({
 
   const modifiers = modifiersResult.error ? [] : modifiersResult.data || [];
 
-  const deliveries = stopsWithCompleteDurations.filter((stop: any) => stop.stop_type === "delivery");
-  const pickups = stopsWithCompleteDurations.filter((stop: any) => stop.stop_type === "pickup");
+  const countableStops = stopsWithCompleteDurations.filter(
+    (stop: any) => !isBreakRouteStop(stop),
+  );
 
-  const openStops = stopsWithCompleteDurations.filter((stop: any) =>
+  const deliveries = countableStops.filter(
+    (stop: any) => stop.stop_type === "delivery",
+  );
+  const pickups = countableStops.filter(
+    (stop: any) => stop.stop_type === "pickup",
+  );
+
+  const openStops = countableStops.filter((stop: any) =>
     ["scheduled", "on_the_way", "arrived"].includes(stop.status),
   );
 
-  const balanceDue = stopsWithCompleteDurations.reduce(
+  const balanceDue = countableStops.reduce(
     (sum: number, stop: any) => sum + Number(stop.balance_due || 0),
     0,
   );
@@ -1183,7 +1224,7 @@ export default async function AdminRoutesPage({
               Stops
             </div>
             <div className="mt-1 text-lg font-bold tabular-nums text-[#1f1e1b]">
-              {stopsWithCompleteDurations.length}
+              {countableStops.length}
             </div>
           </div>
 
@@ -1219,7 +1260,7 @@ export default async function AdminRoutesPage({
       <section className="hidden sm:grid sm:gap-4 md:grid-cols-5">
         <SummaryCard
           label="Stops"
-          value={stopsWithCompleteDurations.length}
+          value={countableStops.length}
           hint={formatDate(selectedDate)}
         />
         <SummaryCard label="Deliveries" value={deliveries.length} />
