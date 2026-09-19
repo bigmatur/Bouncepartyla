@@ -8,7 +8,6 @@ import {
   createStripeCheckoutSession,
   retrieveStripeCheckoutSession,
 } from "@/lib/payments/stripe";
-import { processNotificationQueueBestEffort } from "@/lib/notifications/engine";
 import {
   getTemporaryCheckoutHoldBufferMinutes,
   getTemporaryCheckoutSessionMinutes,
@@ -295,7 +294,6 @@ export async function signTemporaryBookingContractAction(formData: FormData) {
     redirect(`/account/bookings/${bookingId}?complete=1&status=${encodeURIComponent(signed?.status || "sign_failed")}`);
   }
 
-  await processNotificationQueueBestEffort({ bookingId, limit: 20 });
   revalidatePath(`/account/bookings/${bookingId}`);
   redirect(`/account/bookings/${bookingId}?complete=1&signed=1`);
 }

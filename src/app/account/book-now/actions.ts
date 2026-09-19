@@ -448,10 +448,6 @@ if (!provisionalResult?.success) {
         throw new Error(signStatus.status || "contract_sign_failed");
       }
 
-      // Flush the queued contract_signed email now; the Stripe webhook only
-      // fires for payment events and would otherwise leave it undelivered.
-      await processNotificationQueueBestEffort({ bookingId: result.booking.id, limit: 20 });
-
       if (paymentAmount > 0) {
         const totalCharge = Number((paymentAmount + tipAmount).toFixed(2));
         const session = await createStripeCheckoutSession({
@@ -485,6 +481,11 @@ if (!provisionalResult?.success) {
         if (completionStatus && !completionStatus.success) {
           throw new Error(completionStatus.status || "booking_finalize_failed");
         }
+
+        await processNotificationQueueBestEffort({
+          bookingId: result.booking.id,
+          limit: 20,
+        });
       }
     }
 
