@@ -109,10 +109,10 @@ export default async function HomePage() {
 
                 <div className="mt-6 grid grid-cols-2 gap-3">
                   <Link
-                    href="/catalog"
+                    href="/account"
                     className="inline-flex min-h-12 items-center justify-center rounded-full bg-[#1c1b18] px-4 text-sm font-bold text-white"
                   >
-                    {homepageContent.hero.primaryCta}
+                    Account
                   </Link>
                   <Link
                     href="/book"

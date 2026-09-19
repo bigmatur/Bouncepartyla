@@ -9,6 +9,7 @@ import BookingDetailsSidebar from "./BookingDetailsSidebar";
 import BookingHero from "./BookingHero";
 import BookingStatusNotice from "./BookingStatusNotice";
 import BookingCompletionPanel from "../complete/BookingCompletionPanel";
+import MobileBalancePaymentBar from "./MobileBalancePaymentBar";
 
 type BookingDetailsLayoutProps = {
   details: BookingDetails;
@@ -28,9 +29,26 @@ export default function BookingDetailsLayout({
   completionError,
 }: BookingDetailsLayoutProps) {
   const { booking } = details;
+  const bookingSource = String((booking as any).booking_source || "").toLowerCase();
+  const bookingStatus = String(booking.status || "").toLowerCase();
+  const balanceDue = Math.max(0, Number(booking.balance_due || 0));
+  const isSelfServiceCheckoutPending =
+    bookingSource === "customer_self_service" &&
+    bookingStatus === "pending_deposit";
+  const showMobileBalancePaymentBar =
+    !adminPreview &&
+    !completionMode &&
+    balanceDue > 0 &&
+    !isSelfServiceCheckoutPending;
 
   return (
-    <main className="mx-auto w-full max-w-6xl px-4 py-5 sm:px-5 sm:py-10">
+    <main
+      className={`mx-auto w-full max-w-6xl px-4 pt-5 sm:px-5 sm:pt-10 ${
+        showMobileBalancePaymentBar
+          ? "pb-28 sm:pb-32 lg:pb-10"
+          : "pb-5 sm:pb-10"
+      }`}
+    >
       <div className="flex items-center justify-between gap-3 print:hidden sm:gap-4">
         <Link
           href={adminPreview ? `/admin/bookings/${booking.id}` : "/account"}
@@ -88,6 +106,13 @@ export default function BookingDetailsLayout({
           adminPreview={adminPreview}
         />
       </div>
+
+      {showMobileBalancePaymentBar ? (
+        <MobileBalancePaymentBar
+          bookingId={booking.id}
+          balanceDue={balanceDue}
+        />
+      ) : null}
     </main>
   );
 }
