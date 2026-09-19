@@ -426,7 +426,7 @@ export default async function AdminStaffPage() {
 
                   <div className="mt-4 grid gap-2 sm:flex sm:flex-wrap">
                     <button type="submit" className="w-full rounded-full bg-[#23313f] px-5 py-3 text-sm font-semibold text-white sm:w-auto sm:py-2.5">Save profile</button>
-                    <button type="submit" formAction={sendStaffPasswordResetAction} className="w-full rounded-full bg-[#c9964f] px-5 py-3 text-sm font-semibold text-white sm:w-auto sm:py-2.5">Send password reset</button>
+                    <button type="submit" formAction={sendStaffPasswordResetAction} className="w-full rounded-full bg-[#c9964f] px-5 py-3 text-sm font-semibold text-white sm:w-auto sm:py-2.5">{member.auth_user_id ? "Send password reset" : "Create login & send invite"}</button>
                     <button type="submit" formAction={deactivateStaffAction} className="w-full rounded-full border border-red-200 bg-red-50 px-5 py-3 text-sm font-semibold text-red-700 sm:w-auto sm:py-2.5">Deactivate</button>
                   </div>
                 </form>
@@ -438,7 +438,7 @@ export default async function AdminStaffPage() {
       <section className="rounded-[30px] border border-[#e7d8bf] bg-[#fff8e8] p-6 shadow-[0_12px_35px_rgba(0,0,0,0.03)]">
         <h3 className="text-xl font-semibold text-[#1f1e1b]">Add staff member</h3>
         <p className="mt-1 text-sm text-[#6c6258]">
-          Creates a profile used in routes and operations. Then send password reset to set login password.
+          Creates a profile used in routes and operations. After saving, create the login and send an invite to let the employee set a password.
         </p>
 
         <form action={createOrUpdateStaffAction} className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
