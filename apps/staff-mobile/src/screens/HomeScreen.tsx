@@ -110,10 +110,16 @@ function stopLabel(stop: MobileRouteStop) {
 }
 
 function isBreakStop(stop: MobileRouteStop) {
+  const stopType = String(stop.stop_type || "").toLowerCase();
+  const customerName = String(stop.customer_name || "").trim();
+  const itemsSummary = String(stop.items_summary || "").trim();
+  const setupNotes = String(stop.setup_notes || "").trim();
+
   return (
-    String(
-      stop.stop_type || "",
-    ).toLowerCase() === "break"
+    stopType === "break" ||
+    /^break$/i.test(customerName) ||
+    /^break\s*\(\d{1,3}\s*(?:min|mins|minutes)\)$/i.test(itemsSummary) ||
+    /(?:^|\s)break[_\s-]*minutes\s*[:=]\s*\d{1,3}(?:\s|$)/i.test(setupNotes)
   );
 }
 
