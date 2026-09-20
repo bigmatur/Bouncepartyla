@@ -38,6 +38,7 @@ import {
   nextRouteAction,
   resumeMyStaffWork,
   saveMyRouteStopNotes,
+  startMyDriverShift,
   startMyStaffBreak,
   toggleMyChecklistItem,
   updateMyRouteStopStatus,
@@ -574,6 +575,9 @@ const [
 
   const openNavigationForStop =
     useCallback(async (stopForNavigation: MobileRouteStop) => {
+      await startMyDriverShift();
+      await loadShiftDashboard();
+
       if (carModeEnabled) {
         const provider =
           Platform.OS === "ios"
@@ -599,6 +603,7 @@ const [
     }, [
       carModeEnabled,
       chooseExternalMapProviderIOS,
+      loadShiftDashboard,
       openExternalNavigationForStop,
     ]);
 
@@ -2517,7 +2522,14 @@ useEffect(() => {
               "on_the_way" ? (
                 <Pressable
                   onPress={() => {
-                    void openNavigationForStop(activeStop);
+                    setError("");
+                    void openNavigationForStop(activeStop).catch((navigationError) => {
+                      setError(
+                        navigationError instanceof Error
+                          ? navigationError.message
+                          : "Could not start navigation.",
+                      );
+                    });
                   }}
                   style={({
                     pressed,
