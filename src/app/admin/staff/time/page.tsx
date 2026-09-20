@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import UnlinkedDriverShiftReview from "@/app/admin/staff/time/UnlinkedDriverShiftReview";
+
 import {
   adminFinishWorkAction,
   adminResumeWorkAction,
@@ -30,6 +32,18 @@ type ShiftRow = {
   break_minutes: number;
   paid_minutes: number;
   on_break: boolean;
+};
+
+type UnlinkedDriverShiftRow = {
+  id: string;
+  route_driver_id: string;
+  driver_name: string;
+  work_date: string;
+  clock_in_at: string;
+  clock_out_at: string | null;
+  source: string;
+  status: string;
+  needs_review: boolean;
 };
 
 type EmployeeRow = {
@@ -166,7 +180,9 @@ type Report = {
     doubletime_minutes?: number;
     estimated_pay?: number;
     open_shifts?: number;
+    stale_open_shifts?: number;
   };
+  unlinked_driver_shifts?: UnlinkedDriverShiftRow[];
   employees: EmployeeRow[];
 };
 
@@ -376,13 +392,25 @@ export default async function WorkingTimePage({
     from: dates.from,
     to: dates.to,
     summary: {},
+    unlinked_driver_shifts: [],
     employees: [],
   }) as Report;
 
   const summary = report.summary || {};
+  const unlinkedDriverShifts = Array.isArray(report.unlinked_driver_shifts)
+    ? report.unlinked_driver_shifts
+    : [];
   const employees = Array.isArray(report.employees)
     ? report.employees
     : [];
+  const unlinkedDriverShiftReviewRows = unlinkedDriverShifts.map((shift) => ({
+    id: shift.id,
+    driverName: shift.driver_name || "Driver",
+    dateLabel: dateLabel(shift.work_date),
+    startLabel: timeLabel(shift.clock_in_at),
+    clockInLocal: dateTimeLocalValue(shift.clock_in_at),
+    clockOutLocal: dateTimeLocalValue(shift.clock_out_at),
+  }));
   const adjustments = Array.isArray(adjustmentsResult.data)
     ? (adjustmentsResult.data as AdjustmentRow[])
     : [];
@@ -618,6 +646,8 @@ export default async function WorkingTimePage({
           ) : null}
         </div>
       </details>
+
+      <UnlinkedDriverShiftReview shifts={unlinkedDriverShiftReviewRows} />
 
       <section className="space-y-3">
         {employees.map((employee) => {
