@@ -1,9 +1,9 @@
 "use server";
 
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { safeNextPath } from "@/lib/auth/access";
+import { getAuthRequestOrigin } from "@/lib/auth/request-origin";
 import {
   PRIVACY_POLICY_VERSION,
   TERMS_OF_SERVICE_VERSION,
@@ -174,13 +174,8 @@ export async function requestCustomerSignupLinkAction(
     );
   }
 
-  const requestHeaders =
-    await headers();
-
   const origin =
-    requestHeaders.get("origin") ||
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    "http://localhost:3001";
+    await getAuthRequestOrigin();
 
   const callbackUrl = new URL(
     "/auth/customer/callback",

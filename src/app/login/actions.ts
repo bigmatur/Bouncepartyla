@@ -1,7 +1,8 @@
 "use server";
 
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+
+import { getAuthRequestOrigin } from "@/lib/auth/request-origin";
 
 import { getUnifiedAccess, resolvePostLoginPath, safeNextPath } from "@/lib/auth/access";
 import { createClient } from "@/lib/supabase/server";
@@ -149,11 +150,7 @@ export async function requestPasswordResetAction(formData: FormData) {
     );
   }
 
-  const requestHeaders = await headers();
-  const origin =
-    requestHeaders.get("origin") ||
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    "http://localhost:3001";
+  const origin = await getAuthRequestOrigin();
   const redirectTo = new URL("/auth/reset-password/callback", origin);
 
   const supabase = await createClient();
