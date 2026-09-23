@@ -1,7 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { recordTemporaryBookingDepositAction } from "./actions";
+import {
+  PRIVACY_POLICY_PATH,
+  TERMS_OF_SERVICE_PATH,
+} from "@/lib/legal/documents";
 
 type PaymentMethod = { method: string; display_name: string };
 
@@ -272,6 +277,20 @@ export default function CustomerDepositPos({
               {/* Stripe note for card payments */}
               <p className="rounded-xl bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">
                 You will be redirected to Stripe secure checkout.
+              </p>
+
+              <p className="rounded-xl bg-[#faf8f4] px-3 py-2 text-xs leading-5 text-[#6c6258] ring-1 ring-[#eee5d9]">
+                Use of your account and our website is subject to our{" "}
+                <Link href={TERMS_OF_SERVICE_PATH} className="font-semibold text-[#2b2a28] underline decoration-black/20 underline-offset-4">
+                  Terms of Service
+                </Link>
+                {" "}and{" "}
+                <Link href={PRIVACY_POLICY_PATH} className="font-semibold text-[#2b2a28] underline decoration-black/20 underline-offset-4">
+                  Privacy Policy
+                </Link>
+                . Booking-specific cancellation, refund, and weather terms are
+                governed by your reservation details and signed rental
+                agreement.
               </p>
 
               {/* Actions */}

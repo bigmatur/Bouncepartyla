@@ -1,6 +1,25 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  Linking,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import { supabase } from "../lib/supabase";
+
+const DEFAULT_APP_URL = "https://bouncepartyla.com";
+
+function staffPrivacyUrl() {
+  const base = String(
+    process.env.EXPO_PUBLIC_APP_URL || DEFAULT_APP_URL,
+  )
+    .trim()
+    .replace(/\/+$/, "");
+
+  return `${base}/staff/privacy`;
+}
 
 export function MoreScreen() {
   return (
@@ -14,8 +33,26 @@ export function MoreScreen() {
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Driver App</Text>
         <Text style={styles.cardText}>
-          Route navigation, live location and staff time are connected to your staff account.
+          Route navigation, live location and staff time are connected to your
+          staff account.
         </Text>
+
+        <Text style={styles.cardTextMuted}>
+          Live location is collected while your shift is active in the app to
+          support route operations.
+        </Text>
+
+        <Pressable
+          onPress={() => void Linking.openURL(staffPrivacyUrl())}
+          style={({ pressed }) => [
+            styles.noticeButton,
+            pressed ? styles.pressed : null,
+          ]}
+        >
+          <Text style={styles.noticeButtonText}>
+            Staff location privacy notice
+          </Text>
+        </Pressable>
       </View>
 
       <Pressable
@@ -75,6 +112,29 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     marginTop: 6,
+  },
+
+  cardTextMuted: {
+    color: "#6f7c86",
+    fontSize: 13,
+    lineHeight: 20,
+    marginTop: 10,
+  },
+
+  noticeButton: {
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: "#d8cec0",
+    borderRadius: 14,
+    backgroundColor: "#fffaf2",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+
+  noticeButtonText: {
+    color: "#23313f",
+    fontSize: 13,
+    fontWeight: "700",
   },
 
   signOutButton: {

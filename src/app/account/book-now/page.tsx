@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import CustomerShell from "@/components/account/CustomerShell";
 import { requireCustomerAccess } from "@/lib/auth/require-customer";
+import {
+  PRIVACY_POLICY_PATH,
+  TERMS_OF_SERVICE_PATH,
+} from "@/lib/legal/documents";
 import CustomerBookingWizard from "./components/CustomerBookingWizard";
 
 type SearchParamsValue = string | string[] | undefined;
@@ -404,6 +408,25 @@ export default async function AccountBookNowPage({
           forceBookingActor="customer"
           hideBookingActorSwitcher
         />
+
+        <section className="mt-4 rounded-[20px] border border-black/5 bg-white px-4 py-4 text-sm leading-6 text-[#6c6258] shadow-[0_8px_24px_rgba(0,0,0,0.03)] sm:rounded-[24px] sm:px-6">
+          Use of your account and our website is subject to our{" "}
+          <a
+            href={TERMS_OF_SERVICE_PATH}
+            className="font-semibold text-[#2b2a28] underline decoration-black/20 underline-offset-4"
+          >
+            Terms of Service
+          </a>
+          {" "}and{" "}
+          <a
+            href={PRIVACY_POLICY_PATH}
+            className="font-semibold text-[#2b2a28] underline decoration-black/20 underline-offset-4"
+          >
+            Privacy Policy
+          </a>
+          . Booking-specific cancellation, refund, and weather terms are
+          governed by your reservation details and signed rental agreement.
+        </section>
       </main>
     </CustomerShell>
   );

@@ -1,6 +1,10 @@
 import Link from "next/link";
 
 import { getHomepageContent } from "@/lib/customer/homepage-content";
+import {
+  PRIVACY_POLICY_PATH,
+  TERMS_OF_SERVICE_PATH,
+} from "@/lib/legal/documents";
 
 export default async function PublicBookingShell({
   children,
@@ -78,13 +82,24 @@ export default async function PublicBookingShell({
               <a href="mailto:bouncepartyla@gmail.com">bouncepartyla@gmail.com</a>
               <a href="https://www.instagram.com/bouncepartyla/">@bouncepartyla</a>
             </div>
+
+            <div className="mt-6 text-xs font-bold uppercase tracking-[0.16em] text-black/35">Legal</div>
+            <div className="mt-3 flex flex-col gap-2 text-sm font-semibold">
+              <Link href={PRIVACY_POLICY_PATH}>Privacy Policy</Link>
+              <Link href={TERMS_OF_SERVICE_PATH}>Terms of Service</Link>
+              <a href="mailto:bouncepartyla@gmail.com?subject=Privacy%20Request">Contact</a>
+            </div>
           </div>
         </div>
 
         <div className="border-t border-black/[0.06]">
           <div className="mx-auto flex max-w-7xl flex-col gap-2 px-5 py-5 text-xs text-black/40 sm:flex-row sm:items-center sm:justify-between sm:px-7">
             <div>© {new Date().getFullYear()} Bounce Party LA</div>
-            <div>Los Angeles, California</div>
+            <div className="flex flex-wrap items-center gap-3">
+              <span>Los Angeles, California</span>
+              <Link href={PRIVACY_POLICY_PATH} className="underline decoration-black/20 underline-offset-4">Privacy</Link>
+              <Link href={TERMS_OF_SERVICE_PATH} className="underline decoration-black/20 underline-offset-4">Terms</Link>
+            </div>
           </div>
         </div>
       </footer>

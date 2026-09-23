@@ -31,14 +31,14 @@ export default function TermsOfServicePage() {
             </h1>
 
             <p className="mt-5 text-sm text-black/45">
-              Last updated: September 11, 2026
+              Last updated: September 22, 2026
             </p>
           </div>
         </section>
 
         <section className="mx-auto max-w-4xl px-5 py-12 sm:px-7 sm:py-16">
           <div className="space-y-10 text-[15px] leading-7 text-black/65 sm:text-base">
-            <TermsSection title="1. About these terms">
+            <TermsSection title="1. Scope of These Terms">
               <p>
                 These Terms of Service govern your use of the Bounce Party LA
                 website, online catalog, booking tools, customer account, and
@@ -50,7 +50,19 @@ export default function TermsOfServicePage() {
               </p>
             </TermsSection>
 
-            <TermsSection title="2. Rental agreements">
+            <TermsSection title="2. Eligibility and Account Use">
+              <p>
+                Online account creation and booking are intended for adults.
+                You agree to provide accurate and current information and to
+                keep account access credentials secure.
+              </p>
+              <p>
+                You are responsible for activity that occurs under your account
+                unless caused by our own security failure.
+              </p>
+            </TermsSection>
+
+            <TermsSection title="3. Rental Agreements and Contract Precedence">
               <p>
                 Equipment rentals are governed by the rental agreement,
                 contract, invoice, booking details, safety requirements, and
@@ -63,7 +75,7 @@ export default function TermsOfServicePage() {
               </p>
             </TermsSection>
 
-            <TermsSection title="3. Booking information">
+            <TermsSection title="4. Booking Information and Availability">
               <p>
                 You agree to provide accurate and complete information when
                 requesting availability, creating a booking, making a payment,
@@ -76,7 +88,7 @@ export default function TermsOfServicePage() {
               </p>
             </TermsSection>
 
-            <TermsSection title="4. Pricing and payments">
+            <TermsSection title="5. Pricing, Deposits, and Payments">
               <p>
                 Prices, deposits, delivery charges, taxes, optional services,
                 discounts, and payment schedules may vary depending on the
@@ -89,7 +101,7 @@ export default function TermsOfServicePage() {
               </p>
             </TermsSection>
 
-            <TermsSection title="5. Changes, cancellations, and weather">
+            <TermsSection title="6. Changes, Cancellations, Rescheduling, and Weather">
               <p>
                 Changes, cancellations, rescheduling, weather-related decisions,
                 credits, and refunds are handled according to the terms
@@ -102,7 +114,7 @@ export default function TermsOfServicePage() {
               </p>
             </TermsSection>
 
-            <TermsSection title="6. Website availability">
+            <TermsSection title="7. Website and Service Availability">
               <p>
                 We may update, change, suspend, or discontinue portions of the
                 website or online services when reasonably necessary. We do not
@@ -111,7 +123,7 @@ export default function TermsOfServicePage() {
               </p>
             </TermsSection>
 
-            <TermsSection title="7. Product information">
+            <TermsSection title="8. Product and Service Information">
               <p>
                 We make reasonable efforts to keep product descriptions,
                 photographs, dimensions, availability, and pricing accurate.
@@ -124,7 +136,7 @@ export default function TermsOfServicePage() {
               </p>
             </TermsSection>
 
-            <TermsSection title="8. Acceptable use">
+            <TermsSection title="9. Acceptable Use">
               <p>
                 You may not misuse the website, attempt unauthorized access,
                 interfere with website operation, submit fraudulent information,
@@ -132,7 +144,7 @@ export default function TermsOfServicePage() {
               </p>
             </TermsSection>
 
-            <TermsSection title="9. Intellectual property">
+            <TermsSection title="10. Intellectual Property">
               <p>
                 Unless otherwise stated, website content, branding, text,
                 graphics, photographs, and other materials are owned by or used
@@ -141,7 +153,7 @@ export default function TermsOfServicePage() {
               </p>
             </TermsSection>
 
-            <TermsSection title="10. Third-party services">
+            <TermsSection title="11. Third-Party Services">
               <p>
                 The website may use or link to third-party services such as
                 payment processors, mapping services, social networks, and
@@ -150,7 +162,15 @@ export default function TermsOfServicePage() {
               </p>
             </TermsSection>
 
-            <TermsSection title="11. Privacy">
+            <TermsSection title="12. Electronic Communications">
+              <p>
+                By using our online services, you agree to receive electronic
+                communications related to account access, bookings, payments,
+                and service operations.
+              </p>
+            </TermsSection>
+
+            <TermsSection title="13. Privacy">
               <p>
                 Information collected through the website is handled according
                 to our{" "}
@@ -164,7 +184,23 @@ export default function TermsOfServicePage() {
               </p>
             </TermsSection>
 
-            <TermsSection title="12. Changes to these terms">
+            <TermsSection title="14. Disclaimers and Limitation of Liability">
+              <p>
+                To the extent allowed by law, online services are provided on an
+                "as available" basis. Nothing in these Terms limits rights that
+                cannot be lawfully limited under applicable consumer law or the
+                terms of a signed rental agreement.
+              </p>
+            </TermsSection>
+
+            <TermsSection title="15. Governing Law">
+              <p>
+                These Terms are governed by the laws of the State of
+                California, without regard to conflict-of-law principles.
+              </p>
+            </TermsSection>
+
+            <TermsSection title="16. Changes to These Terms">
               <p>
                 We may update these Terms of Service from time to time. The
                 current version will be posted on this page with an updated
@@ -172,7 +208,7 @@ export default function TermsOfServicePage() {
               </p>
             </TermsSection>
 
-            <TermsSection title="13. Contact">
+            <TermsSection title="17. Contact">
               <p>
                 Questions about these Terms of Service can be sent to{" "}
                 <a

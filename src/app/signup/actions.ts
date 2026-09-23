@@ -4,6 +4,10 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { safeNextPath } from "@/lib/auth/access";
+import {
+  PRIVACY_POLICY_VERSION,
+  TERMS_OF_SERVICE_VERSION,
+} from "@/lib/legal/documents";
 import { createClient } from "@/lib/supabase/server";
 
 function signupUrl(values: Record<string, string>) {
@@ -98,6 +102,14 @@ export async function requestCustomerSignupLinkAction(
   const phone = normalizePhone(
     String(formData.get("phone") || ""),
   );
+  const legalAcceptedRaw = String(
+    formData.get("legalAccepted") || "",
+  )
+    .trim()
+    .toLowerCase();
+  const legalAccepted = ["yes", "true", "1", "on"].includes(
+    legalAcceptedRaw,
+  );
 
   const nextPath =
     safeNextPath(
@@ -113,6 +125,7 @@ export async function requestCustomerSignupLinkAction(
         phone,
         firstName,
         lastName,
+        legalAccepted: legalAccepted ? "1" : "",
       }),
     );
   }
@@ -126,6 +139,7 @@ export async function requestCustomerSignupLinkAction(
         phone,
         firstName,
         lastName,
+        legalAccepted: legalAccepted ? "1" : "",
       }),
     );
   }
@@ -137,6 +151,20 @@ export async function requestCustomerSignupLinkAction(
     redirect(
       signupUrl({
         error: "Enter a valid phone number.",
+        next: nextPath,
+        email,
+        phone,
+        firstName,
+        lastName,
+        legalAccepted: legalAccepted ? "1" : "",
+      }),
+    );
+  }
+
+  if (!legalAccepted) {
+    redirect(
+      signupUrl({
+        error: "Please accept the Terms of Service and Privacy Policy.",
         next: nextPath,
         email,
         phone,
@@ -180,6 +208,9 @@ export async function requestCustomerSignupLinkAction(
           first_name: firstName,
           last_name: lastName,
           phone,
+          legal_terms_accepted: true,
+          legal_terms_version: TERMS_OF_SERVICE_VERSION,
+          legal_privacy_version: PRIVACY_POLICY_VERSION,
         },
       },
     });
@@ -199,6 +230,7 @@ export async function requestCustomerSignupLinkAction(
         phone,
         firstName,
         lastName,
+        legalAccepted: legalAccepted ? "1" : "",
       }),
     );
   }

@@ -1,7 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { signTemporaryBookingContractAction } from "./actions";
+import {
+  PRIVACY_POLICY_PATH,
+  TERMS_OF_SERVICE_PATH,
+} from "@/lib/legal/documents";
 
 export default function CustomerContractSigner({
   bookingId,
@@ -129,6 +134,18 @@ export default function CustomerContractSigner({
         <input name="accepted" type="checkbox" required checked={accepted} onChange={(e) => setAccepted(e.target.checked)} className="mt-1 h-4 w-4" />
         <span>I have reviewed the complete rental agreement and agree to its terms.</span>
       </label>
+
+      <p className="rounded-xl bg-[#faf8f4] px-3 py-2 text-xs leading-5 text-[#6c6258] ring-1 ring-[#eee5d9]">
+        Account and website use are also governed by our{" "}
+        <Link href={TERMS_OF_SERVICE_PATH} className="font-semibold text-[#2b2a28] underline decoration-black/20 underline-offset-4">
+          Terms of Service
+        </Link>
+        {" "}and{" "}
+        <Link href={PRIVACY_POLICY_PATH} className="font-semibold text-[#2b2a28] underline decoration-black/20 underline-offset-4">
+          Privacy Policy
+        </Link>
+        .
+      </p>
 
       <button disabled={!accepted || !name.trim() || !signatureDataUrl} className="min-h-12 w-full rounded-xl bg-black px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">
         Sign contract and continue to payment

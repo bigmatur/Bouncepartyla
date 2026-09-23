@@ -13,6 +13,10 @@ import {
   loginAction,
   requestPasswordResetAction,
 } from "./actions";
+import {
+  PRIVACY_POLICY_PATH,
+  TERMS_OF_SERVICE_PATH,
+} from "@/lib/legal/documents";
 
 type LoginSearchParams =
   Promise<{
@@ -305,6 +309,22 @@ export default async function LoginPage({
             >
               ← Back to rentals
             </Link>
+
+            <div className="mt-3 text-xs text-black/45">
+              <Link
+                href={TERMS_OF_SERVICE_PATH}
+                className="underline decoration-black/20 underline-offset-4"
+              >
+                Terms of Service
+              </Link>
+              {" · "}
+              <Link
+                href={PRIVACY_POLICY_PATH}
+                className="underline decoration-black/20 underline-offset-4"
+              >
+                Privacy Policy
+              </Link>
+            </div>
           </div>
         )}
       </section>

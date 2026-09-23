@@ -12,6 +12,10 @@ import { createClient } from "@/lib/supabase/server";
 import {
   requestCustomerSignupLinkAction,
 } from "./actions";
+import {
+  PRIVACY_POLICY_PATH,
+  TERMS_OF_SERVICE_PATH,
+} from "@/lib/legal/documents";
 
 export const metadata: Metadata = {
   title: "Create Account | Bounce Party LA",
@@ -31,6 +35,7 @@ type SearchParams = Promise<{
   phone?: string;
   firstName?: string;
   lastName?: string;
+  legalAccepted?: string;
 }>;
 
 export const dynamic =
@@ -201,6 +206,34 @@ export default async function SignupPage({
               />
             </label>
 
+            <label className="flex items-start gap-3 rounded-2xl border border-black/10 bg-[#faf8f4] px-4 py-3 text-sm leading-6 text-black/70">
+              <input
+                name="legalAccepted"
+                type="checkbox"
+                value="yes"
+                defaultChecked={params.legalAccepted === "1"}
+                className="mt-1 h-4 w-4 shrink-0"
+                aria-required="true"
+              />
+              <span>
+                I agree to the{" "}
+                <Link
+                  href={TERMS_OF_SERVICE_PATH}
+                  className="font-semibold text-[#6f5936] underline decoration-black/20 underline-offset-4"
+                >
+                  Terms of Service
+                </Link>{" "}
+                and acknowledge the{" "}
+                <Link
+                  href={PRIVACY_POLICY_PATH}
+                  className="font-semibold text-[#6f5936] underline decoration-black/20 underline-offset-4"
+                >
+                  Privacy Policy
+                </Link>
+                .
+              </span>
+            </label>
+
             <button
               type="submit"
               className="inline-flex min-h-12 w-full items-center justify-center rounded-2xl bg-[#1d1d1b] px-5 text-sm font-semibold text-white transition hover:bg-black"
@@ -228,6 +261,22 @@ export default async function SignupPage({
           >
             ← Back to rentals
           </Link>
+
+          <div className="mt-3 text-xs text-black/45">
+            <Link
+              href={TERMS_OF_SERVICE_PATH}
+              className="underline decoration-black/20 underline-offset-4"
+            >
+              Terms of Service
+            </Link>
+            {" · "}
+            <Link
+              href={PRIVACY_POLICY_PATH}
+              className="underline decoration-black/20 underline-offset-4"
+            >
+              Privacy Policy
+            </Link>
+          </div>
         </div>
       </section>
     </main>
