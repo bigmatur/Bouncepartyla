@@ -94,7 +94,7 @@ export default async function SignupPage({
           </h1>
 
           <p className="mt-3 text-sm leading-6 text-black/60">
-            We will email you a secure verification link. No password is required.
+            We will email you a secure verification link. You will create your password after email verification.
           </p>
         </div>
 

@@ -192,6 +192,12 @@ function redirectToSignup(
   );
 }
 
+function safeCustomerNextPath(nextPath: string) {
+  return nextPath.startsWith("/account")
+    ? nextPath
+    : "/account";
+}
+
 export async function GET(
   request: NextRequest,
 ) {
@@ -348,6 +354,25 @@ export async function GET(
           nextPath,
         );
       }
+    }
+
+    if (
+      result.status === "created_and_linked" ||
+      result.status === "linked"
+    ) {
+      const createPasswordUrl = new URL(
+        "/create-password",
+        request.url,
+      );
+
+      createPasswordUrl.searchParams.set(
+        "next",
+        safeCustomerNextPath(nextPath),
+      );
+
+      return NextResponse.redirect(
+        createPasswordUrl,
+      );
     }
 
     return NextResponse.redirect(
