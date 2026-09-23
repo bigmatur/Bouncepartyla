@@ -262,8 +262,6 @@ export async function requestCustomerLoginCode(
   const supabase =
     await createClient();
 
-  console.log("[auth-redirect-debug]", { emailRedirectTo: callbackUrl.toString() });
-
   const { error } =
     await signInWithOtpRetry(
       supabase,
