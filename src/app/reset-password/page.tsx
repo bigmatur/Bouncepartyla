@@ -31,6 +31,16 @@ function getRecoveryTokens() {
   };
 }
 
+function normalizeRecoveryType(type: string) {
+  const normalized = String(type || "").trim().toLowerCase();
+
+  if (normalized === "email") {
+    return "recovery";
+  }
+
+  return normalized;
+}
+
 export default function ResetPasswordPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -38,9 +48,10 @@ export default function ResetPasswordPage() {
   const [message, setMessage] = useState("");
 
   const recovery = useMemo(() => getRecoveryTokens(), []);
+  const recoveryType = normalizeRecoveryType(recovery.type);
 
   const isRecoveryTokenPresent =
-    recovery.type === "recovery" &&
+    (recoveryType === "recovery" || recoveryType === "invite") &&
     recovery.accessToken.length > 0 &&
     recovery.refreshToken.length > 0;
 

@@ -1,11 +1,27 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { headers } from "next/headers";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { assertStaffPermission } from "@/lib/staff-access";
 import { parseStaffMeta } from "@/lib/admin/access-management";
+import { getAuthRequestOrigin } from "@/lib/auth/request-origin";
+
+function createStaffRecoveryClient() {
+  return createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      auth: {
+        flowType: "implicit",
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    },
+  );
+}
 
 const META_START = "[[STAFF_META]]";
 const META_END = "[[/STAFF_META]]";
@@ -299,12 +315,15 @@ export async function sendStaffPasswordResetAction(formData: FormData) {
     throw new Error(identityError.message);
   }
 
-  const requestHeaders = await headers();
-  const origin =
-    requestHeaders.get("origin") ||
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    "http://localhost:3001";
-  const redirectTo = new URL("/auth/reset-password/callback", origin).toString();
+  const origin = await getAuthRequestOrigin();
+  const inviteRedirectTo = new URL(
+    "/auth/reset-password/callback",
+    origin,
+  ).toString();
+  const recoveryRedirectTo = new URL(
+    "/reset-password",
+    origin,
+  ).toString();
 
   if (!identityResult || typeof identityResult !== "object") {
     throw new Error("Staff identity was not resolved correctly.");
@@ -335,7 +354,7 @@ export async function sendStaffPasswordResetAction(formData: FormData) {
     const service = createServiceClient();
     const { data: inviteResult, error: inviteError } =
       await service.auth.admin.inviteUserByEmail(accountEmail, {
-        redirectTo,
+        redirectTo: inviteRedirectTo,
         data: {
           staff_name: String(staffMember.name || "").trim(),
         },
@@ -355,9 +374,10 @@ export async function sendStaffPasswordResetAction(formData: FormData) {
   }
 
   if (!createdAuthUser) {
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+    const recoveryClient = createStaffRecoveryClient();
+    const { error: resetError } = await recoveryClient.auth.resetPasswordForEmail(
       accountEmail,
-      { redirectTo }
+      { redirectTo: recoveryRedirectTo }
     );
 
     if (resetError) {
