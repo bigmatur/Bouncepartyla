@@ -437,7 +437,7 @@ export default async function AdminBookingsPage({
   ];
 
   return (
-    <div className="min-w-0 space-y-4 pb-6 sm:space-y-6 sm:pb-0">
+    <div className="admin-ipad-page admin-ipad-bookings min-w-0 space-y-4 pb-6 sm:space-y-6 sm:pb-0">
       <section className="rounded-[22px] border border-black/5 bg-white p-4 shadow-[0_8px_26px_rgba(0,0,0,0.035)] sm:rounded-[30px] sm:p-6 sm:shadow-[0_10px_35px_rgba(0,0,0,0.035)]">
         <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
           <div>
@@ -510,25 +510,25 @@ export default async function AdminBookingsPage({
             </form>
           </details>
 
-          <form className="mt-5 hidden gap-3 sm:grid xl:grid-cols-[180px_220px_180px_1fr_120px]">
-            <input type="date" name="date" defaultValue={selectedDate} className="w-full rounded-2xl border border-[#d8cec0] bg-white px-4 py-3 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]" />
+          <form className="bookings-filter-desktop mt-5 hidden gap-3 sm:grid md:grid-cols-[150px_190px_160px_minmax(0,1fr)_110px]">
+            <input type="date" name="date" defaultValue={selectedDate} className="w-full rounded-2xl border border-[#d8cec0] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]" />
 
-            <select name="status" defaultValue={selectedStatus} className="w-full rounded-2xl border border-[#d8cec0] bg-white px-4 py-3 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]">
+            <select name="status" defaultValue={selectedStatus} className="w-full rounded-2xl border border-[#d8cec0] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]">
               <option value="all">All statuses</option>
               {statusOptions.map((status) => (
                 <option key={status} value={status}>{prettyStatus(status)}</option>
               ))}
             </select>
 
-            <select name="view" defaultValue={selectedView} className="w-full rounded-2xl border border-[#d8cec0] bg-white px-4 py-3 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]">
+            <select name="view" defaultValue={selectedView} className="w-full rounded-2xl border border-[#d8cec0] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]">
               <option value="active">Active only</option>
               <option value="archived">Archive only</option>
               <option value="all">All bookings</option>
             </select>
 
-            <input name="q" defaultValue={query} placeholder="Search customer, phone, booking number, address..." className="w-full rounded-2xl border border-[#d8cec0] bg-white px-4 py-3 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]" />
+            <input name="q" defaultValue={query} placeholder="Search customer, phone, booking number, address..." className="w-full rounded-2xl border border-[#d8cec0] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]" />
 
-            <button type="submit" className="rounded-full bg-[#23313f] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#18222d]">
+            <button type="submit" className="rounded-full bg-[#23313f] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#18222d]">
               Filter
             </button>
           </form>
@@ -652,7 +652,7 @@ export default async function AdminBookingsPage({
                     backgroundColor: `${markerColor}10`,
                   }}
                 >
-                  <div className="grid min-w-0 grid-cols-[68px_1fr] gap-2.5 sm:grid-cols-[96px_1fr] sm:gap-4 xl:grid-cols-[112px_1fr_170px_150px] xl:items-center">
+                  <div className="grid min-w-0 grid-cols-[68px_1fr] gap-2.5 sm:grid-cols-[96px_1fr] sm:gap-4 lg:grid-cols-[100px_1fr_220px] lg:items-start xl:grid-cols-[112px_1fr_240px] xl:items-center">
                     <div className="flex min-h-14 items-center pl-0 sm:min-h-16 sm:pl-1">
                       {visibleProducts.length > 0 ? (
                         <div className="flex items-center">
@@ -733,26 +733,20 @@ export default async function AdminBookingsPage({
                       {address && <div className="mt-1 line-clamp-2 text-xs leading-5 text-[#8b8177]">{address}</div>}
                     </div>
 
-                    <div className="col-span-2 grid grid-cols-2 gap-2 border-t border-black/5 pt-2.5 text-xs text-[#6c6258] sm:col-span-1 sm:col-start-2 sm:block sm:border-0 sm:pt-0 sm:text-sm xl:col-start-auto">
+                    <div className="col-span-2 border-t border-black/5 pt-2.5 text-xs text-[#6c6258] sm:col-span-1 sm:col-start-2 sm:border-0 sm:pt-0 sm:text-sm lg:col-start-3 lg:pr-1 xl:col-start-auto">
                       <div>
                         <div className="font-bold text-[#1f1e1b] sm:font-semibold">{formatDate(booking.event_date)}</div>
                         <div className="mt-0.5">{formatTime(booking.event_start_time, timeFormat)} — {formatTime(booking.event_end_time, timeFormat)}</div>
                       </div>
 
-                      <div className="text-right sm:hidden">
-                        <div className="font-bold text-[#1f1e1b]">{formatMoney(booking.total_amount)}</div>
+                      <div className="mt-2 text-right sm:mt-2">
+                        <div className="font-semibold text-[#1f1e1b]">{formatMoney(booking.total_amount)}</div>
                         <div className={hasBalance ? "text-red-700" : "text-emerald-700"}>
-                          Due {formatMoney(booking.balance_due)}
+                          Balance: {formatMoney(booking.balance_due)}
                         </div>
                       </div>
                     </div>
 
-                    <div className="hidden text-sm sm:col-start-2 sm:block xl:col-start-auto xl:text-right">
-                      <div className="font-semibold text-[#1f1e1b]">{formatMoney(booking.total_amount)}</div>
-                      <div className={hasBalance ? "text-red-700" : "text-emerald-700"}>
-                        Balance: {formatMoney(booking.balance_due)}
-                      </div>
-                    </div>
                   </div>
                 </summary>
 

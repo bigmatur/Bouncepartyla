@@ -1820,7 +1820,7 @@ const effectiveDeliveryDurationMin =
       ].join(" ")}
     >
       <div
-        className="grid w-full min-w-0 max-w-full gap-3 border-l-[6px] px-3 py-3 sm:border-l-[8px] sm:px-5 lg:grid-cols-[86px_1fr_220px]"
+        className="grid w-full min-w-0 max-w-full gap-3 border-l-[6px] px-3 py-3 sm:border-l-[8px] sm:px-5 lg:grid-cols-[74px_minmax(0,1fr)_180px]"
         style={{ borderLeftColor: bookingMarkerColor || color }}
       >
         <div
@@ -1860,7 +1860,7 @@ const effectiveDeliveryDurationMin =
             </div>
             <div
               className={[
-                "mt-0.5 whitespace-nowrap text-2xl font-bold leading-none tracking-tight tabular-nums sm:text-[26px] lg:text-xl",
+                "route-card-time mt-0.5 whitespace-nowrap text-xl font-bold leading-none tracking-tight tabular-nums sm:text-2xl lg:text-lg",
                 typeColorClass,
               ].join(" ")}
             >
@@ -1876,7 +1876,7 @@ const effectiveDeliveryDurationMin =
         <div className="min-w-0 max-w-full">
           <div className="flex min-w-0 max-w-full flex-col items-start gap-1.5 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
             <div className="flex min-w-0 max-w-full flex-col items-start gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
-              <h3 className="min-w-0 max-w-full break-words text-base font-semibold text-[#3e3a35]">
+              <h3 className="route-card-title min-w-0 max-w-full break-words text-base font-semibold text-[#3e3a35]">
   <span className="hidden sm:inline">🏰 </span>{mainProductName(stop)}
 </h3>
 
@@ -1909,7 +1909,7 @@ const effectiveDeliveryDurationMin =
             {(showDeliverySaved || showPickupSaved) && (
               <div
                 className={[
-                  "w-full min-w-0 max-w-full overflow-hidden rounded-2xl px-3 py-1 ring-1 md:w-[calc(50%-0.25rem)]",
+                  "route-card-route-badge w-full min-w-0 max-w-full overflow-hidden rounded-2xl px-3 py-1 ring-1 md:w-[calc(50%-0.25rem)]",
                   showDeliverySaved
                     ? "bg-[#fff7eb] ring-[#f0d8b2]"
                     : "bg-[#edf6ff] ring-[#c9ddf3]",
@@ -1962,7 +1962,7 @@ const effectiveDeliveryDurationMin =
             )}
           </div>
 
-          <div className="mt-0.5 text-sm leading-4 text-[#8a8177]">
+          <div className="route-card-event mt-0.5 text-sm leading-4 text-[#8a8177]">
             <span className="sm:hidden">{bookingEventTime(stop)}</span><span className="hidden sm:inline">🕒 Event {bookingEventTime(stop)}</span>
           </div>
 
@@ -2005,60 +2005,6 @@ const effectiveDeliveryDurationMin =
               <span className="block max-w-full min-w-0 flex-1 truncate text-xs font-medium text-[#7a736c] sm:whitespace-normal sm:text-sm sm:font-normal sm:text-[#8c857d]">{bookingAddress(stop)}</span>
             </div>
           )}
-
-          {!isBreakCard && weather ? (
-            <div className="mt-1 space-y-0.5 text-xs leading-4 text-[#6c6258]">
-              {weather.primary ? (
-                <div className="truncate font-semibold text-[#5f5750]">{weather.primary}</div>
-              ) : null}
-
-              {weather.windText || weather.risk.rain ? (
-                <div
-                  className={[
-                    "flex min-w-0 flex-wrap items-center gap-1.5",
-                    weather.risk.windLevel === "yellow"
-                      ? "text-amber-700"
-                      : weather.risk.windLevel === "orange"
-                        ? "text-orange-700"
-                        : weather.risk.windLevel === "red"
-                          ? "text-red-700 font-semibold"
-                          : weather.risk.rain
-                            ? "text-sky-700"
-                            : "text-[#7a736c]",
-                  ].join(" ")}
-                >
-                  {weather.risk.windLevel !== "none" ? (
-                    <span
-                      className={[
-                        "inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] ring-1",
-                        weather.risk.windLevel === "yellow"
-                          ? "bg-amber-50 text-amber-700 ring-amber-200"
-                          : weather.risk.windLevel === "orange"
-                            ? "bg-orange-50 text-orange-700 ring-orange-200"
-                            : "bg-red-50 text-red-700 ring-red-200",
-                      ].join(" ")}
-                    >
-                      {weather.risk.windLevel === "red"
-                        ? "HIGH WIND"
-                        : weather.risk.windLevel === "orange"
-                          ? "WIND 21+"
-                          : "WIND 18+"}
-                    </span>
-                  ) : null}
-
-                  {weather.risk.rain ? (
-                    <span className="inline-flex shrink-0 items-center rounded-full bg-sky-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-sky-700 ring-1 ring-sky-200">
-                      RAIN
-                    </span>
-                  ) : null}
-
-                  {weather.windText ? (
-                    <span className="truncate">{weather.windText}</span>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
 
           <div className="mt-2 grid w-full min-w-0 max-w-full grid-cols-[repeat(3,minmax(0,1fr))] gap-2 overflow-hidden sm:mt-1.5 sm:flex sm:flex-wrap sm:overflow-visible">
             {isBreakCard && (
@@ -2140,6 +2086,60 @@ const effectiveDeliveryDurationMin =
               </div>
             )}
           </div>
+
+          {!isBreakCard && weather ? (
+            <div className="route-card-weather mt-2 rounded-xl bg-[#fcfaf7] p-2.5 ring-1 ring-[#eee5d9] sm:rounded-2xl sm:p-3">
+              {weather.primary ? (
+                <div className="truncate text-xs font-semibold leading-4 text-[#5f5750]">{weather.primary}</div>
+              ) : null}
+
+              {weather.windText || weather.risk.rain ? (
+                <div
+                  className={[
+                    "mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-xs leading-4",
+                    weather.risk.windLevel === "yellow"
+                      ? "text-amber-700"
+                      : weather.risk.windLevel === "orange"
+                        ? "text-orange-700"
+                        : weather.risk.windLevel === "red"
+                          ? "text-red-700 font-semibold"
+                          : weather.risk.rain
+                            ? "text-sky-700"
+                            : "text-[#7a736c]",
+                  ].join(" ")}
+                >
+                  {weather.risk.windLevel !== "none" ? (
+                    <span
+                      className={[
+                        "inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] ring-1",
+                        weather.risk.windLevel === "yellow"
+                          ? "bg-amber-50 text-amber-700 ring-amber-200"
+                          : weather.risk.windLevel === "orange"
+                            ? "bg-orange-50 text-orange-700 ring-orange-200"
+                            : "bg-red-50 text-red-700 ring-red-200",
+                      ].join(" ")}
+                    >
+                      {weather.risk.windLevel === "red"
+                        ? "HIGH WIND"
+                        : weather.risk.windLevel === "orange"
+                          ? "WIND 21+"
+                          : "WIND 18+"}
+                    </span>
+                  ) : null}
+
+                  {weather.risk.rain ? (
+                    <span className="inline-flex shrink-0 items-center rounded-full bg-sky-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-sky-700 ring-1 ring-sky-200">
+                      RAIN
+                    </span>
+                  ) : null}
+
+                  {weather.windText ? (
+                    <span className="truncate">{weather.windText}</span>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -4145,8 +4145,8 @@ setRouteSegmentsByChainId({});
   }
 
   return (
-    <div className="min-w-0 space-y-4 overflow-x-hidden pb-24 sm:space-y-6 sm:pb-0">
-      <section className="grid min-w-0 gap-4 sm:gap-6 xl:grid-cols-[360px_1fr]">
+    <div className="admin-ipad-page admin-ipad-route-board min-w-0 space-y-4 overflow-x-hidden pb-24 sm:space-y-6 sm:pb-0">
+      <section className="min-w-0 space-y-4 sm:space-y-6">
         <aside className="min-w-0 space-y-4">
           <section className="rounded-[20px] border border-black/5 bg-white p-3 shadow-sm sm:rounded-[30px] sm:p-5 sm:shadow-[0_12px_35px_rgba(0,0,0,0.04)]">
             <div className="flex items-center justify-between gap-3">
@@ -4471,11 +4471,11 @@ setRouteSegmentsByChainId({});
                   warehouseOriginAddress={warehouseOriginAddress}
                   groups={multiDriverMapGroups}
                   liveDriverLocations={currentLiveDriverLocations}
-                  className="relative h-[38vh] min-h-[250px] max-h-[330px] w-full min-w-0 overflow-hidden rounded-[18px] border border-[#eee5d9] sm:h-auto sm:min-h-[420px] sm:max-h-none sm:rounded-[28px]"
+                  className="relative h-[46vh] min-h-[320px] max-h-[560px] w-full min-w-0 overflow-hidden rounded-[18px] border border-[#eee5d9] sm:min-h-[430px] sm:rounded-[28px]"
                   onRouteSegmentsChange={handleRouteSegmentsChange}
                 />
 
-                <div className="grid min-w-0 gap-3 xl:grid-cols-2">
+                <div className="grid min-w-0 gap-3 lg:grid-cols-2 xl:grid-cols-2">
               {groupedDriverRoutes.map((group) => {
                 const timelineId = `${group.driver.id}::timeline`;
                 const timelineMapGroup =
@@ -4841,18 +4841,18 @@ setRouteSegmentsByChainId({});
         </details>
 
         <div className="hidden border-b border-[#eee5d9] px-6 py-5 sm:block">
-          <form className="grid gap-3 xl:grid-cols-[160px_1fr_160px_160px_120px]">
-            <input name="date" type="date" defaultValue={selectedDate} className="w-full rounded-2xl border border-[#d8cec0] bg-white px-4 py-3 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]" />
-            <input name="q" defaultValue={query} placeholder="Search route..." className="w-full rounded-2xl border border-[#d8cec0] bg-white px-4 py-3 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]" />
-            <select name="type" defaultValue={selectedType} className="w-full rounded-2xl border border-[#d8cec0] bg-white px-4 py-3 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]">
+          <form className="route-board-filter-desktop grid gap-3 md:grid-cols-[150px_minmax(0,1fr)_150px_150px_110px]">
+            <input name="date" type="date" defaultValue={selectedDate} className="w-full rounded-2xl border border-[#d8cec0] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]" />
+            <input name="q" defaultValue={query} placeholder="Search route..." className="w-full rounded-2xl border border-[#d8cec0] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]" />
+            <select name="type" defaultValue={selectedType} className="w-full rounded-2xl border border-[#d8cec0] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]">
               <option value="all">All types</option>
               {stopTypes.map((type) => (<option key={type.value} value={type.value}>{type.label}</option>))}
             </select>
-            <select name="status" defaultValue={selectedStatus} className="w-full rounded-2xl border border-[#d8cec0] bg-white px-4 py-3 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]">
+            <select name="status" defaultValue={selectedStatus} className="w-full rounded-2xl border border-[#d8cec0] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]">
               <option value="all">All statuses</option>
               {statuses.map((status) => (<option key={status.value} value={status.value}>{status.label}</option>))}
             </select>
-            <button type="submit" className="rounded-full bg-[#23313f] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#18222d]">Filter</button>
+            <button type="submit" className="rounded-full bg-[#23313f] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#18222d]">Filter</button>
           </form>
         </div>
 

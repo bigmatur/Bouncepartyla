@@ -54,7 +54,7 @@ const inventoryTabs = [
 
 export default function InventoryLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="space-y-4 sm:space-y-5">
+    <div className="admin-ipad-page admin-ipad-inventory space-y-4 sm:space-y-5">
       <section className="rounded-[22px] border border-black/5 bg-white p-3.5 shadow-[0_8px_28px_rgba(0,0,0,0.035)] sm:rounded-[28px] sm:p-4 sm:shadow-[0_10px_35px_rgba(0,0,0,0.035)]">
         <div className="flex min-w-0 flex-col gap-3 sm:gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-0">
@@ -67,7 +67,7 @@ export default function InventoryLayout({ children }: { children: ReactNode }) {
             </h1>
           </div>
 
-          <nav className="grid min-w-0 grid-cols-3 gap-1.5 sm:gap-2 xl:flex xl:flex-wrap xl:justify-end">
+          <nav className="grid min-w-0 grid-cols-3 gap-1.5 sm:gap-2 md:grid-cols-4 xl:flex xl:flex-wrap xl:justify-end">
             {inventoryTabs.map((tab) => (
               <Link
                 key={tab.href}

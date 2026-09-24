@@ -110,7 +110,7 @@ export default function AdminShell({
   }
 
   return (
-    <div className="flex min-h-screen min-w-0 overflow-x-hidden">
+    <div className="admin-shell flex min-h-screen min-w-0 overflow-x-hidden">
       {!sidebarHidden && (
         <AdminSidebar
           displayName={displayName}
@@ -122,7 +122,7 @@ export default function AdminShell({
         />
       )}
 
-      <div className={`flex min-w-0 flex-1 flex-col ${sidebarHidden ? "" : "lg:ml-[280px]"}`}>
+      <div className={`flex min-w-0 flex-1 flex-col ${sidebarHidden ? "" : "lg:ml-[248px] xl:ml-[280px]"}`}>
         <div className="hidden lg:block">
           <AdminTopbar
             displayName={displayName}
@@ -187,8 +187,8 @@ export default function AdminShell({
           </div>
         ) : null}
 
-        <main className="min-w-0 flex-1 overflow-x-hidden px-3 pb-24 pt-3 sm:px-4 sm:pb-24 sm:pt-4 lg:px-8 lg:py-6">
-          <div className="mx-auto min-w-0 w-full max-w-[1440px]">
+        <main className="admin-main min-w-0 flex-1 overflow-x-hidden px-3 pb-24 pt-3 sm:px-4 sm:pb-24 sm:pt-4 lg:px-6 lg:py-5 xl:px-8 xl:py-6" data-admin-route={pathname}>
+          <div className="admin-content mx-auto min-w-0 w-full max-w-[1440px]">
             {children}
           </div>
         </main>

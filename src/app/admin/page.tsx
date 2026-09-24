@@ -440,7 +440,7 @@ export default async function DashboardPage({ searchParams }: { searchParams?: S
   const query = `range=${encodeURIComponent(period.range)}&from=${period.from}&to=${period.to}`;
 
   return (
-    <div className="mx-auto w-full max-w-[1480px] space-y-4 pb-24 sm:space-y-5 sm:pb-12">
+    <div className="admin-ipad-page admin-ipad-dashboard mx-auto w-full max-w-[1480px] space-y-4 pb-24 sm:space-y-5 sm:pb-12">
       <section className="rounded-[22px] border border-[#eadfd1] bg-white p-4 shadow-[0_10px_34px_rgba(45,36,25,.04)] sm:rounded-[28px] sm:p-5">
         <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-end 2xl:justify-between">
           <div>
@@ -498,7 +498,7 @@ export default async function DashboardPage({ searchParams }: { searchParams?: S
         ))}
       </section>
 
-      <section className="grid grid-cols-2 gap-2.5 sm:gap-3 xl:grid-cols-4 2xl:grid-cols-8">
+      <section className="grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-4 2xl:grid-cols-8">
         <Metric label="Gross sales" value={money(gross)} note="Event value" tone="gold" />
         <Metric label="Collected" value={money(collected)} note={`${successful.length} payments`} tone="green" />
         <Metric label="Balance due" value={money(outstanding)} note="Still to collect" tone={outstanding ? "red" : "green"} />
@@ -511,7 +511,7 @@ export default async function DashboardPage({ searchParams }: { searchParams?: S
 
       {view === "overview" ? (
         <>
-          <section className="grid gap-4 sm:gap-5 xl:grid-cols-[1.7fr_1fr]">
+          <section className="grid gap-4 sm:gap-5 lg:grid-cols-[1.45fr_1fr] xl:grid-cols-[1.7fr_1fr]">
             <Card title="Revenue and cash collection" subtitle="Booked event revenue compared with payments actually received.">
               <div className="-mx-1 overflow-x-auto px-1 pb-2">
                 <div className="flex min-w-[560px] items-end gap-1.5 sm:min-w-[720px] sm:gap-2">
@@ -549,7 +549,7 @@ export default async function DashboardPage({ searchParams }: { searchParams?: S
             <DashboardBookingMap apiKey={googleMapsApiKey} points={bookingMapPoints} />
           </Card>
 
-          <section className="grid gap-4 sm:gap-5 xl:grid-cols-2">
+          <section className="grid gap-4 sm:gap-5 lg:grid-cols-2">
             <Card title="Sales by location" subtitle="Bookings grouped by city for the selected period.">
               <CompactList
                 rows={locationGroups.slice(0, 6).map((row) => ({

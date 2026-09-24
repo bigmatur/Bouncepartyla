@@ -31,3 +31,82 @@ a,
 input {
   -webkit-tap-highlight-color: transparent;
 }
+
+@media (min-width: 768px) and (max-width: 1180px) {
+  .admin-main {
+    padding-left: 0.875rem;
+    padding-right: 0.875rem;
+    padding-top: 0.875rem;
+    padding-bottom: 3.5rem;
+  }
+
+  .admin-content {
+    max-width: none;
+  }
+
+  .admin-ipad-page {
+    gap: 0.875rem;
+  }
+
+  .admin-ipad-page h1 {
+    line-height: 1.15;
+  }
+
+  .admin-ipad-page .text-4xl {
+    font-size: 2rem;
+    line-height: 1.1;
+  }
+
+  .admin-ipad-page .text-3xl {
+    font-size: 1.7rem;
+    line-height: 1.12;
+  }
+
+  .admin-ipad-page .text-2xl {
+    font-size: 1.35rem;
+    line-height: 1.15;
+  }
+
+  .admin-ipad-page .text-xl {
+    font-size: 1.15rem;
+    line-height: 1.2;
+  }
+
+  .admin-ipad-calendar .day-schedule-grid {
+    min-width: 980px;
+  }
+
+  .admin-ipad-calendar .day-schedule-card {
+    padding: 0.45rem 0.5rem;
+  }
+
+  .admin-ipad-calendar .day-schedule-card .day-card-status,
+  .admin-ipad-calendar .day-schedule-card .day-card-total,
+  .admin-ipad-calendar .day-schedule-card .day-card-save,
+  .admin-ipad-calendar .day-schedule-card .day-card-color {
+    display: none;
+  }
+
+  .admin-ipad-route-board .route-card-time {
+    font-size: 1.15rem;
+    line-height: 1.1;
+  }
+
+  .admin-ipad-route-board .route-card-title {
+    font-size: 1.25rem;
+    line-height: 1.25;
+  }
+
+  .admin-ipad-route-board .route-card-event,
+  .admin-ipad-route-board .route-card-route-badge {
+    display: none;
+  }
+
+  .admin-ipad-route-board .route-board-filter-desktop input,
+  .admin-ipad-route-board .route-board-filter-desktop select,
+  .admin-ipad-bookings .bookings-filter-desktop input,
+  .admin-ipad-bookings .bookings-filter-desktop select {
+    padding-top: 0.6rem;
+    padding-bottom: 0.6rem;
+  }
+}

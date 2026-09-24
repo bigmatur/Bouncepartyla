@@ -445,7 +445,7 @@ export default async function BusinessIntelligencePage({
       : null;
 
   return (
-    <main className="min-w-0 space-y-4 pb-10 sm:space-y-5">
+    <main className="admin-ipad-page admin-ipad-bi min-w-0 space-y-4 pb-10 sm:space-y-5">
       <section className="overflow-hidden rounded-[22px] border border-[#e5d9cb] bg-white shadow-[0_8px_28px_rgba(45,36,25,.04)] sm:rounded-[28px]">
         <div className="border-b border-[#efe6dc] bg-[#f9f5ef] px-4 py-4 sm:px-6 sm:py-5">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
@@ -631,7 +631,7 @@ export default async function BusinessIntelligencePage({
           What changed and where to focus
         </h2>
 
-        <div className="mt-4 grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-4 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
           {signals.map((signal: any) => {
             const severityClass =
               signal.severity === "positive"
@@ -652,7 +652,7 @@ export default async function BusinessIntelligencePage({
         </div>
       </section>
 
-      <section className="grid gap-4 sm:gap-5 xl:grid-cols-[1.35fr_1fr]">
+      <section className="grid gap-4 sm:gap-5 lg:grid-cols-[1.15fr_1fr] xl:grid-cols-[1.35fr_1fr]">
         <div className="min-w-0 rounded-[22px] border border-[#eadfd1] bg-white p-4 shadow-[0_8px_28px_rgba(45,36,25,.04)] sm:rounded-[26px] sm:p-5">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
@@ -785,7 +785,7 @@ export default async function BusinessIntelligencePage({
         </div>
       </section>
 
-      <section className="grid gap-4 sm:gap-5 xl:grid-cols-3">
+      <section className="grid gap-4 sm:gap-5 lg:grid-cols-2 xl:grid-cols-3">
         <div className="min-w-0 rounded-[22px] border border-[#eadfd1] bg-white p-4 shadow-[0_8px_28px_rgba(45,36,25,.04)] sm:rounded-[26px] sm:p-5">
           <div className="text-[10px] font-bold uppercase tracking-[0.15em] text-[#a27742]">
             Revenue drivers
@@ -904,7 +904,7 @@ export default async function BusinessIntelligencePage({
 
           {marketingSnapshot.metaAds.current && marketingSnapshot.comparisons ? (
             <>
-              <section className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-6 sm:gap-3">
+              <section className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 sm:gap-3">
                 <Metric
                   label="Meta Spend"
                   value={money(marketingSnapshot.metaAds.current.spend)}
@@ -966,7 +966,7 @@ export default async function BusinessIntelligencePage({
                 />
               </section>
 
-              <section className="grid gap-4 sm:gap-5 xl:grid-cols-[1.25fr_.75fr]">
+              <section className="grid gap-4 sm:gap-5 lg:grid-cols-[1.1fr_.9fr] xl:grid-cols-[1.25fr_.75fr]">
                 <div className="min-w-0 rounded-[22px] border border-[#eadfd1] bg-white p-4 shadow-[0_8px_28px_rgba(45,36,25,.04)] sm:rounded-[26px] sm:p-5">
                   <div className="text-[10px] font-bold uppercase tracking-[0.15em] text-[#a27742]">Campaign performance</div>
                   <h2 className="mt-1 text-lg font-bold text-[#28231f]">Meta campaigns</h2>

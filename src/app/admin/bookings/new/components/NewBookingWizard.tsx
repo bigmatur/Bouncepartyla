@@ -2271,7 +2271,7 @@ export default function NewBookingWizard({
     <form
       ref={formRef}
       action={createBookingAction}
-      className="space-y-6"
+      className="admin-ipad-page admin-ipad-booking-wizard space-y-6"
       onSubmit={handleFormSubmit}
     >
       {formErrorMessage ? (
@@ -2362,7 +2362,7 @@ export default function NewBookingWizard({
       ))}
 
       <section className="rounded-[30px] border border-black/5 bg-white p-4 shadow-[0_10px_35px_rgba(0,0,0,0.035)]">
-        <div className="grid gap-3 md:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           {steps.map((item) => {
             const active = step === item.id;
             const valid = stepIsValid[item.id];
@@ -2712,7 +2712,7 @@ export default function NewBookingWizard({
       )}
 
       {step === 3 && (
-        <section className="grid gap-6 xl:grid-cols-[1fr_400px]">
+        <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[1fr_400px]">
           <main className="rounded-[30px] border border-black/5 bg-white shadow-[0_12px_40px_rgba(0,0,0,0.04)]">
             <div className="border-b border-[#eee5d9] px-6 py-5">
               <h3 className="text-xl font-semibold text-[#1f1e1b]">
@@ -3706,7 +3706,7 @@ export default function NewBookingWizard({
       )}
 
       {step === 5 && (
-        <section className="grid gap-6 xl:grid-cols-[1fr_380px]">
+        <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[1fr_380px]">
           <main className="rounded-[30px] border border-black/5 bg-white shadow-[0_12px_40px_rgba(0,0,0,0.04)]">
             <div className="border-b border-[#eee5d9] px-6 py-5">
               <h3 className="text-xl font-semibold text-[#1f1e1b]">

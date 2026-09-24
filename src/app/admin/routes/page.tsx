@@ -447,11 +447,11 @@ function SummaryCard({
   hint?: string;
 }) {
   return (
-    <div className="min-w-[132px] shrink-0 snap-start min-w-[118px] shrink-0 snap-start rounded-[18px] border border-black/5 bg-white p-3 shadow-sm sm:min-w-0 sm:rounded-[18px] sm:rounded-[18px] sm:rounded-[24px] sm:p-3 sm:p-3 sm:p-5 sm:shadow-[0_10px_30px_rgba(0,0,0,0.035)]">
-      <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#9a723e] sm:text-[10px] sm:text-xs sm:font-semibold sm:tracking-[0.16em]">
+    <div className="min-w-[118px] shrink-0 snap-start rounded-[16px] border border-black/5 bg-white p-2.5 shadow-sm sm:min-w-0 sm:rounded-[20px] sm:p-3.5 sm:shadow-[0_10px_30px_rgba(0,0,0,0.035)]">
+      <div className="text-[9px] font-bold uppercase tracking-[0.12em] text-[#9a723e] sm:text-[10px] sm:tracking-[0.14em]">
         {label}
       </div>
-      <div className="mt-2 text-3xl font-semibold text-[#1f1e1b]">{value}</div>
+      <div className="mt-1.5 text-2xl font-semibold leading-tight text-[#1f1e1b] sm:text-[30px]">{value}</div>
       {hint && <div className="mt-1 hidden text-xs text-[#6c6258] sm:block">{hint}</div>}
     </div>
   );
@@ -1184,7 +1184,7 @@ export default async function AdminRoutesPage({
 
 
   return (
-    <div className="space-y-3 sm:space-y-6">
+    <div className="admin-ipad-page admin-ipad-route-board space-y-3 sm:space-y-6">
       <section className="hidden rounded-[22px] sm:rounded-[30px] border border-black/5 bg-white p-3.5 sm:p-6 shadow-[0_8px_24px_rgba(0,0,0,0.03)] sm:shadow-[0_10px_35px_rgba(0,0,0,0.035)] sm:block">
         <div className="flex flex-wrap items-start justify-between gap-2 sm:gap-4">
           <div>
@@ -1257,7 +1257,7 @@ export default async function AdminRoutesPage({
         </div>
       </section>
 
-      <section className="hidden sm:grid sm:gap-4 md:grid-cols-5">
+      <section className="hidden sm:grid sm:gap-3 md:grid-cols-5">
         <SummaryCard
           label="Stops"
           value={countableStops.length}

@@ -235,7 +235,7 @@ export default function AdminSidebar({
       className={
         mobile
           ? "block h-[100dvh] max-h-[100dvh] min-h-0 w-[min(86vw,320px)] shrink-0 overflow-hidden bg-[#23313f] text-white shadow-2xl"
-          : "hidden min-h-screen w-[280px] shrink-0 border-r border-black/5 bg-[#23313f] text-white lg:fixed lg:inset-y-0 lg:left-0 lg:z-50 lg:block"
+          : "hidden min-h-screen w-[248px] shrink-0 border-r border-black/5 bg-[#23313f] text-white lg:fixed lg:inset-y-0 lg:left-0 lg:z-50 lg:block xl:w-[280px]"
       }
     >
       <div className={mobile ? "flex h-[100dvh] min-h-0 flex-col overflow-hidden" : "sticky top-0 flex h-screen flex-col"}>
@@ -245,7 +245,7 @@ export default function AdminSidebar({
               Bounce Party LA
             </div>
 
-            <div className="mt-2 text-2xl font-semibold tracking-tight text-white">
+            <div className="mt-2 text-xl font-semibold tracking-tight text-white xl:text-2xl">
               {isDriverInterface ? "Driver" : "Admin"}
             </div>
           </Link>

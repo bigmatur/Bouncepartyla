@@ -473,7 +473,7 @@ function buildDayTimelineLayout(params: {
   return rows.map((row) => ({
     ...row,
     top: (row.startMinutes - params.dayStartMinutes) * params.pxPerMinute,
-    height: Math.max(74, (row.endMinutes - row.startMinutes) * params.pxPerMinute),
+    height: Math.max(36, (row.endMinutes - row.startMinutes) * params.pxPerMinute),
   }));
 }
 
@@ -1084,7 +1084,7 @@ function DayView({
   const dayStartMinutes = firstHourMinutes;
   const dayEndMinutes = lastHourMinutes + 60;
 
-  const mobileHourHeight = 76;
+  const mobileHourHeight = 38;
   const mobileTimelineHeight = hours.length * mobileHourHeight;
   const mobileTimelineRows = buildDayTimelineLayout({
     bookings: dayBookings,
@@ -1093,7 +1093,7 @@ function DayView({
     pxPerMinute: mobileHourHeight / 60,
   });
 
-  const desktopHourHeight = 90;
+  const desktopHourHeight = 45;
   const desktopTimelineHeight = hours.length * desktopHourHeight;
   const desktopTimelineRows = buildDayTimelineLayout({
     bookings: dayBookings,
@@ -1127,102 +1127,104 @@ function DayView({
           </div>
         </div>
 
-        <div className="grid grid-cols-[54px_1fr]">
-          <div className="border-r border-[#eee5d9] bg-[#fcfaf7]">
-            {hours.map((hour) => (
-              <div
-                key={hour}
-                className="h-[76px] border-b border-[#eee5d9] px-1.5 pt-2 text-right text-[10px] font-semibold text-[#8f7f6b]"
-              >
-                {formatDisplayTime(hour, timeFormat)}
-              </div>
-            ))}
-          </div>
-
-          <div
-            className="relative"
-            style={{ height: `${mobileTimelineHeight}px` }}
-          >
-            {hours.map((hour, hourIndex) => (
-              <div
-                key={hour}
-                className="absolute left-0 right-0 border-b border-[#eee5d9]"
-                style={{
-                  top: `${hourIndex * mobileHourHeight}px`,
-                  height: `${mobileHourHeight}px`,
-                }}
-              >
-                <Link
-                  href={getNewBookingHref(selectedIso, hour)}
-                  className="block h-full w-full active:bg-[#fcfaf7]"
-                  aria-label={`Create booking at ${formatDisplayTime(
-                    hour,
-                    timeFormat,
-                  )}`}
-                />
-              </div>
-            ))}
-
-            <div className="pointer-events-none absolute inset-0 z-10">
-              {mobileTimelineRows.map((item) => {
-                const markerColor = getBookingMarkerColor(
-                  item.booking,
-                  item.booking.booking_modifiers || [],
-                );
-                const product = getBookingProduct(item.booking);
-
-                return (
-                  <Link
-                    key={item.booking.id}
-                    href={`/admin/bookings/${item.booking.id}`}
-                    className="pointer-events-auto absolute overflow-hidden rounded-xl border px-2 py-1.5 shadow-sm"
-                    style={{
-                      top: `${item.top + 3}px`,
-                      height: `${Math.max(48, item.height - 6)}px`,
-                      left: `calc(${(100 / item.columnsInGroup) * item.column}% + 4px)`,
-                      width: `calc(${100 / item.columnsInGroup}% - 8px)`,
-                      borderColor: `${markerColor}70`,
-                      backgroundColor: `${markerColor}18`,
-                    }}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span
-                        className="h-2 w-2 shrink-0 rounded-full"
-                        style={{ backgroundColor: markerColor }}
-                      />
-                      <span className="truncate text-[11px] font-bold text-[#1f1e1b]">
-                        {product?.name || "Booking"}
-                      </span>
-                    </div>
-
-                    <div className="mt-0.5 truncate text-[9px] font-semibold text-[#6c6258]">
-                      {formatDisplayTimeRange(
-                        item.booking.event_start_time,
-                        item.booking.event_end_time,
-                        timeFormat,
-                      )}
-                    </div>
-
-                    <div className="truncate text-[9px] text-[#6c6258]">
-                      {item.booking.customers?.full_name || "No client"}
-                    </div>
-                  </Link>
-                );
-              })}
-
-              {mobileTimelineRows.length === 0 && (
-                <div className="pointer-events-auto absolute left-4 right-4 top-6 rounded-2xl border border-dashed border-[#d8cec0] bg-white/95 p-4 text-center shadow-sm">
-                  <div className="text-sm font-bold text-[#1f1e1b]">
-                    No bookings for this day
-                  </div>
-                  <Link
-                    href="/admin/bookings/new"
-                    className="mt-3 inline-flex rounded-full bg-[#c9964f] px-4 py-2 text-xs font-semibold text-white"
-                  >
-                    + New booking
-                  </Link>
+        <div className="overflow-x-auto">
+          <div className="grid min-w-[620px] grid-cols-[46px_minmax(560px,1fr)]">
+            <div className="border-r border-[#eee5d9] bg-[#fcfaf7]">
+              {hours.map((hour) => (
+                <div
+                  key={hour}
+                  className="h-[38px] border-b border-[#eee5d9] px-1 pt-2 text-right text-[9px] font-semibold text-[#8f7f6b]"
+                >
+                  {formatDisplayTime(hour, timeFormat)}
                 </div>
-              )}
+              ))}
+            </div>
+
+            <div
+              className="relative"
+              style={{ height: `${mobileTimelineHeight}px` }}
+            >
+              {hours.map((hour, hourIndex) => (
+                <div
+                  key={hour}
+                  className="absolute left-0 right-0 border-b border-[#eee5d9]"
+                  style={{
+                    top: `${hourIndex * mobileHourHeight}px`,
+                    height: `${mobileHourHeight}px`,
+                  }}
+                >
+                  <Link
+                    href={getNewBookingHref(selectedIso, hour)}
+                    className="block h-full w-full active:bg-[#fcfaf7]"
+                    aria-label={`Create booking at ${formatDisplayTime(
+                      hour,
+                      timeFormat,
+                    )}`}
+                  />
+                </div>
+              ))}
+
+              <div className="pointer-events-none absolute inset-0 z-10">
+                {mobileTimelineRows.map((item) => {
+                  const markerColor = getBookingMarkerColor(
+                    item.booking,
+                    item.booking.booking_modifiers || [],
+                  );
+                  const product = getBookingProduct(item.booking);
+
+                  return (
+                    <Link
+                      key={item.booking.id}
+                      href={`/admin/bookings/${item.booking.id}`}
+                      className="pointer-events-auto absolute overflow-hidden rounded-xl border px-2 py-1 shadow-sm"
+                      style={{
+                        top: `${item.top + 3}px`,
+                        height: `${Math.max(28, item.height - 6)}px`,
+                        left: `calc(${(100 / item.columnsInGroup) * item.column}% + 4px)`,
+                        width: `calc(${100 / item.columnsInGroup}% - 8px)`,
+                        borderColor: `${markerColor}70`,
+                        backgroundColor: `${markerColor}18`,
+                      }}
+                    >
+                      <div className="flex flex-col items-start gap-0.5">
+                        <span
+                          className="h-2 w-2 shrink-0 rounded-full"
+                          style={{ backgroundColor: markerColor }}
+                        />
+                        <span className="text-[10px] font-bold leading-3 text-[#1f1e1b] [overflow-wrap:anywhere]">
+                          {product?.name || "Booking"}
+                        </span>
+                      </div>
+
+                      <div className="mt-0.5 text-[9px] font-semibold text-[#6c6258]">
+                        {formatDisplayTimeRange(
+                          item.booking.event_start_time,
+                          item.booking.event_end_time,
+                          timeFormat,
+                        )}
+                      </div>
+
+                      <div className="hidden text-[9px] text-[#6c6258] sm:block">
+                        {item.booking.customers?.full_name || "No client"}
+                      </div>
+                    </Link>
+                  );
+                })}
+
+                {mobileTimelineRows.length === 0 && (
+                  <div className="pointer-events-auto absolute left-4 right-4 top-6 rounded-2xl border border-dashed border-[#d8cec0] bg-white/95 p-4 text-center shadow-sm">
+                    <div className="text-sm font-bold text-[#1f1e1b]">
+                      No bookings for this day
+                    </div>
+                    <Link
+                      href="/admin/bookings/new"
+                      className="mt-3 inline-flex rounded-full bg-[#c9964f] px-4 py-2 text-xs font-semibold text-white"
+                    >
+                      + New booking
+                    </Link>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -1245,12 +1247,12 @@ function DayView({
           </div>
 
           <div className="overflow-x-auto">
-            <div className="grid min-w-[740px] grid-cols-[76px_1fr] sm:grid-cols-[90px_1fr]">
+            <div className="day-schedule-grid grid min-w-[780px] grid-cols-[76px_1fr] sm:grid-cols-[90px_1fr]">
               <div className="border-r border-[#eee5d9] bg-[#fcfaf7]">
                 {hours.map((hour) => (
                   <div
                     key={hour}
-                    className="h-[90px] border-b border-[#eee5d9] px-2 py-3 text-xs font-semibold text-[#8f7f6b] sm:px-4"
+                    className="h-[45px] border-b border-[#eee5d9] px-2 py-2 text-xs font-semibold text-[#8f7f6b] sm:px-4"
                   >
                     {formatDisplayTime(hour, timeFormat)}
                   </div>
@@ -1297,10 +1299,10 @@ function DayView({
                     return (
                       <div
                         key={item.booking.id}
-                        className="pointer-events-auto absolute overflow-hidden rounded-2xl border p-2.5 shadow-sm"
+                        className="day-schedule-card pointer-events-auto absolute overflow-hidden rounded-2xl border p-2.5 shadow-sm"
                         style={{
                           top: `${item.top + 4}px`,
-                          height: `${Math.max(68, item.height - 8)}px`,
+                          height: `${Math.max(30, item.height - 8)}px`,
                           left: `calc(${(100 / item.columnsInGroup) * item.column}% + 6px)`,
                           width: `calc(${100 / item.columnsInGroup}% - 12px)`,
                           borderColor: `${markerColor}55`,
@@ -1313,17 +1315,19 @@ function DayView({
                               className="h-2.5 w-2.5 rounded-full"
                               style={{ backgroundColor: markerColor }}
                             />
-                            {getBookingMarkerLabel(
-                              item.booking,
-                              item.booking.booking_modifiers || [],
-                            )}
+                            <span className="day-card-color">
+                              {getBookingMarkerLabel(
+                                item.booking,
+                                item.booking.booking_modifiers || [],
+                              )}
+                            </span>
                           </div>
 
                           <input
                             type="color"
                             name="markerColor"
                             defaultValue={markerColor}
-                            className="h-6 w-6 cursor-pointer rounded-full border border-[#d8cec0] bg-white p-0.5"
+                            className="day-card-color h-6 w-6 cursor-pointer rounded-full border border-[#d8cec0] bg-white p-0.5"
                             aria-label="Change booking marker color"
                             form={markerColorFormId}
                           />
@@ -1331,7 +1335,7 @@ function DayView({
 
                         <Link
                           href={`/admin/bookings/${item.booking.id}`}
-                          className="mt-1.5 block truncate text-sm font-semibold text-[#1f1e1b] hover:underline"
+                          className="mt-1 block text-sm font-semibold leading-4 text-[#1f1e1b] [overflow-wrap:anywhere] hover:underline"
                         >
                           {product?.name || "Booking"}
                         </Link>
@@ -1348,7 +1352,7 @@ function DayView({
                           {item.booking.customers?.full_name || "No client"}
                         </div>
 
-                        <div className="mt-1.5 flex items-center justify-between gap-2">
+                        <div className="day-card-status mt-1.5 flex items-center justify-between gap-2">
                           <span
                             className={[
                               "rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1",
@@ -1358,7 +1362,7 @@ function DayView({
                             {prettyStatus(item.booking.status)}
                           </span>
 
-                          <span className="text-xs font-semibold text-[#1f1e1b]">
+                          <span className="day-card-total text-xs font-semibold text-[#1f1e1b]">
                             {formatMoney(item.booking.total_amount)}
                           </span>
                         </div>
@@ -1366,7 +1370,7 @@ function DayView({
                         <form
                           id={markerColorFormId}
                           action={updateBookingMarkerColorAction}
-                          className="mt-1.5"
+                          className="day-card-save mt-1.5"
                         >
                           <input
                             type="hidden"
@@ -1521,10 +1525,10 @@ export default async function AdminCalendarPage(props: PageProps) {
   const weekDays = buildWeekDays(selectedDate);
 
   return (
-    <div className="space-y-4 pb-8 sm:space-y-6 sm:pb-0">
+    <div className="admin-ipad-page admin-ipad-calendar space-y-4 pb-8 sm:space-y-6 sm:pb-0">
       <section className="overflow-hidden rounded-[22px] border border-black/5 bg-white shadow-[0_12px_36px_rgba(0,0,0,0.06)] sm:rounded-[32px] sm:shadow-[0_18px_70px_rgba(0,0,0,0.08)]">
-        <div className="grid gap-0 lg:grid-cols-[1.25fr_0.75fr]">
-          <div className="p-4 sm:p-6 lg:p-8">
+        <div className="grid gap-0 md:grid-cols-[1fr_320px] lg:grid-cols-[1.25fr_0.75fr]">
+          <div className="p-4 sm:p-5 lg:p-6">
             <div className="inline-flex rounded-full bg-[#f4ede2] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[#9a723e]">
               Booking calendar
             </div>
@@ -1538,10 +1542,10 @@ export default async function AdminCalendarPage(props: PageProps) {
               or week view to open the day schedule.
             </p>
 
-            <div className="mt-4 space-y-2.5 sm:mt-7 sm:flex sm:flex-wrap sm:items-center sm:gap-3 sm:space-y-0">
+            <div className="mt-3 space-y-2 sm:mt-4 sm:flex sm:flex-wrap sm:items-center sm:gap-2.5 sm:space-y-0">
               <ViewSwitcher currentView={view} selectedIso={selectedIso} />
 
-              <div className="grid grid-cols-[44px_1fr_44px] gap-2 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
+              <div className="grid grid-cols-[44px_1fr_44px] gap-2 sm:flex sm:flex-wrap sm:items-center sm:gap-2.5">
                 <Link
                   href={getViewHref(view, previousDateIso)}
                   className="inline-flex h-11 items-center justify-center rounded-xl border border-[#d8cec0] bg-white text-lg font-bold text-[#2b2a28] transition hover:bg-[#faf8f5] sm:h-auto sm:rounded-full sm:px-5 sm:py-3 sm:text-sm sm:font-semibold"
@@ -1589,14 +1593,14 @@ export default async function AdminCalendarPage(props: PageProps) {
             </div>
 
             <div className="mt-3 grid grid-cols-2 gap-2 sm:mt-6 sm:grid-cols-1 sm:gap-4">
-              <div className="min-w-0 rounded-[16px] bg-white/10 p-3 sm:rounded-[24px] sm:p-5">
+              <div className="min-w-0 rounded-[16px] bg-white/10 p-3 sm:rounded-[24px] sm:p-4 lg:p-5">
                 <div className="text-sm text-white/55">Bookings</div>
                 <div className="mt-1 text-2xl font-semibold sm:mt-2 sm:text-4xl">
                   {rangeBookings.length}
                 </div>
               </div>
 
-              <div className="min-w-0 rounded-[16px] bg-white/10 p-3 sm:rounded-[24px] sm:p-5">
+              <div className="min-w-0 rounded-[16px] bg-white/10 p-3 sm:rounded-[24px] sm:p-4 lg:p-5">
                 <div className="text-sm text-white/55">Revenue</div>
                 <div className="mt-1 truncate text-2xl font-semibold sm:mt-2 sm:text-4xl">
                   {formatMoney(rangeRevenue)}
