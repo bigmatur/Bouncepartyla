@@ -3949,10 +3949,16 @@ setRouteSegmentsByChainId({});
     () =>
       groupedDriverRoutes
         .map((group) => {
+          const visibleStopIds = new Set(
+            group.stops.map((stop) => String(stop.id)),
+          );
           const timelineStops =
             driverRouteStopsByName.get(group.driver.name) || [];
+          const timelineVisibleStops = timelineStops.filter((stop) =>
+            visibleStopIds.has(String(stop.id)),
+          );
 
-          if (timelineStops.length === 0) {
+          if (timelineVisibleStops.length === 0) {
             return null;
           }
 
@@ -3961,7 +3967,7 @@ setRouteSegmentsByChainId({});
             driverName: group.driver.name,
             color: group.driver.color || "#8b8177",
             originStop: null,
-            stops: timelineStops.map((stop) => ({
+            stops: timelineVisibleStops.map((stop) => ({
               id: stop.id,
               ...resolvedStopAddressParts(stop),
               title: mainProductName(stop),
