@@ -3334,7 +3334,11 @@ setRouteSegmentsByChainId({});
           }
         }
 
-        if (stop.stop_type === "pickup" && !effectiveLocked) {
+        if (
+          stop.stop_type === "pickup" &&
+          !effectiveLocked &&
+          date === String(booking?.event_date || "").slice(0, 10)
+        ) {
           const eventEndTime = timeFromAny(booking?.event_end_time);
           const startMinutes = minutesFromTime(startTime);
           const eventEndMinutes = minutesFromTime(eventEndTime);
