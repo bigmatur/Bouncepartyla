@@ -440,7 +440,7 @@ async function cascadeRouteTimesForTimeline(
     `,
     )
     .eq("stop_date", stopDate)
-    .in("stop_type", ["delivery", "pickup"])
+    .in("stop_type", allowedStopTypes)
     .order("sort_order", { ascending: true })
     .order("created_at", { ascending: true });
 
@@ -705,7 +705,7 @@ async function cascadeRouteTimelineFromFirstStop(
     .from("route_stops")
     .select("id")
     .eq("stop_date", params.stopDate)
-    .in("stop_type", ["delivery", "pickup"])
+    .in("stop_type", allowedStopTypes)
     .order("sort_order", { ascending: true })
     .order("created_at", { ascending: true })
     .limit(1);
@@ -935,7 +935,7 @@ export async function createRouteStopAction(formData: FormData) {
     });
   }
 
-  if (data && ["delivery", "pickup"].includes(String(data.stop_type || ""))) {
+  if (data && allowedStopTypes.includes(String(data.stop_type || ""))) {
     await cascadeRouteTimesForTimeline(supabase, {
       stopDate: String(data.stop_date || stopDate),
       driverName: (data.driver_name as string | null) || null,
@@ -1083,8 +1083,8 @@ export async function updateRouteStopAction(formData: FormData) {
     throw new Error(error.message);
   }
 
-  const oldWasRouteStop = ["delivery", "pickup"].includes(oldStopType);
-  const newIsRouteStop = ["delivery", "pickup"].includes(stopType);
+  const oldWasRouteStop = allowedStopTypes.includes(oldStopType);
+  const newIsRouteStop = allowedStopTypes.includes(stopType);
 
   const oldTimelineKey = oldStopDate
     ? routeTimelineKey(oldStopDate, oldDriverName)
@@ -1190,7 +1190,7 @@ export async function deleteRouteStopAction(formData: FormData) {
 
   if (
     existingStop &&
-    ["delivery", "pickup"].includes(String(existingStop.stop_type || ""))
+    allowedStopTypes.includes(String(existingStop.stop_type || ""))
   ) {
     const stopDate = String(existingStop.stop_date || "");
     const driverName =
@@ -1776,7 +1776,7 @@ const now = new Date().toISOString();
   for (const stop of lockedStops || []) {
     const stopType = String((stop as any)?.stop_type || "");
 
-    if (stopType !== "delivery" && stopType !== "pickup") {
+    if (!allowedStopTypes.includes(stopType)) {
       continue;
     }
 

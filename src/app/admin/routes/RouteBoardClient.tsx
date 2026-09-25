@@ -561,6 +561,14 @@ function isBreakRouteStop(stop: RouteStop) {
   );
 }
 
+function isTimelineSequencedStop(stop: RouteStop) {
+  const stopType = String(stop.stop_type || "");
+
+  return ["delivery", "pickup", "service", "warehouse", "other"].includes(
+    stopType,
+  );
+}
+
 function parseMinutes(value: any) {
   const parsed = Number(value);
 
@@ -3196,9 +3204,7 @@ setRouteSegmentsByChainId({});
     const timelineGroups = new Map<string, RouteStop[]>();
 
     orderedStops.forEach((stop) => {
-      const stopType = String(stop.stop_type || "");
-
-      if (stopType !== "delivery" && stopType !== "pickup") return;
+      if (!isTimelineSequencedStop(stop)) return;
 
       const draft = timingDraftByStopId[stop.id] || {};
       const date = String(draft.date || stop.stop_date || selectedDate).slice(
@@ -3405,7 +3411,7 @@ setRouteSegmentsByChainId({});
     const timelineGroups = new Map<string, RouteStop[]>();
 
     orderedStops.forEach((stop) => {
-      if (stop.stop_type !== "delivery" && stop.stop_type !== "pickup") {
+      if (!isTimelineSequencedStop(stop)) {
         return;
       }
 
@@ -3696,8 +3702,7 @@ setRouteSegmentsByChainId({});
           candidate.id === stopId ||
           (candidateDate === sourceDate &&
             String(candidate.driver_name || "") === sourceDriver &&
-            (candidate.stop_type === "delivery" ||
-              candidate.stop_type === "pickup"))
+            isTimelineSequencedStop(candidate))
         );
       });
 
@@ -4146,7 +4151,7 @@ setRouteSegmentsByChainId({});
 
   return (
     <div className="admin-ipad-page admin-ipad-route-board min-w-0 space-y-4 overflow-x-hidden pb-24 sm:space-y-6 sm:pb-0">
-      <section className="min-w-0 space-y-4 sm:space-y-6">
+      <section className="min-w-0 space-y-4 sm:space-y-6 xl:grid xl:grid-cols-[300px_minmax(0,1fr)] xl:items-start xl:gap-4 xl:space-y-0">
         <aside className="min-w-0 space-y-4">
           <section className="rounded-[20px] border border-black/5 bg-white p-3 shadow-sm sm:rounded-[30px] sm:p-5 sm:shadow-[0_12px_35px_rgba(0,0,0,0.04)]">
             <div className="flex items-center justify-between gap-3">
