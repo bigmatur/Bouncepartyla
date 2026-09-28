@@ -1182,7 +1182,6 @@ export default async function AdminRoutesPage({
     latestDriverLocationByName.values(),
   );
 
-
   return (
     <div className="admin-ipad-page admin-ipad-route-board space-y-3 sm:space-y-6">
       <section className="hidden rounded-[22px] sm:rounded-[30px] border border-black/5 bg-white p-3.5 sm:p-6 shadow-[0_8px_24px_rgba(0,0,0,0.03)] sm:shadow-[0_10px_35px_rgba(0,0,0,0.035)] sm:block">

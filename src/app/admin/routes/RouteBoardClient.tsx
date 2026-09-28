@@ -40,6 +40,8 @@ import GoogleAddressInput from "@/components/admin/GoogleAddressInput";
 import MultiDriverRouteMap from "@/components/admin/routes/MultiDriverRouteMap";
 import { createClient as createBrowserSupabaseClient } from "@/lib/supabase/client";
 import { getBookingMarkerColor } from "@/lib/booking/marker-color";
+import DriverLiveDashboard from "./live/DriverLiveDashboard";
+import type { DriverDashboardItem } from "./live/loadDriverLiveDashboardData";
 import {
   bookingItemsProductSummary,
   resolveBookingRouteDurations,
@@ -2823,11 +2825,95 @@ export default function RouteBoardClient({
   );
 
   const [selectedDriver, setSelectedDriver] = useState("all");
+  const [embeddedTrackerDrivers, setEmbeddedTrackerDrivers] =
+    useState<DriverDashboardItem[] | null>(null);
+  const [embeddedTrackerRefreshing, setEmbeddedTrackerRefreshing] =
+    useState(false);
+  const [embeddedTrackerError, setEmbeddedTrackerError] = useState("");
+  const [embeddedTrackerLastRefreshedAt, setEmbeddedTrackerLastRefreshedAt] =
+    useState<string | null>(null);
+  const embeddedTrackerRefreshInFlight = useRef(false);
 
   const liveTrackerHref = useMemo(() => {
     const params = new URLSearchParams();
     params.set("date", selectedDate);
     return `/admin/routes/live?${params.toString()}`;
+  }, [selectedDate]);
+
+  const refreshEmbeddedTrackerData = useCallback(
+    async (forceLoadingState = false) => {
+      if (embeddedTrackerRefreshInFlight.current) {
+        return;
+      }
+
+      embeddedTrackerRefreshInFlight.current = true;
+
+      if (forceLoadingState || !embeddedTrackerDrivers) {
+        setEmbeddedTrackerRefreshing(true);
+      }
+
+      try {
+        const params = new URLSearchParams();
+        params.set("date", selectedDate);
+
+        const response = await fetch(`/admin/routes/live/data?${params.toString()}`, {
+          method: "GET",
+          cache: "no-store",
+          headers: {
+            Accept: "application/json",
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error(`Tracker refresh failed (${response.status})`);
+        }
+
+        const payload = (await response.json()) as {
+          drivers?: DriverDashboardItem[];
+        };
+
+        setEmbeddedTrackerDrivers(Array.isArray(payload.drivers) ? payload.drivers : []);
+        setEmbeddedTrackerLastRefreshedAt(new Date().toISOString());
+        setEmbeddedTrackerError("");
+      } catch (error) {
+        console.warn("[RouteBoard] Embedded tracker refresh failed:", error);
+        setEmbeddedTrackerError("Could not refresh live tracker data.");
+      } finally {
+        embeddedTrackerRefreshInFlight.current = false;
+        setEmbeddedTrackerRefreshing(false);
+      }
+    },
+    [embeddedTrackerDrivers, selectedDate],
+  );
+
+  useEffect(() => {
+    if (mapPanelMode !== "tracker") {
+      return;
+    }
+
+    if (embeddedTrackerDrivers == null) {
+      void refreshEmbeddedTrackerData(true);
+    }
+  }, [embeddedTrackerDrivers, mapPanelMode, refreshEmbeddedTrackerData]);
+
+  useEffect(() => {
+    if (mapPanelMode !== "tracker") {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      void refreshEmbeddedTrackerData(false);
+    }, 30000);
+
+    return () => window.clearInterval(interval);
+  }, [mapPanelMode, refreshEmbeddedTrackerData]);
+
+  useEffect(() => {
+    setEmbeddedTrackerDrivers(null);
+    setEmbeddedTrackerLastRefreshedAt(null);
+    setEmbeddedTrackerError("");
+    embeddedTrackerRefreshInFlight.current = false;
+    setEmbeddedTrackerRefreshing(false);
   }, [selectedDate]);
 
   useEffect(() => {
@@ -4742,13 +4828,23 @@ setRouteSegmentsByChainId({});
                 </div>
               </>
             ) : (
-              <div className="overflow-hidden rounded-[18px] border border-[#eee5d9] sm:rounded-[28px]">
-                <iframe
-                  title="Live driver tracker"
-                  src={liveTrackerHref}
-                  className="h-[72vh] min-h-[560px] w-full border-0"
-                  loading="lazy"
-                />
+              <div className="overflow-hidden rounded-[18px] border border-[#eee5d9] bg-white p-2.5 sm:rounded-[28px] sm:p-4">
+                {embeddedTrackerDrivers == null && embeddedTrackerRefreshing ? (
+                  <div className="flex min-h-[320px] items-center justify-center rounded-[16px] border border-dashed border-[#d8cec0] bg-[#fcfaf7] text-sm font-medium text-[#6c6258]">
+                    Loading live tracker...
+                  </div>
+                ) : (
+                  <DriverLiveDashboard
+                    selectedDate={selectedDate}
+                    googleMapsApiKey={googleMapsApiKey}
+                    drivers={embeddedTrackerDrivers || []}
+                    variant="embedded"
+                    onEmbeddedRefresh={() => void refreshEmbeddedTrackerData(true)}
+                    embeddedRefreshing={embeddedTrackerRefreshing}
+                    embeddedError={embeddedTrackerError}
+                    embeddedDataRefreshedAt={embeddedTrackerLastRefreshedAt}
+                  />
+                )}
               </div>
             )}
           </div>

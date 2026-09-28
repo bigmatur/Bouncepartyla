@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { DriverDashboardItem } from "./loadDriverLiveDashboardData";
 
 declare global {
   interface Window {
@@ -17,71 +18,15 @@ declare global {
   }
 }
 
-type DriverDashboardItem = {
-  id: string;
-  name: string;
-  color: string;
-  phone: string | null;
-  account_email: string | null;
-  latestPing: {
-    id: string;
-    driver_name: string;
-    route_date: string | null;
-    latitude: number | string;
-    longitude: number | string;
-    accuracy: number | string | null;
-    heading: number | string | null;
-    speed: number | string | null;
-    created_at: string;
-  } | null;
-  eta: {
-    distance_text: string | null;
-    duration_text: string | null;
-    duration_seconds: number | null;
-    arrival_at: string | null;
-    fetched_at?: string | null;
-    source?: string;
-    status: {
-      state: "ok" | "risk" | "late" | "unknown";
-      label: string;
-      minutesLate: number;
-    };
-  } | null;
-  stats: {
-    totalStops: number;
-    completedStops: number;
-    openStops: number;
-    collectTotal: number;
-  };
-  stops: Array<{
-    id: string;
-    sequence_number: number;
-    title: string;
-    stop_type: string | null;
-    status: string | null;
-    address: string;
-    scheduled_start_time: string | null;
-    scheduled_end_time: string | null;
-    balance_due: number | string | null;
-    payment_collected: boolean | null;
-  }>;
-  currentStop: {
-    id: string;
-    sequence_number: number | null;
-    title: string;
-    stop_type: string | null;
-    status: string | null;
-    address: string;
-    scheduled_start_time: string | null;
-    scheduled_end_time: string | null;
-    balance_due: number | string | null;
-  } | null;
-};
-
 type Props = {
   selectedDate: string;
   googleMapsApiKey: string;
   drivers: DriverDashboardItem[];
+  variant?: "full" | "embedded";
+  onEmbeddedRefresh?: () => void;
+  embeddedRefreshing?: boolean;
+  embeddedError?: string | null;
+  embeddedDataRefreshedAt?: string | null;
 };
 
 function loadGoogleMaps(apiKey: string) {
@@ -181,13 +126,13 @@ function prettyStatus(value: string | null | undefined) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function secondsAgo(value: string | null | undefined) {
+function secondsAgo(value: string | null | undefined, nowMs = Date.now()) {
   if (!value) return null;
 
   const date = new Date(value);
   const diffSeconds = Math.max(
     0,
-    Math.round((Date.now() - date.getTime()) / 1000)
+    Math.round((nowMs - date.getTime()) / 1000)
   );
 
   if (!Number.isFinite(diffSeconds)) return null;
@@ -256,6 +201,32 @@ function lastSeenLabel(seconds: number | null) {
   return `${hours}h ago`;
 }
 
+function gpsBadgeCopy(seconds: number | null) {
+  if (seconds == null) {
+    return "No GPS";
+  }
+
+  const tone = onlineTone(seconds);
+  return `${tone.label} · ${lastSeenLabel(seconds)}`;
+}
+
+function shortStopLocation(address: string | null | undefined) {
+  const raw = String(address || "").trim();
+
+  if (!raw) return "";
+
+  const parts = raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length >= 2) {
+    return parts[1];
+  }
+
+  return parts[0] || "";
+}
+
 function mapsLocationUrl(driver: DriverDashboardItem) {
   if (!driver.latestPing) return "";
 
@@ -283,20 +254,22 @@ function mapsDirectionUrl(driver: DriverDashboardItem) {
   return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
-function makeDriverIcon(color: string) {
+function makeDriverIcon(color: string, selected = false) {
   const safeColor = encodeURIComponent(color || "#23313f");
+  const size = selected ? 52 : 40;
+  const ringStroke = selected ? 5 : 3;
 
   return {
     url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
-      <svg width="52" height="52" viewBox="0 0 52 52" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="26" cy="26" r="22" fill="${decodeURIComponent(safeColor)}" stroke="white" stroke-width="4"/>
-        <path d="M15 28h22l-3-8H18l-3 8z" fill="white"/>
-        <circle cx="20" cy="32" r="3" fill="white"/>
-        <circle cx="32" cy="32" r="3" fill="white"/>
+      <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 3}" fill="${decodeURIComponent(safeColor)}" stroke="white" stroke-width="${ringStroke}"/>
+        <path d="M${Math.round(size * 0.29)} ${Math.round(size * 0.55)}h${Math.round(size * 0.42)}l-${Math.round(size * 0.06)}-${Math.round(size * 0.16)}H${Math.round(size * 0.35)}l-${Math.round(size * 0.06)} ${Math.round(size * 0.16)}z" fill="white"/>
+        <circle cx="${Math.round(size * 0.39)}" cy="${Math.round(size * 0.62)}" r="${Math.max(2, Math.round(size * 0.06))}" fill="white"/>
+        <circle cx="${Math.round(size * 0.61)}" cy="${Math.round(size * 0.62)}" r="${Math.max(2, Math.round(size * 0.06))}" fill="white"/>
       </svg>
     `)}`,
-    scaledSize: new window.google.maps.Size(42, 42),
-    anchor: new window.google.maps.Point(21, 21),
+    scaledSize: new window.google.maps.Size(size, size),
+    anchor: new window.google.maps.Point(size / 2, size / 2),
   };
 }
 
@@ -464,6 +437,11 @@ export default function DriverLiveDashboard({
   selectedDate,
   googleMapsApiKey,
   drivers,
+  variant = "full",
+  onEmbeddedRefresh,
+  embeddedRefreshing = false,
+  embeddedError,
+  embeddedDataRefreshedAt,
 }: Props) {
   const router = useRouter();
 
@@ -471,6 +449,7 @@ export default function DriverLiveDashboard({
   const mapRef = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
   const directionsRendererRef = useRef<any>(null);
+  const [nowTick, setNowTick] = useState(() => Date.now());
 
   const [selectedDriverId, setSelectedDriverId] = useState(() => {
     const active =
@@ -489,18 +468,30 @@ export default function DriverLiveDashboard({
     null;
 
   useEffect(() => {
+    if (variant !== "full") {
+      return;
+    }
+
     const interval = window.setInterval(() => {
       router.refresh();
     }, 30000);
 
     return () => window.clearInterval(interval);
-  }, [router]);
+  }, [router, variant]);
 
   useEffect(() => {
     if (!selectedDriverId && drivers[0]) {
       setSelectedDriverId(drivers[0].id);
     }
   }, [drivers, selectedDriverId]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setNowTick(Date.now());
+    }, 15000);
+
+    return () => window.clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -541,12 +532,14 @@ export default function DriverLiveDashboard({
           };
 
           if (Number.isFinite(position.lat) && Number.isFinite(position.lng)) {
+            const selected = driver.id === selectedDriver?.id;
             const marker = new window.google.maps.Marker({
               position,
               map: mapRef.current,
               title: `${driver.name} current location`,
-              icon: makeDriverIcon(driver.color),
+              icon: makeDriverIcon(driver.color, selected),
               zIndex: driver.id === selectedDriver?.id ? 1000 : 500,
+              opacity: selected ? 1 : 0.78,
             });
 
             marker.addListener("click", () => setSelectedDriverId(driver.id));
@@ -672,6 +665,261 @@ export default function DriverLiveDashboard({
       riskDrivers,
     };
   }, [drivers]);
+
+  const selectedDriverSeconds = secondsAgo(selectedDriver?.latestPing?.created_at, nowTick);
+  const selectedDriverTone = onlineTone(selectedDriverSeconds);
+  const selectedLocationUrl = selectedDriver ? mapsLocationUrl(selectedDriver) : "";
+  const selectedDirectionUrl = selectedDriver ? mapsDirectionUrl(selectedDriver) : "";
+  const embeddedDataRefreshSeconds = secondsAgo(embeddedDataRefreshedAt || null, nowTick);
+  const selectedOpenStops = selectedDriver
+    ? selectedDriver.stops.filter((stop) => {
+        const status = String(stop.status || "").toLowerCase();
+        return !["installed", "picked_up", "completed"].includes(status);
+      })
+    : [];
+  const selectedRemainingStops = selectedDriver
+    ? selectedOpenStops.filter((stop) => stop.id !== selectedDriver.currentStop?.id)
+    : [];
+  const gpsFreshForEta = selectedDriverSeconds != null && selectedDriverSeconds <= 90;
+
+  if (variant === "embedded") {
+    return (
+      <div className="space-y-3 sm:space-y-4">
+        <section className="flex gap-2 overflow-x-auto pb-1">
+          {drivers.map((driver) => {
+            const seconds = secondsAgo(driver.latestPing?.created_at, nowTick);
+            const tone = onlineTone(seconds);
+            const selected = selectedDriver?.id === driver.id;
+            const activeRoute = driver.stats.openStops > 0;
+            const completedRoute = driver.stats.totalStops > 0 && driver.stats.openStops <= 0;
+            const inactiveRoute = driver.stats.totalStops <= 0 || completedRoute;
+
+            return (
+              <button
+                key={driver.id}
+                type="button"
+                onClick={() => setSelectedDriverId(driver.id)}
+                className={[
+                  "shrink-0 rounded-2xl border px-3 py-2 text-left transition",
+                  selected
+                    ? "border-[#c9964f] bg-[#fff8e8] ring-2 ring-[#c9964f]/20"
+                    : activeRoute
+                      ? "border-[#d8cec0] bg-white hover:bg-[#f7f1e8]"
+                      : inactiveRoute
+                        ? "border-[#e4ddd2] bg-[#f7f4ef] text-[#8b8177] opacity-80"
+                        : "border-[#e8e0d4] bg-[#fbfaf8] text-[#8b8177]",
+                ].join(" ")}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: driver.color }} />
+                  <span className={["max-w-[140px] truncate text-xs font-semibold", selected || activeRoute ? "text-[#1f1e1b]" : "text-[#6f665d]"].join(" ")}>{driver.name}</span>
+                </div>
+                <div className="mt-1.5 text-[11px] font-semibold text-[#6c6258]">
+                  {driver.stats.completedStops}/{driver.stats.totalStops}
+                </div>
+                <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-[#6c6258]">
+                  <span className={["h-2 w-2 rounded-full", tone.dot].join(" ")} />
+                  <span>{tone.label}</span>
+                  {seconds != null ? <span className="text-[#8b8177]">{lastSeenLabel(seconds)}</span> : null}
+                </div>
+              </button>
+            );
+          })}
+        </section>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#eee5d9] bg-[#fcfaf7] px-3 py-2.5 sm:rounded-[20px] sm:px-4 sm:py-3">
+          <div className="min-w-0">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#9a723e] sm:text-xs">
+              Live tracker
+            </div>
+            <div className="mt-0.5 text-xs font-medium text-[#6c6258] sm:text-sm">
+              Data refreshed {embeddedDataRefreshSeconds == null ? "—" : lastSeenLabel(embeddedDataRefreshSeconds)}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => onEmbeddedRefresh?.()}
+            disabled={embeddedRefreshing}
+            className="inline-flex min-h-9 items-center justify-center rounded-full border border-[#d8cec0] bg-white px-3 text-xs font-semibold text-[#23313f] hover:bg-[#f7f1e8]"
+          >
+            {embeddedRefreshing ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
+
+        {embeddedError ? (
+          <div className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+            {embeddedError}
+          </div>
+        ) : null}
+
+        <section className="grid gap-3 xl:grid-cols-[minmax(0,1.4fr)_minmax(300px,1fr)]">
+          <div className="overflow-hidden rounded-[18px] border border-[#eee5d9] bg-white shadow-[0_8px_22px_rgba(0,0,0,0.035)] sm:rounded-[24px]">
+            <div className="relative h-[46vh] min-h-[320px] max-h-[560px] bg-[#d9d4ca]">
+              {googleMapsApiKey ? (
+                <div ref={mapElementRef} className="h-full w-full" />
+              ) : (
+                <div className="flex h-full items-center justify-center px-6 text-center text-sm font-semibold text-[#23313f]">
+                  Add NEXT_PUBLIC_GOOGLE_MAPS_API_KEY to show live map.
+                </div>
+              )}
+
+              {googleMapsApiKey && selectedDriver && !selectedDriver.latestPing ? (
+                <div className="pointer-events-none absolute bottom-3 left-3 max-w-[320px] rounded-xl bg-white/92 px-3 py-2 text-xs text-[#6c6258] shadow-[0_6px_18px_rgba(0,0,0,0.12)] ring-1 ring-[#e7dbcb] backdrop-blur-[1px]">
+                  <div className="font-semibold text-[#3a342e]">No live GPS yet</div>
+                  <div className="mt-0.5">Driver location will appear after the driver starts sharing location.</div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <aside className="space-y-3 rounded-[18px] border border-[#eee5d9] bg-white p-3 shadow-[0_8px_22px_rgba(0,0,0,0.035)] sm:rounded-[24px] sm:p-4">
+            {selectedDriver ? (
+              <>
+                <div className="flex items-start justify-between gap-3 border-b border-[#eee5d9] pb-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="h-3.5 w-3.5 rounded-full" style={{ backgroundColor: selectedDriver.color }} />
+                      <div className="truncate text-lg font-semibold text-[#1f1e1b]">
+                        {selectedDriver.name}
+                      </div>
+                    </div>
+
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                      <span className={["inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold ring-1", selectedDriverTone.className].join(" ")}>
+                        <span className={["h-2 w-2 rounded-full", selectedDriverTone.dot].join(" ")} />
+                        {gpsBadgeCopy(selectedDriverSeconds)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="text-right text-xs font-semibold text-[#6c6258]">
+                    {selectedDriver.stats.completedStops}/{selectedDriver.stats.totalStops}
+                    <br />
+                    progress
+                  </div>
+                </div>
+
+                <div className="rounded-2xl bg-[#fcfaf7] p-3 ring-1 ring-[#eee5d9]">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#9a723e]">
+                    Next destination
+                  </div>
+
+                  {selectedDriver.currentStop ? (
+                    <>
+                      <div className="mt-2 text-sm font-semibold text-[#1f1e1b]">
+                        {selectedDriver.currentStop.title}
+                      </div>
+                      <div className="mt-1 line-clamp-2 text-xs leading-5 text-[#6c6258]">
+                        {selectedDriver.currentStop.address || "No address"}
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 rounded-xl bg-white p-2.5 ring-1 ring-[#eee5d9]">
+                        <div>
+                          <div className="text-lg font-semibold leading-tight text-[#1f1e1b]">
+                            {selectedDriver.eta?.duration_text || "—"}
+                          </div>
+                          <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#8b8177]">
+                            ETA
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-lg font-semibold leading-tight text-[#1f1e1b]">
+                            {formatClock(selectedDriver.eta?.arrival_at || null)}
+                          </div>
+                          <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#8b8177]">
+                            Arrival
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-sm font-semibold leading-tight text-[#1f1e1b]">
+                            {selectedDriver.eta?.distance_text || "—"}
+                          </div>
+                          <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#8b8177]">
+                            Distance
+                          </div>
+                        </div>
+                        <div>
+                          <div className={["inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1", etaTone(selectedDriver.eta?.status?.state)].join(" ")}>
+                            {selectedDriver.eta?.status?.label || "No ETA"}
+                          </div>
+                          <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#8b8177]">
+                            Status
+                          </div>
+                        </div>
+                      </div>
+
+                      {!selectedDriver.eta ? null : gpsFreshForEta ? null : (
+                        <div className="mt-2 rounded-lg bg-[#fff4d8] px-2.5 py-2 text-[11px] font-semibold text-[#8a6b20] ring-1 ring-[#efd582]">
+                          ETA is based on GPS from {lastSeenLabel(selectedDriverSeconds)}.
+                        </div>
+                      )}
+
+                      {!selectedDriver.currentStop.balance_due || Number(selectedDriver.currentStop.balance_due) <= 0 ? null : (
+                        <div className="mt-2 rounded-xl bg-[#fff8e8] px-3 py-2 ring-1 ring-[#ead6a8]">
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#9a723e]">Collect</div>
+                          <div className="mt-0.5 text-sm font-semibold text-[#8a6b20]">{formatMoney(selectedDriver.currentStop.balance_due)}</div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="mt-2 text-sm text-[#6c6258]">No active or open stop.</div>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {selectedDriver.phone ? (
+                    <a href={`tel:${selectedDriver.phone}`} className="rounded-full bg-emerald-600 px-4 py-2 text-xs font-semibold text-white">
+                      Call
+                    </a>
+                  ) : null}
+
+                  {selectedLocationUrl ? (
+                    <a href={selectedLocationUrl} target="_blank" rel="noreferrer" className="rounded-full bg-[#23313f] px-4 py-2 text-xs font-semibold text-white">
+                      Open location
+                    </a>
+                  ) : null}
+
+                  {selectedDirectionUrl ? (
+                    <a href={selectedDirectionUrl} target="_blank" rel="noreferrer" className="rounded-full bg-[#c9964f] px-4 py-2 text-xs font-semibold text-white">
+                      Google route
+                    </a>
+                  ) : null}
+                </div>
+
+                <div className="rounded-2xl bg-[#f7fbff] p-3 ring-1 ring-[#d8e8f7]">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#355879]">
+                    Remaining stops
+                  </div>
+                  <div className="mt-2 max-h-44 space-y-2 overflow-auto pr-1">
+                    {selectedRemainingStops.slice(0, 6).map((stop) => (
+                      <div key={stop.id} className="rounded-lg bg-white px-2.5 py-2 text-xs ring-1 ring-[#e1edf9]">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="font-semibold text-[#355879]">
+                            #{stop.sequence_number} · {stop.stop_type === "pickup" ? "Pickup" : "Delivery"}
+                          </div>
+                          <div className="text-[#6c6258]">{formatTime(stop.scheduled_start_time)}</div>
+                        </div>
+                        <div className="mt-0.5 truncate font-medium text-[#1f1e1b]">{stop.title}</div>
+                        <div className="mt-0.5 truncate text-[#6c6258]">{shortStopLocation(stop.address) || "No location"}</div>
+                      </div>
+                    ))}
+                    {selectedRemainingStops.length === 0 ? (
+                      <div className="text-xs text-[#6c6258]">No open stops.</div>
+                    ) : null}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="rounded-2xl border border-dashed border-[#d8cec0] bg-[#fcfaf7] p-6 text-center text-sm text-[#6c6258]">
+                No active drivers found.
+              </div>
+            )}
+          </aside>
+        </section>
+
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
