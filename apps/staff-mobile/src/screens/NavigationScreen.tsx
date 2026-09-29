@@ -28,6 +28,9 @@ type Props = {
   onClose: () => void;
   onArrived: () => Promise<void>;
   carModeDefault?: boolean;
+  muteDefault?: boolean;
+  onCarModeChange?: (value: boolean) => void;
+  onMuteChange?: (value: boolean) => void;
 };
 
 type TripProgress = {
@@ -111,6 +114,9 @@ export function NavigationScreen({
   onClose,
   onArrived,
   carModeDefault = false,
+  muteDefault = false,
+  onCarModeChange,
+  onMuteChange,
 }: Props) {
   useKeepAwake("staff-mobile-navigation");
 
@@ -136,7 +142,7 @@ export function NavigationScreen({
   const [arrivedDetected, setArrivedDetected] = useState(false);
   const [arrivalPending, setArrivalPending] = useState(false);
   const [error, setError] = useState("");
-  const [muted, setMuted] = useState(false);
+  const [muted, setMuted] = useState(muteDefault);
   const [carMode, setCarMode] = useState(carModeDefault);
 
   const [navigationViewController, setNavigationViewController] =
@@ -153,9 +159,25 @@ export function NavigationScreen({
     setCarMode(carModeDefault);
   }, [carModeDefault]);
 
+  useEffect(() => {
+    setMuted(muteDefault);
+  }, [muteDefault]);
+
   const toggleMute = useCallback(async () => {
-    setMuted((value) => !value);
-  }, []);
+    setMuted((value) => {
+      const nextValue = !value;
+      onMuteChange?.(nextValue);
+      return nextValue;
+    });
+  }, [onMuteChange]);
+
+  const toggleCarMode = useCallback(() => {
+    setCarMode((value) => {
+      const nextValue = !value;
+      onCarModeChange?.(nextValue);
+      return nextValue;
+    });
+  }, [onCarModeChange]);
 
   useEffect(() => {
     if (!navigationReady) {
@@ -715,7 +737,7 @@ export function NavigationScreen({
             </Pressable>
 
             <Pressable
-              onPress={() => setCarMode((value) => !value)}
+              onPress={toggleCarMode}
               style={({ pressed }) => [
                 styles.carModeToggle,
                 carMode ? styles.carModeToggleActive : null,

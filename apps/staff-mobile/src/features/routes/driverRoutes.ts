@@ -14,6 +14,7 @@ export type MobileDriverProfile = {
 export type MobileRouteStop = {
   id: string;
   booking_id: string | null;
+  marker_color?: string | null;
   stop_date: string | null;
   stop_type: string | null;
   status: string | null;
@@ -887,7 +888,7 @@ export async function loadDriverRoute(
         "route_stops",
       )
       .select(
-        "id, booking_id, stop_date, stop_type, status, customer_name, customer_phone, address, city, state, zip, scheduled_start_time, scheduled_end_time, driver_name, truck_name, items_summary, setup_notes, pickup_notes, balance_due, payment_collected, payment_collected_amount, payment_collected_method, payment_collected_at, payment_collected_by, proof_photo_required, proof_photo_uploaded, driver_notes, sort_order",
+        "id, booking_id, stop_date, stop_type, status, customer_name, customer_phone, address, city, state, zip, scheduled_start_time, scheduled_end_time, driver_name, truck_name, items_summary, setup_notes, pickup_notes, balance_due, payment_collected, payment_collected_amount, payment_collected_method, payment_collected_at, payment_collected_by, proof_photo_required, proof_photo_uploaded, driver_notes, sort_order, bookings ( marker_color, internal_notes )",
       )
       .eq(
         "stop_date",
@@ -933,9 +934,40 @@ export async function loadDriverRoute(
     );
   }
 
-  const stops =
-    (stopsResult.data ||
-      []) as MobileRouteStop[];
+  const stops = (
+    (stopsResult.data || []) as any[]
+  ).map((row) => {
+    const booking = Array.isArray(row.bookings)
+      ? row.bookings[0] || null
+      : row.bookings || null;
+
+    const {
+      bookings: _bookings,
+      ...stopRow
+    } = row;
+
+    const markerTagMatch = String(
+      booking?.internal_notes || "",
+    ).match(
+      /\[marker_color:\s*(#[0-9a-fA-F]{6})\s*\]/i,
+    );
+
+    return {
+      ...stopRow,
+      marker_color:
+        booking?.marker_color != null && String(booking.marker_color).trim()
+          ? String(booking.marker_color)
+          : markerTagMatch?.[1] || null,
+    } as MobileRouteStop;
+  });
+
+  const normalizedStops = stops.map((stop) => ({
+    ...stop,
+    marker_color:
+      /^#[0-9a-fA-F]{6}$/.test(String(stop.marker_color || "").trim())
+        ? String(stop.marker_color).trim()
+          : null,
+  }));
 
   try {
     const weatherResult =
@@ -947,7 +979,7 @@ export async function loadDriverRoute(
       return {
         driver,
         date,
-        stops: stops.map(
+        stops: normalizedStops.map(
           (stop) => ({
             ...stop,
             weather:
@@ -965,7 +997,7 @@ export async function loadDriverRoute(
   return {
     driver,
     date,
-    stops,
+    stops: normalizedStops,
   };
 }
 

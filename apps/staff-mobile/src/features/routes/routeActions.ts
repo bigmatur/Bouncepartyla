@@ -18,6 +18,14 @@ export type MobileChecklistField =
   | "installed"
   | "picked_up";
 
+export type MobileRouteStopProofPhoto = {
+  id: string;
+  photo_url: string | null;
+  storage_path: string | null;
+  caption: string | null;
+  created_at: string | null;
+};
+
 export function nextRouteAction(stop: MobileRouteStop): {
   label: string;
   status: MobileRouteStopStatus | null;
@@ -195,6 +203,18 @@ type UploadMyRouteStopProofPhotoInput = {
   caption?: string | null;
 };
 
+type ListMyRouteStopProofPhotosInput = {
+  stopId: string;
+  bookingId: string;
+};
+
+type DeleteMyRouteStopProofPhotoInput = {
+  stopId: string;
+  bookingId: string;
+  photoId: string;
+  storagePath?: string | null;
+};
+
 function safePhotoFileName(value: string) {
   const clean = String(value || "driver-proof.jpg")
     .toLowerCase()
@@ -223,6 +243,22 @@ export async function uploadMyRouteStopProofPhoto({
 
   if (!uri) {
     throw new Error("Missing photo.");
+  }
+
+  const existingCountResult = await supabase
+    .from("booking_photos")
+    .select("id", { count: "exact", head: true })
+    .eq("booking_id", bookingId)
+    .eq("route_stop_id", stopId);
+
+  if (existingCountResult.error) {
+    throw new Error(existingCountResult.error.message);
+  }
+
+  const existingCount = Number(existingCountResult.count || 0);
+
+  if (existingCount >= 3) {
+    throw new Error("You can upload up to 3 proof photos per stop.");
   }
 
   const stopResult = await supabase
@@ -330,6 +366,129 @@ export async function uploadMyRouteStopProofPhoto({
     }
 
     throw error;
+  }
+}
+
+export async function listMyRouteStopProofPhotos({
+  stopId,
+  bookingId,
+}: ListMyRouteStopProofPhotosInput): Promise<MobileRouteStopProofPhoto[]> {
+  if (!stopId || !bookingId) {
+    return [];
+  }
+
+  const result = await supabase
+    .from("booking_photos")
+    .select("id, photo_url, storage_path, caption, created_at")
+    .eq("booking_id", bookingId)
+    .eq("route_stop_id", stopId)
+    .order("created_at", { ascending: false })
+    .limit(3);
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  return (result.data || []) as MobileRouteStopProofPhoto[];
+}
+
+function inferStoragePathFromUrl(photoUrl: string | null | undefined) {
+  const value = String(photoUrl || "");
+  const marker = "/booking-photos/";
+  const index = value.indexOf(marker);
+
+  if (index < 0) {
+    return "";
+  }
+
+  return value.slice(index + marker.length);
+}
+
+export async function deleteMyRouteStopProofPhoto({
+  stopId,
+  bookingId,
+  photoId,
+  storagePath,
+}: DeleteMyRouteStopProofPhotoInput) {
+  if (!stopId) {
+    throw new Error("Missing route stop id.");
+  }
+
+  if (!bookingId) {
+    throw new Error("Missing booking id.");
+  }
+
+  if (!photoId) {
+    throw new Error("Missing proof photo id.");
+  }
+
+  const photoResult = await supabase
+    .from("booking_photos")
+    .select("id, photo_url, storage_path")
+    .eq("id", photoId)
+    .eq("booking_id", bookingId)
+    .eq("route_stop_id", stopId)
+    .maybeSingle();
+
+  if (photoResult.error) {
+    throw new Error(photoResult.error.message);
+  }
+
+  if (!photoResult.data) {
+    throw new Error("Proof photo was not found.");
+  }
+
+  const deleteResult = await supabase
+    .from("booking_photos")
+    .delete()
+    .eq("id", photoId)
+    .eq("booking_id", bookingId)
+    .eq("route_stop_id", stopId);
+
+  if (deleteResult.error) {
+    throw new Error(deleteResult.error.message);
+  }
+
+  const normalizedStoragePath =
+    String(storagePath || "").trim() ||
+    String(photoResult.data.storage_path || "").trim() ||
+    inferStoragePathFromUrl(photoResult.data.photo_url);
+
+  if (normalizedStoragePath) {
+    try {
+      await supabase.storage
+        .from("booking-photos")
+        .remove([normalizedStoragePath]);
+    } catch {
+      // Best-effort storage cleanup.
+    }
+  }
+
+  const remainingCountResult = await supabase
+    .from("booking_photos")
+    .select("id", { count: "exact", head: true })
+    .eq("booking_id", bookingId)
+    .eq("route_stop_id", stopId);
+
+  if (remainingCountResult.error) {
+    throw new Error(remainingCountResult.error.message);
+  }
+
+  const remainingCount = Number(remainingCountResult.count || 0);
+
+  if (remainingCount <= 0) {
+    const proofResetResult = await supabase
+      .from("route_stops")
+      .update({
+        proof_photo_uploaded: false,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", stopId)
+      .eq("booking_id", bookingId);
+
+    if (proofResetResult.error) {
+      throw new Error(proofResetResult.error.message);
+    }
   }
 }
 

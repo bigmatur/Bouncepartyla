@@ -8,6 +8,7 @@ import {
   Platform,
   Pressable,
   RefreshControl,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -33,7 +34,9 @@ import {
 
 
 import {
+  deleteMyRouteStopProofPhoto,
   finishMyDriverShift,
+  listMyRouteStopProofPhotos,
   markMyRouteStopPaymentCollected,
   nextRouteAction,
   resumeMyStaffWork,
@@ -44,6 +47,7 @@ import {
   updateMyRouteStopStatus,
   uploadMyRouteStopProofPhoto,
   type MobilePaymentMethod,
+  type MobileRouteStopProofPhoto,
 } from "../features/routes/routeActions";
 
 import { supabase } from "../lib/supabase";
@@ -151,6 +155,36 @@ function privateDriverNote(stop: MobileRouteStop) {
         stop.pickup_notes ||
         "",
     ).trim() || null
+  );
+}
+
+function normalizeMarkerColor(
+  value: string | null | undefined,
+) {
+  const raw = String(
+    value || "",
+  ).trim();
+
+  if (
+    /^#[0-9a-fA-F]{6}$/.test(
+      raw,
+    )
+  ) {
+    return raw;
+  }
+
+  return null;
+}
+
+function stopMarkerColor(
+  stop: MobileRouteStop,
+) {
+  if (isBreakStop(stop)) {
+    return null;
+  }
+
+  return normalizeMarkerColor(
+    stop.marker_color,
   );
 }
 
@@ -335,6 +369,9 @@ const [
   const [carModeEnabled, setCarModeEnabled] =
     useState(false);
 
+  const [navigationMuted, setNavigationMuted] =
+    useState(false);
+
   const [error, setError] = useState("");
 
   const [
@@ -385,6 +422,15 @@ const [
   ] = useState(false);
 
   const [handoverOpen, setHandoverOpen] =
+    useState(false);
+
+  const [driverNotesExpanded, setDriverNotesExpanded] =
+    useState(false);
+
+  const [proofPhotos, setProofPhotos] =
+    useState<MobileRouteStopProofPhoto[]>([]);
+
+  const [proofPhotosLoading, setProofPhotosLoading] =
     useState(false);
 
   const loadRoute = useCallback(
@@ -517,17 +563,20 @@ const [
       const googleAppUrl =
         `comgooglemaps://?daddr=${encodedDestination}&directionsmode=driving`;
 
-      const googleWebUrl =
+      const googleUniversalUrl =
         `https://www.google.com/maps/dir/?api=1&destination=${encodedDestination}&travelmode=driving`;
+
+      const googleWebUrl =
+        `https://maps.google.com/?daddr=${encodedDestination}&directionsmode=driving`;
 
       const urlCandidates =
         preferredProvider === "apple"
-          ? [appleUrl, googleWebUrl]
+          ? [appleUrl, googleUniversalUrl, googleWebUrl]
           : preferredProvider === "google"
-            ? [googleAppUrl, googleWebUrl, appleUrl]
+            ? [googleAppUrl, googleUniversalUrl, googleWebUrl, appleUrl]
             : Platform.OS === "ios"
-              ? [appleUrl, googleWebUrl]
-              : [`google.navigation:q=${encodedDestination}&mode=d`, googleWebUrl];
+              ? [appleUrl, googleUniversalUrl, googleWebUrl]
+              : [`google.navigation:q=${encodedDestination}&mode=d`, googleUniversalUrl, googleWebUrl];
 
       for (const url of urlCandidates) {
         const supported = await Linking.canOpenURL(url);
@@ -692,10 +741,25 @@ const activeStopPosition =
       ) || null
     : null;
 
+const activeStopMarkerColor =
+  activeStop
+    ? stopMarkerColor(
+        activeStop,
+      )
+    : null;
+
 useEffect(() => {
     setDriverNotesDraft(
       String(
         activeStop?.driver_notes || "",
+      ),
+    );
+
+    setDriverNotesExpanded(
+      Boolean(
+        String(
+          activeStop?.driver_notes || "",
+        ).trim(),
       ),
     );
 
@@ -753,6 +817,62 @@ useEffect(() => {
     };
   }, [activeStop?.booking_id]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadProofPhotos() {
+      const stopId = String(
+        activeStop?.id || "",
+      );
+
+      const bookingId = String(
+        activeStop?.booking_id || "",
+      );
+
+      if (!stopId || !bookingId) {
+        setProofPhotos([]);
+        setProofPhotosLoading(false);
+        return;
+      }
+
+      setProofPhotosLoading(true);
+
+      try {
+        const photos =
+          await listMyRouteStopProofPhotos({
+            stopId,
+            bookingId,
+          });
+
+        if (!cancelled) {
+          setProofPhotos(photos);
+        }
+      } catch (photoListError) {
+        if (!cancelled) {
+          console.warn(
+            "[Route] Could not load proof photos:",
+            photoListError,
+          );
+
+          setProofPhotos([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setProofPhotosLoading(false);
+        }
+      }
+    }
+
+    void loadProofPhotos();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeStop?.booking_id,
+    activeStop?.id,
+  ]);
+
 
   const activeAction = activeStop
     ? nextRouteAction(activeStop)
@@ -775,11 +895,32 @@ useEffect(() => {
       activeStop?.payment_collected,
     );
 
+  const activeStopType = String(
+    activeStop?.stop_type || "",
+  ).toLowerCase();
+
+  const activeIsPickup =
+    activeStopType === "pickup";
+
   const activeProofRequired =
     Boolean(activeStop) &&
     !Boolean(
       activeStop?.proof_photo_uploaded,
     );
+
+  const activeProofBlockingRequired =
+    activeProofRequired &&
+    !activeIsPickup;
+
+  const proofPhotoCount =
+    proofPhotos.length;
+
+  const activeHasProof =
+    proofPhotoCount > 0 ||
+    Boolean(activeStop?.proof_photo_uploaded);
+
+  const proofPhotoLimitReached =
+    proofPhotoCount >= 3;
 
   const isCompletionAction =
     activeAction?.status ===
@@ -800,7 +941,7 @@ useEffect(() => {
     Boolean(isCompletionAction) &&
     (
       activePaymentRequired ||
-      activeProofRequired
+      activeProofBlockingRequired
     );
 
   const checklistField:
@@ -828,6 +969,17 @@ useEffect(() => {
     Boolean(activeStop?.booking_id) &&
     String(activeStop?.stop_type || "").toLowerCase() ===
       "delivery";
+
+  const quickNavigateAvailable =
+    Boolean(activeStop) &&
+    (
+      activeStatus === "on_the_way" ||
+      activeAction?.status === "on_the_way"
+    );
+
+  const stickyActionLabel =
+    activeAction?.label ||
+    "Continue";
 
   const openBreak =
     currentOpenBreak(
@@ -997,8 +1149,47 @@ useEffect(() => {
       activeStop?.customer_phone,
     ]);
 
-  const takeProofPhoto =
-    useCallback(async () => {
+  const uploadProofPhotoAsset =
+    useCallback(async (
+      asset: ImagePicker.ImagePickerAsset,
+    ) => {
+      if (
+        !activeStop ||
+        !activeStop.booking_id
+      ) {
+        throw new Error(
+          "This stop is not linked to a booking.",
+        );
+      }
+
+      await uploadMyRouteStopProofPhoto(
+        {
+          stopId:
+            activeStop.id,
+          bookingId:
+            activeStop.booking_id,
+          uri:
+            asset.uri,
+          fileName:
+            asset.fileName ||
+            `driver-proof-${Date.now()}.jpg`,
+          mimeType:
+            asset.mimeType ||
+            "image/jpeg",
+          caption:
+            `${stopLabel(
+              activeStop,
+            )} proof photo`,
+        },
+      );
+    }, [
+      activeStop,
+    ]);
+
+  const pickProofPhoto =
+    useCallback(async (
+      source: "camera" | "library",
+    ) => {
       if (
         !activeStop ||
         stopToolPending
@@ -1013,30 +1204,53 @@ useEffect(() => {
         return;
       }
 
+      if (proofPhotoLimitReached) {
+        setError(
+          "You can upload up to 3 proof photos per stop.",
+        );
+        return;
+      }
+
       setError("");
       setStopToolPending("photo");
 
       try {
         const permission =
-          await ImagePicker.requestCameraPermissionsAsync();
+          source === "camera"
+            ? await ImagePicker.requestCameraPermissionsAsync()
+            : await ImagePicker.requestMediaLibraryPermissionsAsync();
 
         if (!permission.granted) {
           throw new Error(
-            "Camera permission is required to take a proof photo.",
+            source === "camera"
+              ? "Camera permission is required to take a proof photo."
+              : "Photo library permission is required to upload a proof photo.",
           );
         }
 
         const result =
-          await ImagePicker.launchCameraAsync(
-            {
-              mediaTypes:
-                ImagePicker
-                  .MediaTypeOptions
-                  .Images,
-              allowsEditing: false,
-              quality: 0.75,
-            },
-          );
+          source === "camera"
+            ? await ImagePicker.launchCameraAsync(
+                {
+                  mediaTypes:
+                    ImagePicker
+                      .MediaTypeOptions
+                      .Images,
+                  allowsEditing: false,
+                  quality: 0.75,
+                },
+              )
+            : await ImagePicker.launchImageLibraryAsync(
+                {
+                  mediaTypes:
+                    ImagePicker
+                      .MediaTypeOptions
+                      .Images,
+                  allowsEditing: false,
+                  quality: 0.75,
+                  selectionLimit: 1,
+                },
+              );
 
         if (
           result.canceled ||
@@ -1045,38 +1259,21 @@ useEffect(() => {
           return;
         }
 
-        const asset =
-          result.assets[0];
-
-        await uploadMyRouteStopProofPhoto(
-          {
-            stopId:
-              activeStop.id,
-
-            bookingId:
-              activeStop.booking_id,
-
-            uri:
-              asset.uri,
-
-            fileName:
-              asset.fileName ||
-              `driver-proof-${Date.now()}.jpg`,
-
-            mimeType:
-              asset.mimeType ||
-              "image/jpeg",
-
-            caption:
-              `${stopLabel(
-                activeStop,
-              )} proof photo`,
-          },
+        await uploadProofPhotoAsset(
+          result.assets[0],
         );
 
         await loadRoute(
           "refresh",
         );
+
+        const photos =
+          await listMyRouteStopProofPhotos({
+            stopId: activeStop.id,
+            bookingId: activeStop.booking_id,
+          });
+
+        setProofPhotos(photos);
       } catch (photoError) {
         setError(
           photoError instanceof Error
@@ -1086,6 +1283,135 @@ useEffect(() => {
       } finally {
         setStopToolPending(null);
       }
+    }, [
+      activeStop,
+      loadRoute,
+      proofPhotoLimitReached,
+      stopToolPending,
+      uploadProofPhotoAsset,
+    ]);
+
+  const takeProofPhoto =
+    useCallback(() => {
+      if (
+        !activeStop ||
+        stopToolPending
+      ) {
+        return;
+      }
+
+      Alert.alert(
+        "Proof photo",
+        "Choose how to add a proof photo.",
+        [
+          {
+            text: "Take Photo",
+            onPress: () => {
+              void pickProofPhoto(
+                "camera",
+              );
+            },
+          },
+          {
+            text: "Upload Photo",
+            onPress: () => {
+              void pickProofPhoto(
+                "library",
+              );
+            },
+          },
+          {
+            text: "Cancel",
+            style: "cancel",
+          },
+        ],
+      );
+    }, [
+      activeStop,
+      pickProofPhoto,
+      stopToolPending,
+    ]);
+
+  const deleteProofPhoto =
+    useCallback((
+      photo: MobileRouteStopProofPhoto,
+    ) => {
+      const bookingId = String(
+        activeStop?.booking_id || "",
+      );
+
+      if (
+        !activeStop ||
+        !bookingId ||
+        stopToolPending
+      ) {
+        return;
+      }
+
+      Alert.alert(
+        "Delete photo",
+        "Remove this proof photo?",
+        [
+          {
+            text: "Cancel",
+            style: "cancel",
+          },
+          {
+            text: "Delete",
+            style: "destructive",
+            onPress: () => {
+              void (async () => {
+                setError("");
+                setStopToolPending("photo");
+
+                try {
+                  await deleteMyRouteStopProofPhoto(
+                    {
+                      stopId:
+                        activeStop.id,
+                      bookingId:
+                        bookingId,
+                      photoId:
+                        photo.id,
+                      storagePath:
+                        photo.storage_path,
+                    },
+                  );
+
+                  await loadRoute(
+                    "refresh",
+                  );
+
+                  const photos =
+                    await listMyRouteStopProofPhotos({
+                      stopId:
+                        activeStop.id,
+                      bookingId:
+                        bookingId,
+                    });
+
+                  setProofPhotos(
+                    photos,
+                  );
+                } catch (
+                  deleteError
+                ) {
+                  setError(
+                    deleteError instanceof
+                      Error
+                      ? deleteError.message
+                      : "Could not delete the proof photo.",
+                  );
+                } finally {
+                  setStopToolPending(
+                    null,
+                  );
+                }
+              })();
+            },
+          },
+        ],
+      );
     }, [
       activeStop,
       loadRoute,
@@ -1458,6 +1784,9 @@ useEffect(() => {
           markNavigationStopArrived
         }
         carModeDefault={carModeEnabled}
+        muteDefault={navigationMuted}
+        onCarModeChange={setCarModeEnabled}
+        onMuteChange={setNavigationMuted}
       />
     </NavigationProvider>
   );
@@ -1483,11 +1812,16 @@ useEffect(() => {
   }
 
   return (
+    <SafeAreaView style={styles.safeArea}>
+      <View style={styles.screen}>
     <ScrollView
-      style={styles.screen}
-      contentContainerStyle={
-        styles.content
-      }
+      style={styles.scroll}
+      contentContainerStyle={[
+        styles.content,
+        activeStop
+          ? styles.contentWithStickyAction
+          : null,
+      ]}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
@@ -1886,9 +2220,16 @@ useEffect(() => {
 
           {activeStop ? (
             <View
-              style={
-                styles.currentCard
-              }
+              style={[
+                styles.currentCard,
+                activeStopMarkerColor
+                  ? {
+                      borderWidth: 2,
+                      borderColor:
+                        activeStopMarkerColor,
+                    }
+                  : null,
+              ]}
             >
               <View
                 style={
@@ -1896,20 +2237,20 @@ useEffect(() => {
                 }
               >
                 <Text
-  style={
-    styles.cardLabel
-  }
->
-  {isManualStopSelection
-    ? activeStopPosition
-      ? `SELECTED STOP · ${activeStopPosition} OF ${deliveryPointCount}`
-      : isBreakStop(
-            activeStop,
-          )
-        ? "SELECTED BREAK"
-        : "SELECTED STOP"
-    : "CURRENT STOP"}
-</Text>
+                  style={
+                    styles.cardLabel
+                  }
+                >
+                  {isManualStopSelection
+                    ? activeStopPosition
+                      ? `SELECTED STOP · ${activeStopPosition} OF ${deliveryPointCount}`
+                      : isBreakStop(
+                            activeStop,
+                          )
+                        ? "SELECTED BREAK"
+                        : "SELECTED STOP"
+                    : "CURRENT STOP"}
+                </Text>
                 <Text
                   style={[
                     styles.typePill,
@@ -1945,15 +2286,6 @@ useEffect(() => {
 
               <Text
                 style={
-                  styles.currentCustomer
-                }
-              >
-                {activeStop.customer_name ||
-                  "Customer"}
-              </Text>
-
-              <Text
-                style={
                   styles.currentAddress
                 }
               >
@@ -1963,55 +2295,113 @@ useEffect(() => {
                   "Address not available"}
               </Text>
 
-              {activeStop.weather ? (
-                <View style={{ marginTop: 12 }}>
-                  <Text
-                    style={{
-                      color: "#f0c987",
-                      fontSize: 14,
-                      fontWeight: "800",
-                    }}
-                  >
-                    {activeStop.weather.temperatureF != null
-                      ? `${Math.round(activeStop.weather.temperatureF)}°F`
-                      : "Weather"}
-                    {activeStop.weather.condition
-                      ? ` · ${activeStop.weather.condition}`
-                      : ""}
-                  </Text>
+              <Text
+                style={
+                  styles.currentCustomerCompact
+                }
+              >
+                {activeStop.customer_name ||
+                  "Customer"}
+              </Text>
 
-                  <Text
-                    style={{
-                      color: "rgba(255,255,255,0.78)",
-                      fontSize: 12,
-                      fontWeight: "700",
-                      marginTop: 3,
-                    }}
+              {isManualStopSelection &&
+              nextScheduledStop ? (
+                <View style={styles.manualSelectionBanner}>
+                  <View style={styles.manualSelectionCopy}>
+                    <Text style={styles.manualSelectionLabel}>
+                      {activeStopPosition
+                        ? `VIEWING STOP ${activeStopPosition}`
+                        : "VIEWING STOP"}
+                    </Text>
+                    <Text style={styles.manualSelectionText}>
+                      {`Your next scheduled stop is #${deliverySequenceByStopId.get(nextScheduledStop.id) || "?"}.`}
+                    </Text>
+                  </View>
+
+                  <Pressable
+                    onPress={() => setSelectedStopId(null)}
+                    style={({ pressed }) => [
+                      styles.returnToNextButton,
+                      pressed ? styles.pressed : null,
+                    ]}
                   >
-                    Wind{" "}
-                    {activeStop.weather.windMph != null
-                      ? `${Math.round(activeStop.weather.windMph)} mph`
-                      : "—"}
-                    {activeStop.weather.gustMph != null
-                      ? ` · Gusts ${Math.round(activeStop.weather.gustMph)} mph`
-                      : ""}
-                  </Text>
+                    <Text style={styles.returnToNextButtonText}>
+                      {`Return to Stop ${deliverySequenceByStopId.get(nextScheduledStop.id) || ""}`.trim()}
+                    </Text>
+                  </Pressable>
                 </View>
               ) : null}
 
-              {isManualStopSelection && nextScheduledStop ? (
+              <View style={styles.primaryActionsRow}>
                 <Pressable
-                  onPress={() => setSelectedStopId(null)}
+                  disabled={
+                    !quickNavigateAvailable ||
+                    actionPending ||
+                    Boolean(openBreak)
+                  }
+                  onPress={() => {
+                    if (!activeStop) {
+                      return;
+                    }
+
+                    setError("");
+
+                    if (activeStatus === "on_the_way") {
+                      void openNavigationForStop(activeStop).catch((navigationError) => {
+                        setError(
+                          navigationError instanceof Error
+                            ? navigationError.message
+                            : "Could not start navigation.",
+                        );
+                      });
+
+                      return;
+                    }
+
+                    void runActiveAction();
+                  }}
                   style={({ pressed }) => [
-                    styles.returnToNextButton,
+                    styles.primaryActionButton,
+                    styles.primaryActionNavigate,
                     pressed ? styles.pressed : null,
+                    !quickNavigateAvailable || actionPending || Boolean(openBreak)
+                      ? styles.disabledButton
+                      : null,
                   ]}
                 >
-                  <Text style={styles.returnToNextButtonText}>
-                    Return to next scheduled stop
-                  </Text>
+                  <Text style={styles.primaryActionNavigateText}>Navigate</Text>
                 </Pressable>
-              ) : null}
+
+                <Pressable
+                  onPress={() =>
+                    void callCustomer()
+                  }
+                  style={({ pressed }) => [
+                    styles.primaryActionButton,
+                    styles.primaryActionSecondary,
+                    pressed
+                      ? styles.pressed
+                      : null,
+                  ]}
+                >
+                  <Text style={styles.primaryActionSecondaryText}>Call</Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() =>
+                    void messageCustomer()
+                  }
+                  style={({ pressed }) => [
+                    styles.primaryActionButton,
+                    styles.primaryActionSecondary,
+                    pressed
+                      ? styles.pressed
+                      : null,
+                  ]}
+                >
+                  <Text style={styles.primaryActionSecondaryText}>Message</Text>
+                </Pressable>
+              </View>
 
               {activeStop.items_summary ? (
                 <View
@@ -2050,7 +2440,7 @@ useEffect(() => {
                       styles.detailLabel
                     }
                   >
-                    DRIVER NOTES
+                    EVENT INFO
                   </Text>
 
                   <Text
@@ -2060,81 +2450,26 @@ useEffect(() => {
                   >
                     {privateDriverNote(activeStop)}
                   </Text>
+
+                  {activeStop.weather ? (
+                    <Text style={styles.detailMetaText}>
+                      {activeStop.weather.temperatureF != null
+                        ? `${Math.round(activeStop.weather.temperatureF)}°F`
+                        : "Weather"}
+                      {activeStop.weather.condition
+                        ? ` · ${activeStop.weather.condition}`
+                        : ""}
+                      {" · Wind "}
+                      {activeStop.weather.windMph != null
+                        ? `${Math.round(activeStop.weather.windMph)} mph`
+                        : "—"}
+                      {activeStop.weather.gustMph != null
+                        ? ` · Gusts ${Math.round(activeStop.weather.gustMph)} mph`
+                        : ""}
+                    </Text>
+                  ) : null}
                 </View>
               ) : null}
-
-              <View
-                style={
-                  styles.quickInfoRow
-                }
-              >
-                <View
-                  style={
-                    styles.quickInfoCell
-                  }
-                >
-                  <Text
-                    style={
-                      styles.quickInfoLabel
-                    }
-                  >
-                    BALANCE
-                  </Text>
-
-                  <Text
-                    style={
-                      styles.quickInfoValue
-                    }
-                  >
-                    {activeStop.payment_collected
-                      ? `Paid${
-                          activeStop.payment_collected_amount
-                            ? ` · ${moneyText(activeStop.payment_collected_amount)}`
-                            : ""
-                        }`
-                      : moneyText(
-                          activeStop.balance_due,
-                        )}
-                  </Text>
-                </View>
-
-                <View style={styles.contactActions}>
-                  <Pressable
-                    onPress={() =>
-                      void callCustomer()
-                    }
-                    style={({
-                      pressed,
-                    }) => [
-                      styles.iconActionButton,
-                      pressed
-                        ? styles.pressed
-                        : null,
-                    ]}
-                  >
-                    <Text style={styles.iconActionText}>📞</Text>
-                  </Pressable>
-
-                  <Pressable
-                    onPress={() =>
-                      void messageCustomer()
-                    }
-                    style={({
-                      pressed,
-                    }) => [
-                      styles.iconActionButton,
-                      styles.iconActionButtonDark,
-                      pressed
-                        ? styles.pressed
-                        : null,
-                    ]}
-                  >
-                    <Text style={styles.iconActionText}>💬</Text>
-                  </Pressable>
-                </View>
-              </View>
-
-              {/* PAYMENT */}
 
               <View
                 style={
@@ -2143,12 +2478,12 @@ useEffect(() => {
               >
                 <View
                   style={
-                    styles.operationHeader
+                    styles.paymentSummaryHeader
                   }
                 >
                   <View
                     style={
-                      styles.operationCopy
+                      styles.paymentSummaryCopy
                     }
                   >
                     <Text
@@ -2156,42 +2491,28 @@ useEffect(() => {
                         styles.operationLabel
                       }
                     >
-                      PAYMENT
+                      {activePaymentRequired
+                        ? "PAYMENT DUE"
+                        : "PAYMENT"}
                     </Text>
 
                     <Text
                       style={[
-                        styles.operationStatus,
-
-                        activeStop.payment_collected
-                          ? styles.operationStatusDone
+                        styles.paymentSummaryAmount,
+                        !activePaymentRequired
+                          ? styles.paymentSummaryAmountDone
                           : null,
                       ]}
                     >
-                      {activeStop.payment_collected
-                        ? `Collected${
-                            activeStop.payment_collected_amount
-                              ? ` ${moneyText(activeStop.payment_collected_amount)}`
-                              : ""
-                          }${
-                            activeStop.payment_collected_method
-                              ? ` · ${String(
-                                  activeStop.payment_collected_method,
-                                ).toUpperCase()}`
-                              : ""
-                          }`
-                        : activeBalanceDue >
-                            0
-                          ? `${moneyText(
-                              activeStop.balance_due,
-                            )} due`
-                          : "No payment required"}
+                      {activePaymentRequired
+                        ? moneyText(
+                            activeStop.balance_due,
+                          )
+                        : "✓ No payment required"}
                     </Text>
                   </View>
 
-                  {activeBalanceDue >
-                    0 &&
-                  !activeStop.payment_collected ? (
+                  {activePaymentRequired ? (
                     <Pressable
                       disabled={
                         stopToolPending !==
@@ -2231,119 +2552,138 @@ useEffect(() => {
                         </Text>
                       )}
                     </Pressable>
-                  ) : (
-                    <View
-                      style={
-                        styles.operationDone
-                      }
-                    >
-                      <Text
-                        style={
-                          styles.operationDoneText
-                        }
-                      >
-                        ✓
-                      </Text>
-                    </View>
-                  )}
+                  ) : null}
                 </View>
               </View>
-
-              {/* PROOF PHOTO */}
 
               <View
                 style={
                   styles.operationBlock
                 }
               >
-                <View
-                  style={
-                    styles.operationHeader
-                  }
-                >
-                  <View
-                    style={
-                      styles.operationCopy
-                    }
-                  >
-                    <Text
-                      style={
-                        styles.operationLabel
-                      }
-                    >
-                      PROOF PHOTO
-                    </Text>
+                <Text style={styles.operationLabel}>
+                  COMPLETE THIS STOP
+                </Text>
 
-                    <Text
-                      style={[
-                        styles.operationStatus,
+                <View style={styles.requirementList}>
 
-                        activeStop.proof_photo_uploaded
-                          ? styles.operationStatusDone
-                          : null,
-                      ]}
-                    >
-                      {activeStop.proof_photo_uploaded
-                        ? "Photo uploaded"
-                        : "Required before completion"}
-                    </Text>
-                  </View>
-
-                  {activeStop.proof_photo_uploaded ? (
-                    <View
-                      style={
-                        styles.operationDone
-                      }
-                    >
-                      <Text
-                        style={
-                          styles.operationDoneText
-                        }
-                      >
-                        ✓
+                  <View style={styles.requirementRow}>
+                    <View style={styles.requirementCopy}>
+                      <Text style={[styles.requirementTitle, activeHasProof ? styles.requirementTitleDone : null]}>
+                        {activeHasProof ? "✓ Proof photo" : "○ Proof photo"}
+                      </Text>
+                      <Text style={[styles.requirementStatus, activeHasProof ? styles.requirementStatusDone : null]}>
+                        {proofPhotosLoading
+                          ? "Loading photos..."
+                          : activeHasProof
+                            ? `${proofPhotoCount}/3 uploaded`
+                            : activeIsPickup
+                              ? "Optional for pickup"
+                              : "Required before completion"}
                       </Text>
                     </View>
-                  ) : (
+
                     <Pressable
-                      disabled={
-                        stopToolPending !==
-                        null
-                      }
-                      onPress={() =>
-                        void takeProofPhoto()
-                      }
-                      style={({
-                        pressed,
-                      }) => [
-                        styles.operationButton,
-
-                        pressed
-                          ? styles.pressed
-                          : null,
-
-                        stopToolPending !==
-                        null
+                      disabled={stopToolPending !== null || proofPhotoLimitReached}
+                      onPress={takeProofPhoto}
+                      style={({ pressed }) => [
+                        styles.requirementAction,
+                        pressed ? styles.pressed : null,
+                        stopToolPending !== null || proofPhotoLimitReached
                           ? styles.disabledButton
                           : null,
                       ]}
                     >
-                      {stopToolPending ===
-                      "photo" ? (
-                        <ActivityIndicator
-                          size="small"
-                          color="#23313f"
-                        />
+                      {stopToolPending === "photo" ? (
+                        <ActivityIndicator size="small" color="#23313f" />
                       ) : (
-                        <Text
-                          style={
-                            styles.operationButtonText
-                          }
-                        >
-                          Take Photo
+                        <Text style={styles.requirementActionText}>
+                          {proofPhotoLimitReached ? "3/3" : "Take Photo"}
                         </Text>
                       )}
                     </Pressable>
-                  )}
+                  </View>
+
+                  <View style={styles.requirementRow}>
+                    <View style={styles.requirementCopy}>
+                      <Text style={[styles.requirementTitle, checklistComplete ? styles.requirementTitleDone : null]}>
+                        {checklistComplete ? "✓" : "○"} {checklistField === "picked_up" ? "Pickup checklist" : "Delivery checklist"}
+                      </Text>
+                      <Text style={[styles.requirementStatus, checklistComplete ? styles.requirementStatusDone : null]}>
+                        {checklistLoading
+                          ? "Loading..."
+                          : checklistItems.length === 0
+                            ? "No checklist items"
+                            : `${checklistCompletedCount} of ${checklistItems.length} checked`}
+                      </Text>
+                    </View>
+
+                    <Pressable
+                      onPress={() => setChecklistOpen(true)}
+                      style={({ pressed }) => [
+                        styles.requirementActionGhost,
+                        pressed ? styles.pressed : null,
+                      ]}
+                    >
+                      <Text style={styles.requirementActionGhostText}>Open ›</Text>
+                    </Pressable>
+                  </View>
+
+                  {handoverAvailable ? (
+                    <View style={styles.requirementRow}>
+                      <View style={styles.requirementCopy}>
+                        <Text style={styles.requirementTitle}>○ Customer signature</Text>
+                        <Text style={styles.requirementStatus}>Open handover and sign delivery acceptance</Text>
+                      </View>
+
+                      <Pressable
+                        onPress={() => setHandoverOpen(true)}
+                        style={({ pressed }) => [
+                          styles.requirementActionGhost,
+                          pressed ? styles.pressed : null,
+                        ]}
+                      >
+                        <Text style={styles.requirementActionGhostText}>Open ›</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+                </View>
+
+                <View style={styles.proofPhotoRow}>
+                  {proofPhotos.map((photo) => (
+                    <View key={photo.id} style={styles.proofPhotoThumbWrap}>
+                      <Image
+                        source={{ uri: photo.photo_url || undefined }}
+                        style={styles.proofPhotoThumb}
+                      />
+
+                      <Pressable
+                        onPress={() => deleteProofPhoto(photo)}
+                        disabled={stopToolPending !== null}
+                        style={({ pressed }) => [
+                          styles.proofPhotoDelete,
+                          pressed ? styles.pressed : null,
+                          stopToolPending !== null ? styles.disabledButton : null,
+                        ]}
+                      >
+                        <Text style={styles.proofPhotoDeleteText}>×</Text>
+                      </Pressable>
+                    </View>
+                  ))}
+
+                  {proofPhotosLoading ? (
+                    <View style={styles.proofPhotoHintWrap}>
+                      <Text style={styles.proofPhotoHintText}>Loading...</Text>
+                    </View>
+                  ) : proofPhotos.length === 0 ? (
+                    <View style={styles.proofPhotoHintWrap}>
+                      <Text style={styles.proofPhotoHintText}>
+                        {activeIsPickup
+                          ? "Proof photo is optional for pickup."
+                          : "Add at least one proof photo for delivery completion."}
+                      </Text>
+                    </View>
+                  ) : null}
                 </View>
               </View>
 
@@ -2453,197 +2793,87 @@ useEffect(() => {
                   styles.operationBlock
                 }
               >
-                <Text
-                  style={
-                    styles.operationLabel
-                  }
-                >
-                  DRIVER NOTES
-                </Text>
-
-                <TextInput
-                  value={
-                    driverNotesDraft
-                  }
-                  onChangeText={
-                    setDriverNotesDraft
-                  }
-                  placeholder="Add delivery notes, customer requests, access issues..."
-                  placeholderTextColor="rgba(255,255,255,0.38)"
-                  multiline
-                  textAlignVertical="top"
-                  style={
-                    styles.driverNotesInput
-                  }
-                />
-
                 <Pressable
-                  disabled={
-                    stopToolPending !==
-                    null
-                  }
                   onPress={() =>
-                    void saveDriverNotes()
+                    setDriverNotesExpanded((value) => !value)
                   }
-                  style={({
-                    pressed,
-                  }) => [
-                    styles.saveNotesButton,
-
-                    pressed
-                      ? styles.pressed
-                      : null,
-
-                    stopToolPending !==
-                    null
-                      ? styles.disabledButton
-                      : null,
+                  style={({ pressed }) => [
+                    styles.driverNotesToggle,
+                    pressed ? styles.pressed : null,
                   ]}
                 >
-                  {stopToolPending ===
-                  "notes" ? (
-                    <ActivityIndicator
-                      size="small"
-                      color="#f0c987"
-                    />
-                  ) : (
-                    <Text
-                      style={
-                        styles.saveNotesButtonText
+                  <Text style={styles.operationLabel}>DRIVER NOTES</Text>
+                  <Text style={styles.driverNotesToggleText}>
+                    {driverNotesExpanded ? "Hide" : "+ Add driver note"}
+                  </Text>
+                </Pressable>
+
+                {!driverNotesExpanded && String(driverNotesDraft || "").trim() ? (
+                  <Text style={styles.driverNotesPreview} numberOfLines={2}>
+                    {driverNotesDraft}
+                  </Text>
+                ) : null}
+
+                {driverNotesExpanded ? (
+                  <>
+                    <TextInput
+                      value={
+                        driverNotesDraft
                       }
+                      onChangeText={
+                        setDriverNotesDraft
+                      }
+                      placeholder={activeIsPickup ? "Add pickup notes, access issues..." : "Add delivery notes, customer requests, access issues..."}
+                      placeholderTextColor="rgba(255,255,255,0.38)"
+                      multiline
+                      textAlignVertical="top"
+                      style={
+                        styles.driverNotesInput
+                      }
+                    />
+
+                    <Pressable
+                      disabled={
+                        stopToolPending !==
+                        null
+                      }
+                      onPress={() =>
+                        void saveDriverNotes()
+                      }
+                      style={({
+                        pressed,
+                      }) => [
+                        styles.saveNotesButton,
+
+                        pressed
+                          ? styles.pressed
+                          : null,
+
+                        stopToolPending !==
+                          null
+                          ? styles.disabledButton
+                          : null,
+                      ]}
                     >
-                      Save Notes
-                    </Text>
-                  )}
-                </Pressable>
+                      {stopToolPending ===
+                      "notes" ? (
+                        <ActivityIndicator
+                          size="small"
+                          color="#f0c987"
+                        />
+                      ) : (
+                        <Text
+                          style={
+                            styles.saveNotesButtonText
+                          }
+                        >
+                          Save Notes
+                        </Text>
+                      )}
+                    </Pressable>
+                  </>
+                ) : null}
               </View>
-
-              {activeStatus ===
-              "on_the_way" ? (
-                <Pressable
-                  onPress={() => {
-                    setError("");
-                    void openNavigationForStop(activeStop).catch((navigationError) => {
-                      setError(
-                        navigationError instanceof Error
-                          ? navigationError.message
-                          : "Could not start navigation.",
-                      );
-                    });
-                  }}
-                  style={({
-                    pressed,
-                  }) => [
-                    styles.navigationButton,
-
-                    pressed
-                      ? styles.pressed
-                      : null,
-                  ]}
-                >
-                  <Text
-                    style={
-                      styles.navigationButtonText
-                    }
-                  >
-                    Open Navigation
-                  </Text>
-                </Pressable>
-              ) : null}
-
-              <Pressable
-                disabled={
-                  !activeAction?.status ||
-                  actionPending ||
-                  Boolean(openBreak) ||
-                  completionBlocked
-                }
-                onPress={() =>
-                  void runActiveAction()
-                }
-                style={({
-                  pressed,
-                }) => [
-                  styles.primaryButton,
-
-                  pressed
-                    ? styles.pressed
-                    : null,
-
-                  actionPending
-                    ? styles.primaryButtonBusy
-                    : null,
-
-                  completionBlocked
-                    ? styles.primaryButtonDisabled
-                    : null,
-                ]}
-              >
-                {actionPending ? (
-                  <ActivityIndicator
-                    color="#23313f"
-                  />
-                ) : (
-                  <Text
-                    style={
-                      styles.primaryButtonText
-                    }
-                  >
-                    {activeAction?.label ||
-                      "Continue"}
-                  </Text>
-                )}
-              </Pressable>
-
-              {openBreak ? (
-                <Text
-                  style={
-                    styles.actionHint
-                  }
-                >
-                  Resume work before
-                  changing this stop.
-                </Text>
-              ) : activeAction?.status ===
-                "on_the_way" ? (
-                <Text
-                  style={
-                    styles.actionHint
-                  }
-                >
-                  Starting navigation
-                  also starts your work
-                  shift and live driver
-                  tracking.
-                </Text>
-              ) : activeStatus ===
-                "on_the_way" ? (
-                <Text
-                  style={
-                    styles.actionHint
-                  }
-                >
-                  Navigation is active.
-                  Mark Arrived when you
-                  reach the customer.
-                </Text>
-              ) : activeStatus ===
-                "arrived" ? (
-                <Text
-                  style={
-                    styles.actionHint
-                  }
-                >
-                  {activePaymentRequired &&
-                  activeProofRequired
-                    ? "Collect payment and upload a proof photo before completing this stop."
-                    : activePaymentRequired
-                      ? "Collect payment before completing this stop."
-                      : activeProofRequired
-                        ? "Upload a proof photo before completing this stop."
-                        : "Everything required is complete. You can finish this stop."}
-                </Text>
-              ) : null}
             </View>
           ) : (
             <View
@@ -2739,6 +2969,11 @@ useEffect(() => {
                       stop,
                     );
 
+                  const markerColor =
+                    stopMarkerColor(
+                      stop,
+                    );
+
                   const isBreak =
                     isBreakStop(stop);
 
@@ -2767,9 +3002,25 @@ useEffect(() => {
                       }) => [
                         styles.stopRow,
 
+                        markerColor
+                          ? {
+                              borderColor:
+                                `${markerColor}55`,
+                            }
+                          : null,
+
                         activeStop?.id ===
                         stop.id
                           ? styles.stopRowSelected
+                          : null,
+
+                        activeStop?.id ===
+                          stop.id &&
+                        markerColor
+                          ? {
+                              borderColor:
+                                markerColor,
+                            }
                           : null,
 
                         pressed
@@ -2777,6 +3028,18 @@ useEffect(() => {
                           : null,
                       ]}
                     >
+                      <View
+                        style={[
+                          styles.stopMarkerStripe,
+                          markerColor
+                            ? {
+                                backgroundColor:
+                                  markerColor,
+                              }
+                            : styles.stopMarkerStripeFallback,
+                        ]}
+                      />
+
                       <View
                         style={[
                           styles.sequence,
@@ -2916,16 +3179,25 @@ useEffect(() => {
                                 )}
                           </Text>
 
-                          {activeStop?.id ===
-                          stop.id ? (
-                            <Text
-                              style={
-                                styles.stopSelectedLabel
-                              }
-                            >
-                              Selected
-                            </Text>
-                          ) : null}
+                          <View style={styles.stopTagRow}>
+                            {nextScheduledStop?.id === stop.id && !completed ? (
+                              <Text style={[styles.stopSelectedLabel, styles.stopTagNext]}>
+                                Next
+                              </Text>
+                            ) : null}
+
+                            {completed ? (
+                              <Text style={[styles.stopSelectedLabel, styles.stopTagDone]}>
+                                Done
+                              </Text>
+                            ) : null}
+
+                            {activeStop?.id === stop.id ? (
+                              <Text style={styles.stopSelectedLabel}>
+                                Selected
+                              </Text>
+                            ) : null}
+                          </View>
                         </View>
                       </View>
                     </Pressable>
@@ -3294,19 +3566,81 @@ useEffect(() => {
         </View>
       </Modal>
     </ScrollView>
+      {route && activeStop && activeAction?.status ? (
+        <View style={styles.stickyActionWrap} pointerEvents="box-none">
+          <View style={styles.stickyActionCard}>
+            <Pressable
+              disabled={
+                !activeAction?.status ||
+                actionPending ||
+                Boolean(openBreak) ||
+                completionBlocked
+              }
+              onPress={() =>
+                void runActiveAction()
+              }
+              style={({
+                pressed,
+              }) => [
+                styles.primaryButton,
+                styles.stickyPrimaryButton,
+                pressed
+                  ? styles.pressed
+                  : null,
+                actionPending
+                  ? styles.primaryButtonBusy
+                  : null,
+                completionBlocked
+                  ? styles.primaryButtonDisabled
+                  : null,
+              ]}
+            >
+              {actionPending ? (
+                <ActivityIndicator
+                  color="#23313f"
+                />
+              ) : (
+                <Text
+                  style={
+                    styles.primaryButtonText
+                  }
+                >
+                  {stickyActionLabel}
+                </Text>
+              )}
+            </Pressable>
+
+          </View>
+        </View>
+      ) : null}
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#f5f1e8",
+  },
+
   screen: {
     flex: 1,
     backgroundColor: "#f5f1e8",
   },
 
+  scroll: {
+    flex: 1,
+  },
+
   content: {
     paddingHorizontal: 18,
-    paddingTop: 64,
+    paddingTop: 20,
     paddingBottom: 48,
+  },
+
+  contentWithStickyAction: {
+    paddingBottom: 168,
   },
 
   centered: {
@@ -3785,6 +4119,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: 12,
   },
 
   cardLabel: {
@@ -3832,6 +4167,13 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 
+  currentCustomerCompact: {
+    color: "rgba(255,255,255,0.78)",
+    fontSize: 14,
+    fontWeight: "700",
+    marginTop: 8,
+  },
+
   currentAddress: {
     color: "rgba(255,255,255,0.76)",
     fontSize: 14,
@@ -3845,7 +4187,6 @@ const styles = StyleSheet.create({
     borderColor: "rgba(240,201,135,0.45)",
     borderRadius: 12,
     borderWidth: 1,
-    marginTop: 12,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
@@ -3875,6 +4216,180 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     marginTop: 5,
+  },
+
+  detailMetaText: {
+    color: "rgba(255,255,255,0.74)",
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 17,
+    marginTop: 7,
+  },
+
+  manualSelectionBanner: {
+    backgroundColor: "rgba(240,201,135,0.12)",
+    borderColor: "rgba(240,201,135,0.35)",
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 10,
+    marginTop: 14,
+    padding: 12,
+  },
+
+  manualSelectionCopy: {
+    gap: 5,
+  },
+
+  manualSelectionLabel: {
+    color: "#f0c987",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1,
+  },
+
+  manualSelectionText: {
+    color: "rgba(255,255,255,0.8)",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+
+  primaryActionsRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 14,
+  },
+
+  primaryActionButton: {
+    alignItems: "center",
+    borderRadius: 13,
+    justifyContent: "center",
+    minHeight: 42,
+    paddingHorizontal: 12,
+  },
+
+  primaryActionNavigate: {
+    backgroundColor: "#f0c987",
+    flex: 1.25,
+  },
+
+  primaryActionNavigateText: {
+    color: "#23313f",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+
+  primaryActionSecondary: {
+    backgroundColor: "rgba(255,255,255,0.1)",
+    borderColor: "rgba(255,255,255,0.22)",
+    borderWidth: 1,
+    flex: 1,
+  },
+
+  primaryActionSecondaryText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  paymentSummaryHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+
+  paymentSummaryCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  paymentSummaryAmount: {
+    color: "#ffffff",
+    fontSize: 28,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+
+  paymentSummaryAmountDone: {
+    color: "#b9d9b4",
+    fontSize: 18,
+  },
+
+  requirementList: {
+    gap: 9,
+    marginTop: 10,
+  },
+
+  requirementRow: {
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.07)",
+    borderColor: "rgba(255,255,255,0.14)",
+    borderRadius: 12,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 10,
+    justifyContent: "space-between",
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+
+  requirementCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  requirementTitle: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  requirementTitleDone: {
+    color: "#b9d9b4",
+  },
+
+  requirementStatus: {
+    color: "rgba(255,255,255,0.74)",
+    fontSize: 11,
+    fontWeight: "700",
+    marginTop: 3,
+  },
+
+  requirementStatusDone: {
+    color: "rgba(185,217,180,0.9)",
+  },
+
+  requirementAction: {
+    alignItems: "center",
+    backgroundColor: "#f0c987",
+    borderRadius: 11,
+    justifyContent: "center",
+    minHeight: 36,
+    minWidth: 90,
+    paddingHorizontal: 10,
+  },
+
+  requirementActionText: {
+    color: "#23313f",
+    fontSize: 11,
+    fontWeight: "900",
+  },
+
+  requirementActionGhost: {
+    alignItems: "center",
+    borderColor: "rgba(240,201,135,0.55)",
+    borderRadius: 11,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 36,
+    minWidth: 90,
+    paddingHorizontal: 10,
+  },
+
+  requirementActionGhostText: {
+    color: "#f0c987",
+    fontSize: 11,
+    fontWeight: "800",
   },
 
   navigationButton: {
@@ -3926,6 +4441,60 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 
+  driverNotesToggle: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+
+  driverNotesToggleText: {
+    color: "#f0c987",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+
+  driverNotesPreview: {
+    color: "rgba(255,255,255,0.72)",
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 17,
+    marginTop: 8,
+  },
+
+  stickyActionWrap: {
+    bottom: 8,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    zIndex: 10,
+  },
+
+  stickyActionCard: {
+    marginHorizontal: 18,
+    backgroundColor: "rgba(255,255,255,0.96)",
+    borderColor: "#e2d6c5",
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingTop: 10,
+    paddingBottom: 9,
+  },
+
+  stickyPrimaryButton: {
+    marginTop: 0,
+    minHeight: 50,
+  },
+
+  stickyActionHint: {
+    color: "#6c6258",
+    fontSize: 10,
+    fontWeight: "700",
+    lineHeight: 14,
+    marginTop: 6,
+    textAlign: "center",
+  },
+
   completeCard: {
     backgroundColor: "#ffffff",
     borderRadius: 24,
@@ -3960,7 +4529,7 @@ const styles = StyleSheet.create({
   stopRow: {
     flexDirection: "row",
     backgroundColor: "#ffffff",
-    borderColor: "transparent",
+    borderColor: "#efe6da",
     borderRadius: 18,
     borderWidth: 2,
     marginBottom: 10,
@@ -3969,6 +4538,17 @@ const styles = StyleSheet.create({
 
   stopRowSelected: {
     borderColor: "#b88645",
+  },
+
+  stopMarkerStripe: {
+    alignSelf: "stretch",
+    borderRadius: 999,
+    marginRight: 10,
+    width: 4,
+  },
+
+  stopMarkerStripeFallback: {
+    backgroundColor: "#e8ded2",
   },
 
   sequence: {
@@ -4099,6 +4679,20 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
 
+  stopTagRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 6,
+  },
+
+  stopTagNext: {
+    color: "#5f8faa",
+  },
+
+  stopTagDone: {
+    color: "#5f735c",
+  },
+
   operationBlock: {
     borderTopColor: "rgba(255,255,255,0.12)",
     borderTopWidth: 1,
@@ -4150,6 +4744,62 @@ const styles = StyleSheet.create({
     color: "#23313f",
     fontSize: 11,
     fontWeight: "900",
+  },
+
+  proofPhotoRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 10,
+  },
+
+  proofPhotoThumbWrap: {
+    borderColor: "rgba(255,255,255,0.18)",
+    borderRadius: 10,
+    borderWidth: 1,
+    height: 62,
+    overflow: "hidden",
+    position: "relative",
+    width: 62,
+  },
+
+  proofPhotoThumb: {
+    backgroundColor: "rgba(255,255,255,0.08)",
+    height: "100%",
+    width: "100%",
+  },
+
+  proofPhotoDelete: {
+    alignItems: "center",
+    backgroundColor: "rgba(10,15,20,0.78)",
+    borderRadius: 999,
+    height: 20,
+    justifyContent: "center",
+    position: "absolute",
+    right: 4,
+    top: 4,
+    width: 20,
+  },
+
+  proofPhotoDeleteText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "900",
+    lineHeight: 16,
+  },
+
+  proofPhotoHintWrap: {
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 40,
+    minWidth: 160,
+  },
+
+  proofPhotoHintText: {
+    color: "rgba(255,255,255,0.62)",
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 15,
   },
 
   operationDone: {
