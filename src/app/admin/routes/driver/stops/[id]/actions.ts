@@ -195,7 +195,7 @@ async function validateStopCanBeCompleted(stopId: string) {
     throw new Error("Collect payment before completing this stop.");
   }
 
-  if (!proofUploaded) {
+  if (String(stop.stop_type || "").toLowerCase() === "delivery" && !proofUploaded) {
     throw new Error("Upload proof photo before completing this stop.");
   }
 }
