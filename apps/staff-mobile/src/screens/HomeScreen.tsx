@@ -1856,6 +1856,8 @@ useEffect(() => {
 
           <Text
             style={styles.subtitle}
+            numberOfLines={1}
+            ellipsizeMode="tail"
           >
             {route?.driver.name ||
               "Driver"}
@@ -3567,6 +3569,7 @@ const styles = StyleSheet.create({
 
   headerCopy: {
     flex: 1,
+    minWidth: 0,
   },
 
   eyebrow: {
