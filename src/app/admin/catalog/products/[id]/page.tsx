@@ -1,15 +1,13 @@
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import ProductComponentsManager from "./components/ProductComponentsManager";
-import SafePhotoUploadForm from "@/components/admin/SafePhotoUploadForm";
-import SafeGalleryUploadForm from "@/components/admin/SafeGalleryUploadForm";
+import ProductPhotosManager from "./components/ProductPhotosManager";
 import {
   cloneCatalogProductAction,
   removeCatalogProductPhotoAction,
-  removeCatalogProductGalleryPhotoAction,
+  setCatalogProductMainPhotoAction,
   updateCatalogProductAction,
-  uploadCatalogProductPhotoAction,
-  uploadCatalogProductGalleryPhotosAction,
+  uploadCatalogProductPhotosAction,
 } from "./actions";
 
 function money(value: number | string | null | undefined) {
@@ -336,100 +334,15 @@ export default async function CatalogProductDetailPage({
 
       <section className="grid gap-6 xl:grid-cols-[320px_1fr]">
         <aside className="space-y-6">
-          <section className="overflow-hidden rounded-[30px] border border-black/5 bg-white shadow-[0_12px_40px_rgba(0,0,0,0.04)]">
-            <div className="aspect-square bg-[#efe7dc]">
-              {product.image_url ? (
-                <img
-                  src={product.image_url}
-                  alt={product.name}
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <div className="flex h-full items-center justify-center text-sm font-semibold text-[#9a7a49]">
-                  No product photo
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-4 p-5">
-              <div>
-                <h3 className="text-lg font-semibold text-[#1f1e1b]">
-                  Product photo
-                </h3>
-
-                <p className="mt-1 text-sm text-[#6c6258]">
-                  Фото загружается через Supabase Storage. Ручные URL-поля
-                  убраны.
-                </p>
-              </div>
-
-              <SafePhotoUploadForm
-                action={uploadCatalogProductPhotoAction}
-                hiddenFields={[{ name: "productId", value: product.id }]}
-                buttonLabel="Upload photo"
-              />
-
-              {product.image_url && (
-                <form action={removeCatalogProductPhotoAction}>
-                  <input type="hidden" name="productId" value={product.id} />
-
-                  <button
-                    type="submit"
-                    className="w-full rounded-full border border-red-200 bg-red-50 px-5 py-3 text-sm font-semibold text-red-700 transition hover:bg-red-100"
-                  >
-                    Remove photo
-                  </button>
-                </form>
-              )}
-            </div>
-          </section>
-
-          <section className="rounded-[30px] border border-black/5 bg-white p-5 shadow-[0_12px_40px_rgba(0,0,0,0.04)]">
-            <h3 className="text-lg font-semibold text-[#1f1e1b]">
-              Product gallery
-            </h3>
-            <p className="mt-1 text-sm text-[#6c6258]">
-              Additional customer-facing photos.
-            </p>
-            {galleryUrls.length > 0 && (
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                {galleryUrls.map((photoUrl) => (
-                  <div
-                    key={photoUrl}
-                    className="relative aspect-square overflow-hidden rounded-2xl bg-[#efe7dc]"
-                  >
-                    <img
-                      src={photoUrl}
-                      alt={product.name}
-                      className="h-full w-full object-cover"
-                    />
-                    <form action={removeCatalogProductGalleryPhotoAction}>
-                      <input
-                        type="hidden"
-                        name="productId"
-                        value={product.id}
-                      />
-                      <input type="hidden" name="photoUrl" value={photoUrl} />
-                      <button
-                        type="submit"
-                        className="absolute right-2 top-2 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-red-700 shadow"
-                      >
-                        Remove
-                      </button>
-                    </form>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="mt-4">
-              <SafeGalleryUploadForm
-                action={uploadCatalogProductGalleryPhotosAction}
-                hiddenFields={[{ name: "productId", value: product.id }]}
-                buttonLabel="Upload photos"
-              />
-            </div>
-          </section>
+          <ProductPhotosManager
+            productId={product.id}
+            productName={product.name}
+            imageUrl={product.image_url || null}
+            galleryUrls={galleryUrls}
+            uploadAction={uploadCatalogProductPhotosAction}
+            setMainAction={setCatalogProductMainPhotoAction}
+            removeAction={removeCatalogProductPhotoAction}
+          />
           <section className="rounded-[30px] border border-black/5 bg-white p-5 shadow-[0_12px_40px_rgba(0,0,0,0.04)]">
             <h3 className="text-lg font-semibold text-[#1f1e1b]">
               Quick summary

@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 
 import { checkBookingItemAvailabilityAction } from "@/lib/booking/check-booking-item-availability";
 import CustomerShell from "@/components/account/CustomerShell";
+import ProductPhotoCarousel from "@/components/public/ProductPhotoCarousel";
 import { requireCustomerAccess } from "@/lib/auth/require-customer";
 import { createClient } from "@/lib/supabase/server";
 
@@ -350,10 +351,6 @@ export default async function AccountProductDetailsPage({
     { label: "Water use", value: yesNo((product as any).water_use) },
   ].filter((detail) => hasValue(detail.value));
 
-  const gallery = Array.isArray((product as any).gallery_urls)
-    ? ((product as any).gallery_urls as string[]).filter(Boolean)
-    : [];
-
   return (
     <CustomerShell
       displayName={access.displayName}
@@ -375,40 +372,18 @@ export default async function AccountProductDetailsPage({
             <span className={`rounded-full px-3 py-1 text-xs font-semibold ring-1 ${availabilityTone}`}>{availabilityLabel}</span>
           </div>
 
-          <div className="mt-4 overflow-hidden rounded-[16px] bg-[#f6f1e8] sm:hidden">
-            {(product as any).image_url ? (
-              <img
-                src={(product as any).image_url}
-                alt={product.name || "Product"}
-                className="aspect-[4/3] w-full object-cover"
-              />
-            ) : (
-              <div className="flex aspect-[4/3] items-center justify-center text-sm font-semibold text-black/35">
-                No image
-              </div>
-            )}
-          </div>
         </section>
 
         <section className="mt-4 grid gap-4 sm:mt-6 sm:gap-6 xl:grid-cols-[1.15fr_0.85fr]">
           <article className="order-2 rounded-[20px] border border-black/10 bg-white p-4 shadow-[0_12px_35px_rgba(0,0,0,0.04)] sm:rounded-[30px] sm:p-5 xl:order-1">
-            <div className="hidden aspect-[16/10] overflow-hidden rounded-2xl bg-[#f6f1e8] sm:block">
-              {(product as any).image_url ? (
-                <img src={(product as any).image_url} alt={product.name || "Product"} className="h-full w-full object-cover" />
-              ) : (
-                <div className="flex h-full items-center justify-center text-sm font-semibold text-black/35">No image</div>
-              )}
+            <div className="overflow-hidden rounded-2xl bg-[#f6f1e8]">
+              <ProductPhotoCarousel
+                title={product.name || "Product"}
+                imageUrl={(product as any).image_url || null}
+                galleryUrls={Array.isArray((product as any).gallery_urls) ? ((product as any).gallery_urls as string[]) : []}
+                emptyLabel="No image"
+              />
             </div>
-
-            {gallery.length > 0 ? (
-              <div className="mt-4 grid grid-cols-3 gap-3">
-                {gallery.slice(0, 6).map((url) => (
-                  <div key={url} className="aspect-[4/3] overflow-hidden rounded-xl bg-[#f6f1e8]">
-                    <img src={url} alt={product.name || "Gallery image"} className="h-full w-full object-cover" />
-                  </div>
-                ))}
-              </div>
-            ) : null}
 
             <div className="mt-5 rounded-2xl bg-[#f7f4ef] p-4">
               <div className="text-xs font-semibold uppercase tracking-[0.12em] text-black/45">Full description</div>

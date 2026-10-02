@@ -55,6 +55,91 @@ function cleanFileName(value: string) {
     .replace(/^-|-$/g, "");
 }
 
+function normalizePhotoUrls(value: unknown): string[] {
+  const source = Array.isArray(value) ? value : [];
+  const unique = new Set<string>();
+  const result: string[] = [];
+
+  for (const item of source) {
+    const url = String(item || "").trim();
+
+    if (!url || unique.has(url)) {
+      continue;
+    }
+
+    unique.add(url);
+    result.push(url);
+  }
+
+  return result;
+}
+
+function normalizeProductPhotoCollection(params: {
+  imageUrl: string | null;
+  galleryUrls: unknown;
+}) {
+  const mainUrl = String(params.imageUrl || "").trim();
+  const galleryUrls = normalizePhotoUrls(params.galleryUrls);
+  const ordered = normalizePhotoUrls([
+    mainUrl,
+    ...galleryUrls,
+  ]);
+
+  if (ordered.length < 1) {
+    return {
+      imageUrl: null,
+      galleryUrls: [] as string[],
+      orderedUrls: [] as string[],
+    };
+  }
+
+  return {
+    imageUrl: ordered[0],
+    galleryUrls: ordered.slice(1),
+    orderedUrls: ordered,
+  };
+}
+
+function orderedUrlsToProductPhotoFields(orderedUrls: string[]) {
+  const normalized = normalizePhotoUrls(orderedUrls);
+
+  return {
+    image_url: normalized[0] || null,
+    gallery_urls: normalized.slice(1),
+  };
+}
+
+async function loadCurrentProductPhotoState(productId: string) {
+  const supabase = await createClient();
+
+  const productResult = await supabase
+    .from("products")
+    .select("id, slug, public_slug, image_url, gallery_urls")
+    .eq("id", productId)
+    .maybeSingle();
+
+  if (productResult.error) {
+    throw new Error(productResult.error.message);
+  }
+
+  if (!productResult.data) {
+    throw new Error("Product not found.");
+  }
+
+  const product = productResult.data as any;
+  const normalized = normalizeProductPhotoCollection({
+    imageUrl: product.image_url ? String(product.image_url) : null,
+    galleryUrls: product.gallery_urls,
+  });
+
+  return {
+    product,
+    imageUrl: normalized.imageUrl,
+    galleryUrls: normalized.galleryUrls,
+    orderedUrls: normalized.orderedUrls,
+  };
+}
+
 function makeSlug(value: string) {
   return value
     .toLowerCase()
@@ -196,6 +281,93 @@ function revalidateProduct(productId: string) {
   revalidatePath("/admin/catalog/inventory-links");
   revalidatePath(`/admin/catalog/products/${productId}`);
   revalidatePath("/admin/bookings/new");
+  revalidatePath("/");
+  revalidatePath("/catalog");
+  revalidatePath("/account/catalog");
+}
+
+function revalidateProductSlugPaths(params: {
+  slug: string | null;
+  publicSlug: string | null;
+}) {
+  const slug = String(params.slug || "").trim();
+  const publicSlug = String(params.publicSlug || "").trim();
+
+  if (slug) {
+    revalidatePath(`/account/catalog/${encodeURIComponent(slug)}`);
+  }
+
+  const publicCandidates = Array.from(
+    new Set(
+      [publicSlug, slug]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    ),
+  );
+
+  for (const candidate of publicCandidates) {
+    revalidatePath(`/product/${encodeURIComponent(candidate)}`);
+  }
+}
+
+async function uploadCatalogProductPhotosCore(params: {
+  productId: string;
+  files: File[];
+}) {
+  const supabase = await createClient();
+
+  const current = await loadCurrentProductPhotoState(params.productId);
+  const uploadedUrls: string[] = [];
+
+  for (const [index, file] of params.files.entries()) {
+    const fileName = cleanFileName(file.name || "photo.jpg");
+    const filePath = `products/${params.productId}/gallery/${Date.now()}-${index}-${fileName}`;
+
+    const uploadResult = await supabase.storage
+      .from("catalog-images")
+      .upload(filePath, file, {
+        cacheControl: "3600",
+        upsert: false,
+        contentType: file.type || "image/jpeg",
+      });
+
+    if (uploadResult.error) {
+      throw new Error(uploadResult.error.message);
+    }
+
+    const publicUrl = supabase.storage
+      .from("catalog-images")
+      .getPublicUrl(filePath)
+      .data.publicUrl;
+
+    uploadedUrls.push(publicUrl);
+  }
+
+  const nextOrderedUrls = normalizePhotoUrls([
+    ...current.orderedUrls,
+    ...uploadedUrls,
+  ]);
+
+  const nextFields = orderedUrlsToProductPhotoFields(nextOrderedUrls);
+
+  const updateResult = await supabase
+    .from("products")
+    .update({
+      image_url: nextFields.image_url,
+      gallery_urls: nextFields.gallery_urls,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", params.productId);
+
+  if (updateResult.error) {
+    throw new Error(updateResult.error.message);
+  }
+
+  revalidateProduct(params.productId);
+  revalidateProductSlugPaths({
+    slug: String(current.product.slug || "") || null,
+    publicSlug: String(current.product.public_slug || "") || null,
+  });
 }
 
 export async function updateCatalogProductAction(formData: FormData) {
@@ -442,8 +614,6 @@ export async function cloneCatalogProductAction(formData: FormData) {
 }
 
 export async function uploadCatalogProductPhotoAction(formData: FormData) {
-  const supabase = await createClient();
-
   const productId = getString(formData, "productId");
   const file = formData.get("photo");
 
@@ -455,58 +625,46 @@ export async function uploadCatalogProductPhotoAction(formData: FormData) {
     throw new Error("Choose image file.");
   }
 
-  const fileExt = file.name.split(".").pop() || "jpg";
-
-  const fileName = `${Date.now()}-${cleanFileName(
-    file.name || `photo.${fileExt}`
-  )}`;
-
-  const filePath = `products/${productId}/${fileName}`;
-
-  const { error: uploadError } = await supabase.storage
-    .from("catalog-images")
-    .upload(filePath, file, {
-      cacheControl: "3600",
-      upsert: true,
-      contentType: file.type || "image/jpeg",
-    });
-
-  if (uploadError) {
-    throw new Error(uploadError.message);
-  }
-
-  const { data } = supabase.storage
-    .from("catalog-images")
-    .getPublicUrl(filePath);
-
-  const { error: updateError } = await supabase
-    .from("products")
-    .update({
-      image_url: data.publicUrl,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", productId);
-
-  if (updateError) {
-    throw new Error(updateError.message);
-  }
-
-  revalidateProduct(productId);
+  await uploadCatalogProductPhotosCore({
+    productId,
+    files: [file],
+  });
 }
 
 export async function removeCatalogProductPhotoAction(formData: FormData) {
   const supabase = await createClient();
 
   const productId = getString(formData, "productId");
+  const requestedPhotoUrl = getString(formData, "photoUrl");
 
   if (!productId) {
     throw new Error("Missing product id.");
   }
 
+  const current = await loadCurrentProductPhotoState(productId);
+  const targetUrl = requestedPhotoUrl || current.imageUrl || "";
+
+  if (!targetUrl) {
+    revalidateProduct(productId);
+    revalidateProductSlugPaths({
+      slug: String(current.product.slug || "") || null,
+      publicSlug: String(current.product.public_slug || "") || null,
+    });
+    return;
+  }
+
+  if (!current.orderedUrls.includes(targetUrl)) {
+    throw new Error("Photo does not belong to this product.");
+  }
+
+  const nextOrderedUrls = current.orderedUrls.filter((url) => url !== targetUrl);
+  const nextFields = orderedUrlsToProductPhotoFields(nextOrderedUrls);
+
   const { error } = await supabase
     .from("products")
     .update({
-      image_url: null,
+      image_url: nextFields.image_url,
+      gallery_urls: nextFields.gallery_urls,
       updated_at: new Date().toISOString(),
     })
     .eq("id", productId);
@@ -516,89 +674,94 @@ export async function removeCatalogProductPhotoAction(formData: FormData) {
   }
 
   revalidateProduct(productId);
+  revalidateProductSlugPaths({
+    slug: String(current.product.slug || "") || null,
+    publicSlug: String(current.product.public_slug || "") || null,
+  });
 }
 
-export async function uploadCatalogProductGalleryPhotosAction(formData: FormData) {
+export async function setCatalogProductMainPhotoAction(formData: FormData) {
   const supabase = await createClient();
-  const productId = getString(formData, "productId");
 
-  const files = formData.getAll("photos").filter((value): value is File => value instanceof File && value.size > 0);
-
-  if (!productId) throw new Error("Missing product id.");
-  if (!files.length) throw new Error("Choose at least one image file.");
-
-  const { data: product, error: productError } = await supabase
-    .from("products")
-    .select("gallery_urls")
-    .eq("id", productId)
-    .maybeSingle();
-
-  if (productError) throw new Error(productError.message);
-  if (!product) throw new Error("Product not found.");
-
-  const gallery = Array.isArray(product.gallery_urls)
-    ? product.gallery_urls.map(String).filter(Boolean)
-    : [];
-
-  for (const [index, file] of files.entries()) {
-    const fileName = cleanFileName(file.name || "photo.jpg");
-    const filePath = "products/" + productId + "/gallery/" + Date.now() + "-" + index + "-" + fileName;
-
-    const { error: uploadError } = await supabase.storage
-      .from("catalog-images")
-      .upload(filePath, file, { cacheControl: "3600", upsert: false, contentType: file.type || "image/jpeg" });
-
-    if (uploadError) throw new Error(uploadError.message);
-
-    const { data } = supabase.storage.from("catalog-images").getPublicUrl(filePath);
-    gallery.push(data.publicUrl);
-  }
-
-  const { error: updateError } = await supabase
-    .from("products")
-    .update({
-      gallery_urls: Array.from(new Set(gallery)),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", productId);
-
-  if (updateError) throw new Error(updateError.message);
-
-  revalidateProduct(productId);
-}
-
-export async function removeCatalogProductGalleryPhotoAction(formData: FormData) {
-  const supabase = await createClient();
   const productId = getString(formData, "productId");
   const photoUrl = getString(formData, "photoUrl");
 
-  if (!productId) throw new Error("Missing product id.");
-  if (!photoUrl) throw new Error("Missing gallery photo.");
+  if (!productId) {
+    throw new Error("Missing product id.");
+  }
 
-  const { data: product, error: productError } = await supabase
-    .from("products")
-    .select("gallery_urls")
-    .eq("id", productId)
-    .maybeSingle();
+  if (!photoUrl) {
+    throw new Error("Missing photo URL.");
+  }
 
-  if (productError) throw new Error(productError.message);
-  if (!product) throw new Error("Product not found.");
+  const current = await loadCurrentProductPhotoState(productId);
 
-  const gallery = Array.isArray(product.gallery_urls)
-    ? product.gallery_urls.map(String).filter(Boolean)
-    : [];
+  if (!current.orderedUrls.includes(photoUrl)) {
+    throw new Error("Photo does not belong to this product.");
+  }
 
-  const { error: updateError } = await supabase
+  if (current.imageUrl === photoUrl) {
+    revalidateProduct(productId);
+    revalidateProductSlugPaths({
+      slug: String(current.product.slug || "") || null,
+      publicSlug: String(current.product.public_slug || "") || null,
+    });
+    return;
+  }
+
+  const nextOrderedUrls = [
+    photoUrl,
+    ...current.orderedUrls.filter((url) => url !== photoUrl),
+  ];
+
+  const nextFields = orderedUrlsToProductPhotoFields(nextOrderedUrls);
+
+  const updateResult = await supabase
     .from("products")
     .update({
-      gallery_urls: gallery.filter((url) => url !== photoUrl),
+      image_url: nextFields.image_url,
+      gallery_urls: nextFields.gallery_urls,
       updated_at: new Date().toISOString(),
     })
     .eq("id", productId);
 
-  if (updateError) throw new Error(updateError.message);
+  if (updateResult.error) {
+    throw new Error(updateResult.error.message);
+  }
 
   revalidateProduct(productId);
+  revalidateProductSlugPaths({
+    slug: String(current.product.slug || "") || null,
+    publicSlug: String(current.product.public_slug || "") || null,
+  });
+}
+
+export async function uploadCatalogProductPhotosAction(formData: FormData) {
+  const productId = getString(formData, "productId");
+  const files = formData
+    .getAll("photos")
+    .filter((value): value is File => value instanceof File && value.size > 0);
+
+  if (!productId) {
+    throw new Error("Missing product id.");
+  }
+
+  if (files.length < 1) {
+    throw new Error("Choose at least one image file.");
+  }
+
+  await uploadCatalogProductPhotosCore({
+    productId,
+    files,
+  });
+}
+
+export async function uploadCatalogProductGalleryPhotosAction(formData: FormData) {
+  await uploadCatalogProductPhotosAction(formData);
+}
+
+export async function removeCatalogProductGalleryPhotoAction(formData: FormData) {
+  await removeCatalogProductPhotoAction(formData);
 }
 
 export async function addProductInventoryComponentAction(formData: FormData) {

@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 
 import PublicBookingShell from "@/components/public/PublicBookingShell";
 import PublicAvailabilityCard from "@/components/public/PublicAvailabilityCard";
+import ProductPhotoCarousel from "@/components/public/ProductPhotoCarousel";
 import {
   getPublicCatalogCategories,
   getPublicProductBySlug,
@@ -75,9 +76,6 @@ export default async function PublicProductPage({
     categories.find((item) => item.id === product.category_id) || null;
 
   const title = product.public_title || product.name;
-  const gallery = Array.isArray(product.gallery_urls)
-    ? product.gallery_urls.filter(Boolean)
-    : [];
 
   const details = [
     product.setup_width_ft || product.setup_length_ft
@@ -146,36 +144,11 @@ export default async function PublicProductPage({
         <section className="mt-4 grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
           <div>
             <div className="overflow-hidden rounded-[28px] border border-black/10 bg-white shadow-[0_18px_55px_rgba(0,0,0,0.045)]">
-              <div className="aspect-[16/10] bg-[#f6f1e8]">
-                {product.image_url ? (
-                  <img
-                    src={product.image_url}
-                    alt={title}
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <div className="flex h-full items-center justify-center text-sm font-semibold text-black/35">
-                    Photo coming soon
-                  </div>
-                )}
-              </div>
-
-              {gallery.length > 0 && (
-                <div className="grid grid-cols-3 gap-2 p-3 sm:gap-3 sm:p-4">
-                  {gallery.slice(0, 6).map((url) => (
-                    <div
-                      key={url}
-                      className="aspect-[4/3] overflow-hidden rounded-xl bg-[#f6f1e8]"
-                    >
-                      <img
-                        src={url}
-                        alt={`${title} gallery`}
-                        className="h-full w-full object-cover"
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
+              <ProductPhotoCarousel
+                title={title}
+                imageUrl={product.image_url}
+                galleryUrls={product.gallery_urls || []}
+              />
             </div>
 
             {product.description && (
