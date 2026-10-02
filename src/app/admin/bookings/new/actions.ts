@@ -38,6 +38,7 @@ import {
 import {
   getAdminTemporaryHoldMinutes,
 } from "@/lib/booking/temporary-hold-config";
+import { buildBookingItemsSummaryFromCurrentBooking } from "@/lib/booking/operational-equipment";
 
 type ParsedBookingItem = ParsedBookingProductItem;
 type ParsedModifierItem = ParsedBookingModifierItem;
@@ -2778,63 +2779,6 @@ async function reserveModifierInventory({
   }
 }
 
-async function buildBookingItemsSummary({
-  bookingId,
-  fallbackItems,
-}: {
-  bookingId: string;
-  fallbackItems: ParsedBookingItem[];
-}) {
-  const supabase = await createClient();
-
-  const { data, error } = await supabase
-    .from("booking_items")
-    .select(
-      `
-      id,
-      quantity,
-      products (
-        id,
-        name
-      )
-    `,
-    )
-    .eq(
-      "booking_id",
-      bookingId,
-    );
-
-  if (error) {
-    return fallbackItems
-      .map(
-        (item) =>
-          `Product ${item.productId.slice(
-            0,
-            8,
-          )} x ${item.quantity}`,
-      )
-      .join("\n");
-  }
-
-  return (data || [])
-    .map((item: any) => {
-      const product =
-        Array.isArray(
-          item.products,
-        )
-          ? item.products[0]
-          : item.products;
-
-      return `${
-        product?.name ||
-        "Product"
-      } x ${Number(
-        item.quantity || 1,
-      )}`;
-    })
-    .join("\n");
-}
-
 async function autoCreateRouteStopsForBooking({
   bookingId,
   eventDate,
@@ -2926,9 +2870,17 @@ async function autoCreateRouteStopsForBooking({
     new Date().toISOString();
 
   const itemsSummary =
-    await buildBookingItemsSummary({
+    await buildBookingItemsSummaryFromCurrentBooking({
+      supabase,
       bookingId,
-      fallbackItems: items,
+      fallbackItems: items.map(
+        (item) => ({
+          productId:
+            item.productId,
+          quantity:
+            item.quantity,
+        }),
+      ),
     });
 
   if (!hasDelivery) {

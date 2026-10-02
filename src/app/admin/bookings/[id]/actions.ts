@@ -8,6 +8,11 @@ import { processNotificationQueueBestEffort } from "@/lib/notifications/engine";
 import { verifyBookingDiscountPassword } from "@/lib/booking/discount-password";
 import { addBookingPaymentCore } from "@/lib/booking/admin-booking-payment";
 import { updateBookingDiscountCore } from "@/lib/booking/admin-booking-discount";
+import {
+  reconcileBookingChecklistFromCurrentState,
+  refreshUnsignedHandoverSnapshotForBooking,
+  syncRouteStopItemsSummaryFromCurrentBooking,
+} from "@/lib/booking/operational-equipment";
 import { checkBookingItemAvailabilityAction } from "../new/availability-actions";
 import { scryptSync, timingSafeEqual } from "node:crypto";
 
@@ -278,10 +283,21 @@ async function rebuildInventoryReservationsForBookingEdit(params: {
   eventStartTime: string;
   eventEndTime: string;
 }) {
+  type InventoryReservationRebuildResult = {
+    complete: boolean;
+    warnings: number;
+    reason?: "missing_event_window" | "inventory_reservations_unavailable";
+  };
+
   const supabase = await createClient();
+  let warnings = 0;
 
   if (!params.eventDate || !params.eventStartTime || !params.eventEndTime) {
-    return;
+    return {
+      complete: false,
+      warnings: 1,
+      reason: "missing_event_window",
+    } satisfies InventoryReservationRebuildResult;
   }
 
   const deleteReservationsResult = await supabase
@@ -294,7 +310,11 @@ async function rebuildInventoryReservationsForBookingEdit(params: {
     if (!isMissingTableError(deleteReservationsResult.error)) {
       throw new Error(deleteReservationsResult.error.message);
     }
-    return;
+    return {
+      complete: false,
+      warnings: 1,
+      reason: "inventory_reservations_unavailable",
+    } satisfies InventoryReservationRebuildResult;
   }
 
   const availabilityByItemIndex = new Map<
@@ -453,6 +473,7 @@ async function rebuildInventoryReservationsForBookingEdit(params: {
         components: fallbackComponents,
       });
     } catch (error: any) {
+      warnings += 1;
       console.warn("Skipping inventory rebuild for item", {
         bookingId: params.bookingId,
         itemIndex: index,
@@ -467,6 +488,9 @@ async function rebuildInventoryReservationsForBookingEdit(params: {
     const bookingItemId = params.bookingItemIdsByIndex.get(index);
 
     if (!availability || !bookingItemId) {
+      if (!availability) {
+        warnings += 1;
+      }
       continue;
     }
 
@@ -540,6 +564,7 @@ async function rebuildInventoryReservationsForBookingEdit(params: {
         throw new Error(result.error.message);
       }
       } catch (error: any) {
+        warnings += 1;
         console.warn("Skipping component reservation insert", {
           bookingId: params.bookingId,
           itemIndex: index,
@@ -675,6 +700,7 @@ async function rebuildInventoryReservationsForBookingEdit(params: {
       throw new Error(insertResult.error.message);
     }
     } catch (error: any) {
+      warnings += 1;
       console.warn("Skipping modifier reservation insert", {
         bookingId: params.bookingId,
         optionName: modifier.optionName,
@@ -683,6 +709,11 @@ async function rebuildInventoryReservationsForBookingEdit(params: {
       continue;
     }
   }
+
+  return {
+    complete: warnings === 0,
+    warnings,
+  } satisfies InventoryReservationRebuildResult;
 }
 
 function parseBookingItemsForEdit(formData: FormData) {
@@ -1477,9 +1508,12 @@ export async function updateBookingItemsAction(formData: FormData) {
   const setupZip = getString(formData, "setupZip");
 
   let inventoryRebuildWarning = false;
+  let operationalReconciliationWarning = false;
+  let inventoryRebuildComplete = false;
+  let inventoryRebuildWarningsCount = 0;
 
   try {
-    await rebuildInventoryReservationsForBookingEdit({
+    const inventoryRebuildResult = await rebuildInventoryReservationsForBookingEdit({
       bookingId,
       items: items.map((item) => ({
         productId: item.productId,
@@ -1499,8 +1533,22 @@ export async function updateBookingItemsAction(formData: FormData) {
       eventStartTime,
       eventEndTime,
     });
+
+    inventoryRebuildComplete = inventoryRebuildResult.complete;
+    inventoryRebuildWarningsCount = inventoryRebuildResult.warnings;
+
+    if (!inventoryRebuildResult.complete) {
+      inventoryRebuildWarning = true;
+      operationalReconciliationWarning = true;
+      console.warn("Inventory reservation rebuild is incomplete after booking edit", {
+        bookingId,
+        warnings: inventoryRebuildResult.warnings,
+        reason: inventoryRebuildResult.reason || null,
+      });
+    }
   } catch (error: any) {
     inventoryRebuildWarning = true;
+    operationalReconciliationWarning = true;
     console.warn("Inventory reservation rebuild skipped after booking edit", {
       bookingId,
       error: error?.message || "Unknown error",
@@ -1614,6 +1662,47 @@ export async function updateBookingItemsAction(formData: FormData) {
     throw new Error(routeStopSyncError.message);
   }
 
+  try {
+    await syncRouteStopItemsSummaryFromCurrentBooking({
+      supabase,
+      bookingId,
+    });
+  } catch (error: any) {
+    operationalReconciliationWarning = true;
+
+    console.warn("Route summary reconciliation failed after booking edit", {
+      bookingId,
+      error: error?.message || "Unknown error",
+    });
+  }
+
+  if (inventoryRebuildComplete) {
+    try {
+      await reconcileBookingChecklistFromCurrentState({
+        supabase,
+        bookingId,
+      });
+
+      await refreshUnsignedHandoverSnapshotForBooking({
+        supabase,
+        bookingId,
+      });
+    } catch (error: any) {
+      operationalReconciliationWarning = true;
+
+      console.warn("Operational equipment reconciliation failed after booking edit", {
+        bookingId,
+        error: error?.message || "Unknown error",
+      });
+    }
+  } else {
+    console.warn("Skipping checklist/handover reconciliation because inventory rebuild is incomplete", {
+      bookingId,
+      warnings: inventoryRebuildWarningsCount,
+    });
+    operationalReconciliationWarning = true;
+  }
+
   const resignQueued = await queueContractResignIfNeeded({
     bookingId,
     hasMaterialChanges,
@@ -1628,7 +1717,9 @@ export async function updateBookingItemsAction(formData: FormData) {
   redirect(
     `/admin/bookings/${bookingId}?saved=booking-updated${
       resignQueued ? "&resign=1" : ""
-    }${inventoryRebuildWarning ? "&inventory=warning" : ""}`
+    }${inventoryRebuildWarning ? "&inventory=warning" : ""}${
+      operationalReconciliationWarning ? "&operational=warning" : ""
+    }`
   );
 }
 
