@@ -808,3 +808,54 @@ export async function loadDriverRouteWeatherFromMobile(date: string) {
     data: result.data?.data || {},
   };
 }
+
+export type MobileDriverManualPaymentMethod =
+  | "cash"
+  | "zelle"
+  | "venmo";
+
+export type MobileDriverCollectPaymentResult = {
+  stopId: string;
+  bookingId: string;
+  method: MobileDriverManualPaymentMethod;
+  amountRecorded: number;
+  balanceDue: number;
+  alreadyPaid: boolean;
+  operationalSyncStatus?: "ok" | "warning";
+  operationalSyncWarning?: string | null;
+};
+
+export async function collectDriverManualPaymentFromMobile(params: {
+  stopId: string;
+  method: MobileDriverManualPaymentMethod;
+}) {
+  const result = await authenticatedFetch<{
+    success: true;
+    data: MobileDriverCollectPaymentResult;
+  }>("/api/mobile/driver/payments/collect", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+
+  if (!result.success) {
+    return {
+      success: false as const,
+      error:
+        result.error ||
+        "Could not collect payment.",
+    };
+  }
+
+  if (!result.data?.data) {
+    return {
+      success: false as const,
+      error:
+        "Payment result was not returned by the server.",
+    };
+  }
+
+  return {
+    success: true as const,
+    data: result.data.data,
+  };
+}

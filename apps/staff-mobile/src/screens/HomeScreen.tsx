@@ -37,7 +37,6 @@ import {
   deleteMyRouteStopProofPhoto,
   finishMyDriverShift,
   listMyRouteStopProofPhotos,
-  markMyRouteStopPaymentCollected,
   nextRouteAction,
   resumeMyStaffWork,
   saveMyRouteStopNotes,
@@ -46,11 +45,14 @@ import {
   toggleMyChecklistItem,
   updateMyRouteStopStatus,
   uploadMyRouteStopProofPhoto,
-  type MobilePaymentMethod,
   type MobileRouteStopProofPhoto,
 } from "../features/routes/routeActions";
 
 import { supabase } from "../lib/supabase";
+import {
+  collectDriverManualPaymentFromMobile,
+  type MobileDriverManualPaymentMethod,
+} from "../lib/mobileApi";
 import { HandoverModal } from "./HandoverModal";
 import { RouteCalendarModal } from "./RouteCalendarModal";
 
@@ -221,6 +223,15 @@ function moneyText(value: number | string | null) {
 
   return `$${amount.toFixed(2)}`;
 }
+
+type PaymentModalMethod =
+  | "cash"
+  | "zelle"
+  | "venmo"
+  | "card";
+
+const ZELLE_QR_ASSET = require("../../assets/payments/zelle-qr.png");
+const VENMO_QR_ASSET = require("../../assets/payments/venmo-qr.png");
 
 function hasOpenShift(dashboard: StaffTimeDashboard | null) {
   return Boolean(
@@ -432,6 +443,18 @@ const [
 
   const [proofPhotosLoading, setProofPhotosLoading] =
     useState(false);
+
+  const [paymentModalOpen, setPaymentModalOpen] =
+    useState(false);
+
+  const [paymentModalMethod, setPaymentModalMethod] =
+    useState<PaymentModalMethod>("cash");
+
+  const [paymentModalBusy, setPaymentModalBusy] =
+    useState(false);
+
+  const [paymentModalError, setPaymentModalError] =
+    useState("");
 
   const loadRoute = useCallback(
     async (
@@ -1418,66 +1441,16 @@ useEffect(() => {
       stopToolPending,
     ]);
 
-  const collectPaymentWithMethod =
-    useCallback(
-      async (
-        method: MobilePaymentMethod,
-      ) => {
-        if (
-          !activeStop ||
-          stopToolPending
-        ) {
-          return;
-        }
+  const closePaymentModal =
+    useCallback(() => {
+      if (paymentModalBusy) {
+        return;
+      }
 
-        const amount = Number(
-          activeStop.balance_due ||
-            0,
-        );
-
-        if (
-          !Number.isFinite(amount) ||
-          amount <= 0
-        ) {
-          setError(
-            "There is no balance due for this stop.",
-          );
-          return;
-        }
-
-        setError("");
-        setStopToolPending(
-          "payment",
-        );
-
-        try {
-          await markMyRouteStopPaymentCollected(
-            activeStop.id,
-            amount,
-            method,
-          );
-
-          await loadRoute(
-            "refresh",
-          );
-        } catch (
-          paymentError
-        ) {
-          setError(
-            paymentError instanceof Error
-              ? paymentError.message
-              : "Could not mark the payment as collected.",
-          );
-        } finally {
-          setStopToolPending(null);
-        }
-      },
-      [
-        activeStop,
-        loadRoute,
-        stopToolPending,
-      ],
-    );
+      setPaymentModalOpen(false);
+      setPaymentModalError("");
+      setPaymentModalMethod("cash");
+    }, [paymentModalBusy]);
 
   const collectPayment =
     useCallback(() => {
@@ -1502,49 +1475,85 @@ useEffect(() => {
         return;
       }
 
-      Alert.alert(
-        `Collect ${moneyText(
-          amount,
-        )}`,
-        "Select the payment method.",
-        [
-          {
-            text: "Cash",
-            onPress: () =>
-              void collectPaymentWithMethod(
-                "cash",
-              ),
-          },
-          {
-            text: "Zelle",
-            onPress: () =>
-              void collectPaymentWithMethod(
-                "zelle",
-              ),
-          },
-          {
-            text: "Venmo",
-            onPress: () =>
-              void collectPaymentWithMethod(
-                "venmo",
-              ),
-          },
-          {
-            text: "Card",
-            onPress: () =>
-              void collectPaymentWithMethod(
-                "card",
-              ),
-          },
-          {
-            text: "Cancel",
-            style: "cancel",
-          },
-        ],
-      );
+      setPaymentModalMethod("cash");
+      setPaymentModalError("");
+      setPaymentModalOpen(true);
     }, [
       activeStop,
-      collectPaymentWithMethod,
+      stopToolPending,
+    ]);
+
+  const confirmManualPayment =
+    useCallback(async () => {
+      if (
+        !activeStop ||
+        stopToolPending ||
+        paymentModalBusy
+      ) {
+        return;
+      }
+
+      if (paymentModalMethod === "card") {
+        setPaymentModalError(
+          "Card payment is coming in the next step.",
+        );
+        return;
+      }
+
+      setStopToolPending("payment");
+      setPaymentModalBusy(true);
+      setPaymentModalError("");
+      setError("");
+
+      try {
+        const result =
+          await collectDriverManualPaymentFromMobile({
+            stopId: activeStop.id,
+            method:
+              paymentModalMethod as MobileDriverManualPaymentMethod,
+          });
+
+        if (!result.success || !result.data) {
+          setPaymentModalError(
+            result.error ||
+              "Could not collect payment.",
+          );
+          return;
+        }
+
+        await loadRoute("refresh");
+
+        setPaymentModalOpen(false);
+        setPaymentModalMethod("cash");
+        setPaymentModalError("");
+
+        Alert.alert(
+          result.data.alreadyPaid
+            ? "Already paid"
+            : result.data.operationalSyncStatus === "warning"
+              ? "Payment recorded"
+              : "Payment collected",
+          result.data.alreadyPaid
+            ? "This booking balance is already paid. Route data was refreshed."
+            : result.data.operationalSyncStatus === "warning"
+              ? `${moneyText(result.data.amountRecorded)} was recorded via ${paymentModalMethod.toUpperCase()}. Route state will refresh. ${String(result.data.operationalSyncWarning || "")}`
+              : `${moneyText(result.data.amountRecorded)} was recorded via ${paymentModalMethod.toUpperCase()}.`,
+        );
+      } catch (paymentError) {
+        setPaymentModalError(
+          paymentError instanceof Error
+            ? paymentError.message
+            : "Could not collect payment.",
+        );
+      } finally {
+        setPaymentModalBusy(false);
+        setStopToolPending(null);
+      }
+    }, [
+      activeStop,
+      loadRoute,
+      paymentModalBusy,
+      paymentModalMethod,
       stopToolPending,
     ]);
 
@@ -3136,6 +3145,180 @@ useEffect(() => {
         }
         onClose={() => setHandoverOpen(false)}
       />
+
+      <Modal
+        visible={paymentModalOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={closePaymentModal}
+      >
+        <View style={styles.paymentModalBackdrop}>
+          <Pressable
+            style={styles.paymentModalDismissArea}
+            onPress={closePaymentModal}
+          />
+
+          <View style={styles.paymentSheet}>
+            <View style={styles.paymentSheetHandle} />
+
+            <View style={styles.paymentSheetHeader}>
+              <Text style={styles.paymentSheetEyebrow}>
+                COLLECT PAYMENT
+              </Text>
+              <Text style={styles.paymentSheetTitle}>
+                Balance Due
+              </Text>
+              <Text style={styles.paymentSheetAmount}>
+                {moneyText(activeStop?.balance_due || 0)}
+              </Text>
+            </View>
+
+            <View style={styles.paymentMethodRow}>
+              {(["cash", "zelle", "venmo", "card"] as PaymentModalMethod[]).map((method) => {
+                const active = paymentModalMethod === method;
+
+                return (
+                  <Pressable
+                    key={method}
+                    disabled={paymentModalBusy}
+                    onPress={() => {
+                      setPaymentModalMethod(method);
+                      setPaymentModalError("");
+                    }}
+                    style={({ pressed }) => [
+                      styles.paymentMethodChip,
+                      active ? styles.paymentMethodChipActive : null,
+                      pressed ? styles.pressed : null,
+                      paymentModalBusy ? styles.disabledButton : null,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.paymentMethodChipText,
+                        active ? styles.paymentMethodChipTextActive : null,
+                      ]}
+                    >
+                      {method === "card"
+                        ? "Card"
+                        : method.charAt(0).toUpperCase() + method.slice(1)}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <View style={styles.paymentMethodBody}>
+              {paymentModalMethod === "cash" ? (
+                <>
+                  <Text style={styles.paymentMethodBodyTitle}>Cash</Text>
+                  <Text style={styles.paymentMethodBodyCopy}>
+                    Amount due: {moneyText(activeStop?.balance_due || 0)}
+                  </Text>
+                </>
+              ) : null}
+
+              {paymentModalMethod === "zelle" ? (
+                <>
+                  <Text style={styles.paymentMethodBodyTitle}>Zelle</Text>
+                  <Text style={styles.paymentMethodBodyCopy}>FANSOUNDS CORP</Text>
+                  <Text style={styles.paymentMethodBodyCopy}>
+                    Amount due: {moneyText(activeStop?.balance_due || 0)}
+                  </Text>
+                  <View style={styles.paymentQrBox}>
+                    <Image
+                      source={ZELLE_QR_ASSET}
+                      style={styles.paymentQrImage}
+                      resizeMode="contain"
+                    />
+                  </View>
+                  <Text style={styles.paymentMethodBodyCopy}>
+                    Show the QR to the customer. Confirm only after payment is actually received.
+                  </Text>
+                </>
+              ) : null}
+
+              {paymentModalMethod === "venmo" ? (
+                <>
+                  <Text style={styles.paymentMethodBodyTitle}>Venmo</Text>
+                  <Text style={styles.paymentMethodBodyCopy}>@bouncepartyla · Fansounds Corp</Text>
+                  <Text style={styles.paymentMethodBodyCopy}>
+                    Amount due: {moneyText(activeStop?.balance_due || 0)}
+                  </Text>
+                  <View style={styles.paymentQrBox}>
+                    <Image
+                      source={VENMO_QR_ASSET}
+                      style={styles.paymentQrImage}
+                      resizeMode="contain"
+                    />
+                  </View>
+                  <Text style={styles.paymentMethodBodyCopy}>
+                    Show the QR to the customer. Confirm only after payment is actually received.
+                  </Text>
+                </>
+              ) : null}
+
+              {paymentModalMethod === "card" ? (
+                <>
+                  <Text style={styles.paymentMethodBodyTitle}>Card</Text>
+                  <Text style={styles.paymentMethodBodyCopy}>
+                    Card payment is coming in the next step. Manual card marking is disabled in this phase.
+                  </Text>
+                </>
+              ) : null}
+            </View>
+
+            {paymentModalError ? (
+              <View style={styles.paymentModalErrorCard}>
+                <Text style={styles.paymentModalErrorText}>{paymentModalError}</Text>
+              </View>
+            ) : null}
+
+            <View style={styles.paymentSheetActions}>
+              <Pressable
+                disabled={paymentModalBusy}
+                onPress={closePaymentModal}
+                style={({ pressed }) => [
+                  styles.paymentSecondaryButton,
+                  pressed ? styles.pressed : null,
+                  paymentModalBusy ? styles.disabledButton : null,
+                ]}
+              >
+                <Text style={styles.paymentSecondaryButtonText}>Close</Text>
+              </Pressable>
+
+              {paymentModalMethod === "card" ? (
+                <View style={styles.paymentCardDisabledButton}>
+                  <Text style={styles.paymentCardDisabledButtonText}>Card payment coming next</Text>
+                </View>
+              ) : (
+                <Pressable
+                  disabled={paymentModalBusy}
+                  onPress={() => {
+                    void confirmManualPayment();
+                  }}
+                  style={({ pressed }) => [
+                    styles.paymentPrimaryButton,
+                    pressed ? styles.pressed : null,
+                    paymentModalBusy ? styles.disabledButton : null,
+                  ]}
+                >
+                  {paymentModalBusy ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <Text style={styles.paymentPrimaryButtonText}>
+                      {paymentModalMethod === "cash"
+                        ? "Confirm cash received"
+                        : paymentModalMethod === "zelle"
+                          ? "Confirm Zelle received"
+                          : "Confirm Venmo received"}
+                    </Text>
+                  )}
+                </Pressable>
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={checklistOpen}
@@ -4862,6 +5045,221 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "700",
     lineHeight: 22,
+  },
+
+  paymentModalBackdrop: {
+    backgroundColor: "rgba(20,27,34,0.5)",
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+
+  paymentModalDismissArea: {
+    flex: 1,
+  },
+
+  paymentSheet: {
+    backgroundColor: "#f5f1e8",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingBottom: 16,
+    paddingHorizontal: 18,
+    paddingTop: 10,
+  },
+
+  paymentSheetHandle: {
+    alignSelf: "center",
+    backgroundColor: "#c7bfb4",
+    borderRadius: 999,
+    height: 5,
+    marginBottom: 12,
+    width: 42,
+  },
+
+  paymentSheetHeader: {
+    borderBottomColor: "#dfd8ce",
+    borderBottomWidth: 1,
+    paddingBottom: 12,
+  },
+
+  paymentSheetEyebrow: {
+    color: "#b88645",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1.1,
+  },
+
+  paymentSheetTitle: {
+    color: "#23313f",
+    fontSize: 17,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+
+  paymentSheetAmount: {
+    color: "#23313f",
+    fontSize: 30,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+
+  paymentMethodRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 14,
+  },
+
+  paymentMethodChip: {
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderColor: "#d7ccbf",
+    borderRadius: 999,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 36,
+    minWidth: 74,
+    paddingHorizontal: 12,
+  },
+
+  paymentMethodChipActive: {
+    backgroundColor: "#23313f",
+    borderColor: "#23313f",
+  },
+
+  paymentMethodChipText: {
+    color: "#23313f",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+
+  paymentMethodChipTextActive: {
+    color: "#ffffff",
+  },
+
+  paymentMethodBody: {
+    backgroundColor: "#23313f",
+    borderRadius: 18,
+    marginTop: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+  },
+
+  paymentMethodBodyTitle: {
+    color: "#f0c987",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+
+  paymentMethodBodyCopy: {
+    color: "rgba(255,255,255,0.88)",
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 18,
+    marginTop: 6,
+  },
+
+  paymentQrBox: {
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderColor: "rgba(255,255,255,0.14)",
+    borderRadius: 14,
+    borderWidth: 1,
+    marginTop: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 16,
+  },
+
+  paymentQrMissingTitle: {
+    color: "#f0c987",
+    fontSize: 12,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+
+  paymentQrMissingCopy: {
+    color: "rgba(255,255,255,0.82)",
+    fontSize: 11,
+    fontWeight: "700",
+    marginTop: 6,
+    textAlign: "center",
+  },
+
+  paymentQrImage: {
+    height: 170,
+    width: "100%",
+  },
+
+  paymentModalErrorCard: {
+    backgroundColor: "#fbe9e6",
+    borderColor: "#e8b4aa",
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+
+  paymentModalErrorText: {
+    color: "#8d2f1f",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+
+  paymentSheetActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 12,
+  },
+
+  paymentSecondaryButton: {
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderColor: "#d7ccbf",
+    borderRadius: 12,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 44,
+  },
+
+  paymentSecondaryButtonText: {
+    color: "#23313f",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+
+  paymentPrimaryButton: {
+    alignItems: "center",
+    backgroundColor: "#c9964f",
+    borderRadius: 12,
+    flex: 1.4,
+    justifyContent: "center",
+    minHeight: 44,
+    paddingHorizontal: 8,
+  },
+
+  paymentPrimaryButtonText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+
+  paymentCardDisabledButton: {
+    alignItems: "center",
+    backgroundColor: "#d7ccbf",
+    borderRadius: 12,
+    flex: 1.4,
+    justifyContent: "center",
+    minHeight: 44,
+    paddingHorizontal: 8,
+  },
+
+  paymentCardDisabledButtonText: {
+    color: "#6f6457",
+    fontSize: 12,
+    fontWeight: "800",
+    textAlign: "center",
   },
 
   checklistModalBackdrop: {
