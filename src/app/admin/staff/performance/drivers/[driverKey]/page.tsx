@@ -9,6 +9,7 @@ import {
   PerformanceFilterBar,
   PerformanceHero,
   PrimaryKpis,
+  PunctualityTrendChart,
   PunctualitySection,
   SecondaryKpis,
   StopVolumeChart,
@@ -165,8 +166,12 @@ export default async function StaffPerformanceDriverDetailPage({
       </SectionCard>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <TimeUsageChart dayUsage={selectedDriver.dayUsage} />
-        <StopVolumeChart dayStops={selectedDriver.dayStops} />
+        <TimeUsageChart dayUsage={selectedDriver.dayUsage} period={period} />
+        <StopVolumeChart dayStops={selectedDriver.dayStops} period={period} />
+      </div>
+
+      <div className="grid gap-4">
+        <PunctualityTrendChart dayStops={selectedDriver.dayStops} period={period} />
       </div>
 
       <PunctualitySection metrics={selectedDriver.metrics} />

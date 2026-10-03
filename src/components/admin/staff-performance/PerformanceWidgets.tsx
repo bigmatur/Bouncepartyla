@@ -16,6 +16,38 @@ import { periodQueryParams, toBusinessDateLabel } from "@/lib/staff-performance/
 import type { ResolvedPeriod } from "@/lib/staff-performance/types";
 import type { DriverPerformanceDetail, DriverPerformanceSnapshot } from "@/lib/staff-performance/types";
 
+type TimeUsageRow = DriverPerformanceDetail["dayUsage"][number] | DriverPerformanceSnapshot["teamDayUsage"][number];
+type StopSummaryRow = DriverPerformanceDetail["dayStops"][number] | DriverPerformanceSnapshot["teamDayStops"][number];
+
+type TimeUsageBucket = {
+  key: string;
+  label: string;
+  detailLabel: string;
+  workingMinutes: number;
+  onSiteMinutes: number;
+  betweenStopsMinutes: number;
+  breakMinutes: number;
+  unclassifiedMinutes: number;
+  sampleCount: number;
+};
+
+type StopVolumeBucket = {
+  key: string;
+  label: string;
+  detailLabel: string;
+  deliveries: number;
+  pickups: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+  onTimeStops: number;
+  lateStops: number;
+  punctualityEligibleStops: number;
+  sampleCount: number;
+};
+
+const CUSTOM_WEEKLY_BUCKET_THRESHOLD_DAYS = 35;
+
 function deltaTone(value: string) {
   if (value.startsWith("+")) return "text-emerald-700";
   if (value.startsWith("-")) return "text-red-700";
@@ -24,6 +56,176 @@ function deltaTone(value: string) {
 
 function dateInput(value: string) {
   return value;
+}
+
+function parseDateKey(value: string) {
+  const match = String(value || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date;
+}
+
+function formatIsoDateUtc(date: Date) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function daysBetweenInclusive(from: string, to: string) {
+  const fromDate = parseDateKey(from);
+  const toDate = parseDateKey(to);
+
+  if (!fromDate || !toDate) {
+    return 0;
+  }
+
+  return Math.floor((toDate.getTime() - fromDate.getTime()) / 86400000) + 1;
+}
+
+function weekStartMonday(dateKey: string) {
+  const date = parseDateKey(dateKey);
+
+  if (!date) {
+    return dateKey;
+  }
+
+  const dow = date.getUTCDay();
+  const mondayOffset = dow === 0 ? -6 : 1 - dow;
+  date.setUTCDate(date.getUTCDate() + mondayOffset);
+  return formatIsoDateUtc(date);
+}
+
+function shouldUseWeeklyAggregation(period: ResolvedPeriod) {
+  if (period.preset !== "custom") {
+    return false;
+  }
+
+  return daysBetweenInclusive(period.range.from, period.range.to) > CUSTOM_WEEKLY_BUCKET_THRESHOLD_DAYS;
+}
+
+function bucketLabel(key: string, mode: "day" | "week") {
+  if (mode === "day") {
+    return toBusinessDateLabel(key);
+  }
+
+  const start = parseDateKey(key);
+
+  if (!start) {
+    return key;
+  }
+
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 6);
+  const endKey = formatIsoDateUtc(end);
+  return `${toBusinessDateLabel(key)} - ${toBusinessDateLabel(endKey)}`;
+}
+
+function shortBucketLabel(key: string, mode: "day" | "week") {
+  const date = parseDateKey(key);
+
+  if (!date) {
+    return key;
+  }
+
+  if (mode === "week") {
+    return `Wk ${String(date.getUTCMonth() + 1)}/${String(date.getUTCDate())}`;
+  }
+
+  return `${date.getUTCMonth() + 1}/${date.getUTCDate()}`;
+}
+
+function buildTimeUsageBuckets(rows: ReadonlyArray<TimeUsageRow>, period: ResolvedPeriod): TimeUsageBucket[] {
+  const mode: "day" | "week" = shouldUseWeeklyAggregation(period) ? "week" : "day";
+  const grouped = new Map<string, TimeUsageBucket>();
+
+  for (const row of rows) {
+    const key = mode === "week" ? weekStartMonday(row.date) : row.date;
+
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        key,
+        label: shortBucketLabel(key, mode),
+        detailLabel: bucketLabel(key, mode),
+        workingMinutes: 0,
+        onSiteMinutes: 0,
+        betweenStopsMinutes: 0,
+        breakMinutes: 0,
+        unclassifiedMinutes: 0,
+        sampleCount: 0,
+      });
+    }
+
+    const bucket = grouped.get(key)!;
+    bucket.workingMinutes += row.workingMinutes;
+    bucket.onSiteMinutes += row.onSiteMinutes;
+    bucket.betweenStopsMinutes += row.betweenStopsMinutes;
+    bucket.breakMinutes += row.breakMinutes;
+    bucket.unclassifiedMinutes += row.unclassifiedMinutes;
+    bucket.sampleCount += 1;
+  }
+
+  return Array.from(grouped.values()).sort((a, b) => a.key.localeCompare(b.key));
+}
+
+function buildStopVolumeBuckets(rows: ReadonlyArray<StopSummaryRow>, period: ResolvedPeriod): StopVolumeBucket[] {
+  const mode: "day" | "week" = shouldUseWeeklyAggregation(period) ? "week" : "day";
+  const grouped = new Map<string, StopVolumeBucket>();
+
+  for (const row of rows) {
+    const key = mode === "week" ? weekStartMonday(row.date) : row.date;
+
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        key,
+        label: shortBucketLabel(key, mode),
+        detailLabel: bucketLabel(key, mode),
+        deliveries: 0,
+        pickups: 0,
+        completed: 0,
+        failed: 0,
+        cancelled: 0,
+        onTimeStops: 0,
+        lateStops: 0,
+        punctualityEligibleStops: 0,
+        sampleCount: 0,
+      });
+    }
+
+    const bucket = grouped.get(key)!;
+    bucket.deliveries += row.deliveries;
+    bucket.pickups += row.pickups;
+    bucket.completed += row.completed;
+    bucket.failed += row.failed;
+    bucket.cancelled += row.cancelled;
+    bucket.onTimeStops += row.onTimeStops;
+    bucket.lateStops += row.lateStops;
+    bucket.punctualityEligibleStops += row.punctualityEligibleStops;
+    bucket.sampleCount += 1;
+  }
+
+  return Array.from(grouped.values()).sort((a, b) => a.key.localeCompare(b.key));
+}
+
+function chartCanvasWidth(bucketCount: number) {
+  return Math.max(620, bucketCount * 56 + 120);
+}
+
+function hourAxisLabel(minutes: number) {
+  const hours = minutes / 60;
+  return hours >= 1 ? `${hours.toFixed(hours >= 10 ? 0 : 1)}h` : `${Math.round(minutes)}m`;
 }
 
 export function PerformanceFilterBar(props: {
@@ -318,12 +520,34 @@ export function SecondaryKpis(props: {
 
 export function TimeUsageChart(props: {
   dayUsage: DriverPerformanceDetail["dayUsage"] | DriverPerformanceSnapshot["teamDayUsage"];
+  period: ResolvedPeriod;
 }) {
-  const rows = props.dayUsage;
-  const max = Math.max(
+  const buckets = buildTimeUsageBuckets(props.dayUsage, props.period);
+  const width = chartCanvasWidth(buckets.length);
+  const chartHeight = 270;
+  const left = 44;
+  const right = 20;
+  const top = 16;
+  const bottom = 56;
+  const plotHeight = chartHeight - top - bottom;
+  const availableWidth = width - left - right;
+  const step = buckets.length > 0 ? availableWidth / buckets.length : availableWidth;
+  const barWidth = Math.max(16, Math.min(32, step * 0.55));
+
+  const maxWorking = Math.max(1, ...buckets.map((bucket) => bucket.workingMinutes));
+  const maxClassified = Math.max(
     1,
-    ...rows.map((row) => row.onSiteMinutes + row.betweenStopsMinutes + row.breakMinutes + row.unclassifiedMinutes),
+    ...buckets.map((bucket) => bucket.onSiteMinutes + bucket.betweenStopsMinutes + bucket.breakMinutes + bucket.unclassifiedMinutes),
   );
+  const yMax = Math.max(maxWorking, maxClassified);
+  const gridFractions = [0, 0.25, 0.5, 0.75, 1];
+
+  const legend = [
+    { key: "on_site", label: "On-site", color: "#3b82f6" },
+    { key: "between", label: "Between Stops (derived)", color: "#10b981" },
+    { key: "break", label: "Explicit Break", color: "#f59e0b" },
+    { key: "unclassified", label: "Unclassified", color: "#9ca3af" },
+  ];
 
   return (
     <SectionCard
@@ -331,39 +555,108 @@ export function TimeUsageChart(props: {
       subtitle="Derived from shift intervals and stop timestamps. Unclassified remains explicit when coverage is incomplete."
     >
       <div className="space-y-4">
-        {rows.length === 0 ? (
+        {buckets.length === 0 ? (
           <p className="text-sm text-[#81766c]">No timing records in selected period.</p>
         ) : null}
 
-        {rows.map((row) => {
-          const total = row.onSiteMinutes + row.betweenStopsMinutes + row.breakMinutes + row.unclassifiedMinutes;
-          const onSiteWidth = (row.onSiteMinutes / max) * 100;
-          const betweenWidth = (row.betweenStopsMinutes / max) * 100;
-          const breakWidth = (row.breakMinutes / max) * 100;
-          const unclassifiedWidth = (row.unclassifiedMinutes / max) * 100;
-
-          return (
-            <div key={row.date} className="space-y-1.5">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#6c6258]">
-                <span className="font-semibold text-[#3a342d]">{toBusinessDateLabel(row.date)}</span>
-                <span>
-                  Working {formatDuration(row.workingMinutes)} · On site {formatDuration(row.onSiteMinutes)} · Break {formatDuration(row.breakMinutes)}
-                </span>
-              </div>
-              <div className="h-4 overflow-hidden rounded-full bg-[#efe8dd]" title={row.timingCoverageLabel}>
-                <div className="flex h-full w-full">
-                  <div style={{ width: `${onSiteWidth}%` }} className="h-full bg-[#3b82f6]" aria-label="On site" />
-                  <div style={{ width: `${betweenWidth}%` }} className="h-full bg-[#10b981]" aria-label="Between stops" />
-                  <div style={{ width: `${breakWidth}%` }} className="h-full bg-[#f59e0b]" aria-label="Break" />
-                  <div style={{ width: `${unclassifiedWidth}%` }} className="h-full bg-[#9ca3af]" aria-label="Unclassified" />
-                </div>
-              </div>
-              <div className="text-[11px] text-[#81766c]">
-                Between Stops: {formatDuration(row.betweenStopsMinutes)} · Unclassified: {formatDuration(row.unclassifiedMinutes)} · Total classified {formatDuration(total)}
-              </div>
+        <div className="flex flex-wrap gap-3 text-[11px] text-[#6c6258]">
+          {legend.map((item) => (
+            <div key={item.key} className="inline-flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+              <span>{item.label}</span>
             </div>
-          );
-        })}
+          ))}
+        </div>
+
+        {buckets.length > 0 ? (
+          <div className="overflow-x-auto pb-1">
+            <svg
+              width={width}
+              height={chartHeight}
+              role="img"
+              aria-label="Time usage trend with stacked components by period bucket"
+            >
+              <rect x={0} y={0} width={width} height={chartHeight} fill="#fff" rx={12} />
+
+              {gridFractions.map((fraction) => {
+                const y = top + plotHeight - fraction * plotHeight;
+                const value = Math.round(yMax * fraction);
+                return (
+                  <g key={`grid-${fraction}`}>
+                    <line x1={left} x2={width - right} y1={y} y2={y} stroke="#ece4d9" strokeWidth={1} />
+                    <text x={left - 6} y={y + 3} fontSize={10} textAnchor="end" fill="#8a7b6c">
+                      {hourAxisLabel(value)}
+                    </text>
+                  </g>
+                );
+              })}
+
+              {buckets.map((bucket, index) => {
+                const xCenter = left + step * index + step / 2;
+                const x = xCenter - barWidth / 2;
+
+                const totalClassified =
+                  bucket.onSiteMinutes + bucket.betweenStopsMinutes + bucket.breakMinutes + bucket.unclassifiedMinutes;
+
+                const scaleY = (minutes: number) => (minutes / yMax) * plotHeight;
+                const onSiteHeight = scaleY(bucket.onSiteMinutes);
+                const betweenHeight = scaleY(bucket.betweenStopsMinutes);
+                const breakHeight = scaleY(bucket.breakMinutes);
+                const unclassifiedHeight = scaleY(bucket.unclassifiedMinutes);
+
+                let cursorY = top + plotHeight;
+                cursorY -= onSiteHeight;
+                const onSiteY = cursorY;
+                cursorY -= betweenHeight;
+                const betweenY = cursorY;
+                cursorY -= breakHeight;
+                const breakY = cursorY;
+                cursorY -= unclassifiedHeight;
+                const unclassifiedY = cursorY;
+
+                const workingY = top + plotHeight - scaleY(bucket.workingMinutes);
+
+                const title = [
+                  bucket.detailLabel,
+                  `Working: ${formatDuration(bucket.workingMinutes)}`,
+                  `On-site: ${formatDuration(bucket.onSiteMinutes)}`,
+                  `Between Stops (derived): ${formatDuration(bucket.betweenStopsMinutes)}`,
+                  `Break: ${formatDuration(bucket.breakMinutes)}`,
+                  `Unclassified: ${formatDuration(bucket.unclassifiedMinutes)}`,
+                  `Classified total: ${formatDuration(totalClassified)}`,
+                ].join("\n");
+
+                return (
+                  <g key={bucket.key}>
+                    <title>{title}</title>
+
+                    <line
+                      x1={x + barWidth + 2}
+                      x2={x + barWidth + 2}
+                      y1={top + plotHeight}
+                      y2={workingY}
+                      stroke="#b7aa9a"
+                      strokeDasharray="2 2"
+                    />
+
+                    {unclassifiedHeight > 0 ? <rect x={x} y={unclassifiedY} width={barWidth} height={unclassifiedHeight} fill="#9ca3af" rx={2} /> : null}
+                    {breakHeight > 0 ? <rect x={x} y={breakY} width={barWidth} height={breakHeight} fill="#f59e0b" rx={2} /> : null}
+                    {betweenHeight > 0 ? <rect x={x} y={betweenY} width={barWidth} height={betweenHeight} fill="#10b981" rx={2} /> : null}
+                    {onSiteHeight > 0 ? <rect x={x} y={onSiteY} width={barWidth} height={onSiteHeight} fill="#3b82f6" rx={2} /> : null}
+
+                    <text x={xCenter} y={chartHeight - 20} fontSize={10} textAnchor="middle" fill="#7d7266">
+                      {bucket.label}
+                    </text>
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
+        ) : null}
+
+        <p className="text-[11px] text-[#81766c]">
+          Between Stops is derived from completion-to-arrival intervals and may include waiting, traffic, route adjustments, or other unclassified time.
+        </p>
       </div>
     </SectionCard>
   );
@@ -371,42 +664,227 @@ export function TimeUsageChart(props: {
 
 export function StopVolumeChart(props: {
   dayStops: DriverPerformanceDetail["dayStops"] | DriverPerformanceSnapshot["teamDayStops"];
+  period: ResolvedPeriod;
 }) {
-  const rows = props.dayStops;
+  const rows = buildStopVolumeBuckets(props.dayStops, props.period);
   const max = Math.max(1, ...rows.map((row) => Math.max(row.deliveries, row.pickups)));
+  const width = chartCanvasWidth(rows.length);
+  const chartHeight = 270;
+  const left = 44;
+  const right = 20;
+  const top = 16;
+  const bottom = 56;
+  const plotHeight = chartHeight - top - bottom;
+  const availableWidth = width - left - right;
+  const step = rows.length > 0 ? availableWidth / rows.length : availableWidth;
+  const singleBarWidth = Math.max(8, Math.min(14, step * 0.22));
+
+  const gridFractions = [0, 0.25, 0.5, 0.75, 1];
 
   return (
     <SectionCard title="Stop Volume" subtitle="Business-local daily stop counts. Cancelled stops are never treated as completed workload.">
       {rows.length === 0 ? (
         <p className="text-sm text-[#81766c]">No route stops found in selected period.</p>
       ) : (
-        <div className="space-y-3">
-          {rows.map((row) => (
-            <div key={row.date} className="rounded-xl border border-[#eee5d9] bg-[#fbf9f6] px-3 py-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-semibold text-[#3a342d]">{toBusinessDateLabel(row.date)}</span>
-                <span className="text-[#6c6258]">
-                  Completed {row.completed} · Failed {row.failed} · Cancelled {row.cancelled}
-                </span>
-              </div>
-              <div className="mt-2 space-y-1">
-                <div className="flex items-center gap-2 text-[11px] text-[#6c6258]">
-                  <span className="w-16">Deliveries</span>
-                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-[#e5edf8]">
-                    <div className="h-full rounded-full bg-[#3b82f6]" style={{ width: `${(row.deliveries / max) * 100}%` }} />
-                  </div>
-                  <span className="w-6 text-right">{row.deliveries}</span>
-                </div>
-                <div className="flex items-center gap-2 text-[11px] text-[#6c6258]">
-                  <span className="w-16">Pickups</span>
-                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-[#dcf5ec]">
-                    <div className="h-full rounded-full bg-[#10b981]" style={{ width: `${(row.pickups / max) * 100}%` }} />
-                  </div>
-                  <span className="w-6 text-right">{row.pickups}</span>
-                </div>
-              </div>
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-3 text-[11px] text-[#6c6258]">
+            <div className="inline-flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#3b82f6]" />
+              <span>Deliveries</span>
             </div>
-          ))}
+            <div className="inline-flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#10b981]" />
+              <span>Pickups</span>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto pb-1">
+            <svg width={width} height={chartHeight} role="img" aria-label="Stop volume trend with deliveries and pickups by period bucket">
+              <rect x={0} y={0} width={width} height={chartHeight} fill="#fff" rx={12} />
+
+              {gridFractions.map((fraction) => {
+                const y = top + plotHeight - fraction * plotHeight;
+                const value = Math.round(max * fraction);
+                return (
+                  <g key={`grid-${fraction}`}>
+                    <line x1={left} x2={width - right} y1={y} y2={y} stroke="#ece4d9" strokeWidth={1} />
+                    <text x={left - 6} y={y + 3} fontSize={10} textAnchor="end" fill="#8a7b6c">
+                      {value}
+                    </text>
+                  </g>
+                );
+              })}
+
+              {rows.map((row, index) => {
+                const xCenter = left + step * index + step / 2;
+                const groupX = xCenter - singleBarWidth - 3;
+                const deliveryHeight = (row.deliveries / max) * plotHeight;
+                const pickupHeight = (row.pickups / max) * plotHeight;
+
+                const title = [
+                  row.detailLabel,
+                  `Deliveries: ${row.deliveries}`,
+                  `Pickups: ${row.pickups}`,
+                  `Completed: ${row.completed}`,
+                  `Failed: ${row.failed}`,
+                  `Cancelled: ${row.cancelled}`,
+                ].join("\n");
+
+                return (
+                  <g key={row.key}>
+                    <title>{title}</title>
+
+                    <rect
+                      x={groupX}
+                      y={top + plotHeight - deliveryHeight}
+                      width={singleBarWidth}
+                      height={deliveryHeight}
+                      fill="#3b82f6"
+                      rx={2}
+                    />
+                    <rect
+                      x={groupX + singleBarWidth + 6}
+                      y={top + plotHeight - pickupHeight}
+                      width={singleBarWidth}
+                      height={pickupHeight}
+                      fill="#10b981"
+                      rx={2}
+                    />
+
+                    <text x={xCenter} y={chartHeight - 20} fontSize={10} textAnchor="middle" fill="#7d7266">
+                      {row.label}
+                    </text>
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2 text-[11px] text-[#6c6258]">
+            {rows.slice(-4).map((row) => (
+              <div key={`meta-${row.key}`} className="rounded-lg border border-[#eee5d9] bg-[#fbf9f6] px-2 py-1.5">
+                <span className="font-semibold text-[#3a342d]">{row.detailLabel}</span>
+                <span> · Completed {row.completed} · Failed {row.failed} · Cancelled {row.cancelled}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
+export function PunctualityTrendChart(props: {
+  dayStops: DriverPerformanceDetail["dayStops"] | DriverPerformanceSnapshot["teamDayStops"];
+  period: ResolvedPeriod;
+}) {
+  const buckets = buildStopVolumeBuckets(props.dayStops, props.period);
+  const width = chartCanvasWidth(buckets.length);
+  const chartHeight = 250;
+  const left = 44;
+  const right = 20;
+  const top = 16;
+  const bottom = 56;
+  const plotHeight = chartHeight - top - bottom;
+  const availableWidth = width - left - right;
+  const step = buckets.length > 0 ? availableWidth / buckets.length : availableWidth;
+  const barWidth = Math.max(14, Math.min(24, step * 0.45));
+
+  return (
+    <SectionCard
+      title="Punctuality Trend"
+      subtitle={`On-Time % uses eligible stops only. Buckets with no eligible stops are shown as no data. Late threshold includes ${DEFAULT_LATE_TOLERANCE_MINUTES} minute tolerance.`}
+    >
+      {buckets.length === 0 ? (
+        <p className="text-sm text-[#81766c]">No punctuality data in selected period.</p>
+      ) : (
+        <div className="space-y-3">
+          <div className="overflow-x-auto pb-1">
+            <svg width={width} height={chartHeight} role="img" aria-label="On-time percentage trend from 0 to 100 percent">
+              <rect x={0} y={0} width={width} height={chartHeight} fill="#fff" rx={12} />
+
+              {[0, 25, 50, 75, 100].map((value) => {
+                const y = top + plotHeight - (value / 100) * plotHeight;
+                return (
+                  <g key={`grid-${value}`}>
+                    <line x1={left} x2={width - right} y1={y} y2={y} stroke="#ece4d9" strokeWidth={1} />
+                    <text x={left - 6} y={y + 3} fontSize={10} textAnchor="end" fill="#8a7b6c">
+                      {value}%
+                    </text>
+                  </g>
+                );
+              })}
+
+              {buckets.map((bucket, index) => {
+                const xCenter = left + step * index + step / 2;
+                const x = xCenter - barWidth / 2;
+                const hasEligible = bucket.punctualityEligibleStops > 0;
+                const onTimePercent = hasEligible
+                  ? (bucket.onTimeStops / bucket.punctualityEligibleStops) * 100
+                  : null;
+                const barHeight = hasEligible ? (Number(onTimePercent) / 100) * plotHeight : 0;
+
+                const title = [
+                  bucket.detailLabel,
+                  hasEligible ? `On-Time: ${formatPercent(onTimePercent)}` : "On-Time: No eligible data",
+                  `Eligible stops: ${bucket.punctualityEligibleStops}`,
+                  `On-time stops: ${bucket.onTimeStops}`,
+                  `Late stops: ${bucket.lateStops}`,
+                ].join("\n");
+
+                return (
+                  <g key={bucket.key}>
+                    <title>{title}</title>
+                    <rect x={x} y={top} width={barWidth} height={plotHeight} fill="#f2ece4" rx={2} />
+                    {hasEligible ? (
+                      <rect
+                        x={x}
+                        y={top + plotHeight - barHeight}
+                        width={barWidth}
+                        height={barHeight}
+                        fill="#2563eb"
+                        rx={2}
+                      />
+                    ) : (
+                      <line
+                        x1={x}
+                        x2={x + barWidth}
+                        y1={top + plotHeight - 2}
+                        y2={top + 2}
+                        stroke="#9ca3af"
+                        strokeWidth={1.5}
+                        strokeDasharray="3 2"
+                      />
+                    )}
+
+                    <text x={xCenter} y={chartHeight - 20} fontSize={10} textAnchor="middle" fill="#7d7266">
+                      {bucket.label}
+                    </text>
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2 text-[11px] text-[#6c6258]">
+            {buckets.slice(-4).map((bucket) => {
+              const hasEligible = bucket.punctualityEligibleStops > 0;
+              const onTimePercent = hasEligible
+                ? (bucket.onTimeStops / bucket.punctualityEligibleStops) * 100
+                : null;
+
+              return (
+                <div key={`pt-${bucket.key}`} className="rounded-lg border border-[#eee5d9] bg-[#fbf9f6] px-2 py-1.5">
+                  <span className="font-semibold text-[#3a342d]">{bucket.detailLabel}</span>
+                  <span>
+                    {hasEligible
+                      ? ` · ${formatPercent(onTimePercent)} (${bucket.onTimeStops}/${bucket.punctualityEligibleStops})`
+                      : " · No eligible data"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </SectionCard>

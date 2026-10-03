@@ -8,6 +8,7 @@ import {
   PerformanceFilterBar,
   PerformanceHero,
   PrimaryKpis,
+  PunctualityTrendChart,
   PunctualitySection,
   SecondaryKpis,
   StopVolumeChart,
@@ -152,8 +153,21 @@ export default async function StaffPerformancePage({
       ) : null}
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <TimeUsageChart dayUsage={selectedDriver?.dayUsage || snapshot.teamDayUsage} />
-        <StopVolumeChart dayStops={selectedDriver?.dayStops || snapshot.teamDayStops} />
+        <TimeUsageChart
+          dayUsage={selectedDriver?.dayUsage || snapshot.teamDayUsage}
+          period={period}
+        />
+        <StopVolumeChart
+          dayStops={selectedDriver?.dayStops || snapshot.teamDayStops}
+          period={period}
+        />
+      </div>
+
+      <div className="grid gap-4">
+        <PunctualityTrendChart
+          dayStops={selectedDriver?.dayStops || snapshot.teamDayStops}
+          period={period}
+        />
       </div>
 
       <PunctualitySection metrics={selectedDriver?.metrics || snapshot.teamMetrics} />
