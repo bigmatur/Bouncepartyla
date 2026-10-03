@@ -905,6 +905,9 @@ export async function loadDriverRoute(
           "pickup",
         ],
       )
+      .or(
+        "status.is.null,status.neq.cancelled",
+      )
       .order(
         "sort_order",
         {
@@ -1038,6 +1041,9 @@ export async function loadMyDriverRouteDates(): Promise<
           "pickup",
         ],
       )
+      .or(
+        "status.is.null,status.neq.cancelled",
+      )
       .not(
         "stop_date",
         "is",
@@ -1112,6 +1118,9 @@ export async function loadMyDriverRouteCalendar(): Promise<
           "delivery",
           "pickup",
         ],
+      )
+      .or(
+        "status.is.null,status.neq.cancelled",
       )
       .not(
         "stop_date",
