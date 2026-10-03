@@ -859,10 +859,11 @@ export type MobileDriverCollectPaymentResult = {
   bookingId: string;
   method: MobileDriverManualPaymentMethod;
   amountRecorded: number;
+  amountReported?: number;
   balanceDue: number;
-  alreadyPaid: boolean;
-  operationalSyncStatus?: "ok" | "warning";
-  operationalSyncWarning?: string | null;
+  alreadyReported: boolean;
+  reportStatus?: "reported" | "already_reported" | "no_balance_due";
+  reportedAt?: string | null;
 };
 
 export async function collectDriverManualPaymentFromMobile(params: {

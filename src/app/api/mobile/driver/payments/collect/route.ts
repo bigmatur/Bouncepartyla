@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-import { addBookingPaymentCore } from "@/lib/booking/admin-booking-payment";
-
 export const dynamic = "force-dynamic";
 
 type AllowedManualMethod = "cash" | "zelle" | "venmo";
@@ -88,7 +86,6 @@ async function authenticate(request: Request) {
 
   return {
     supabase,
-    actorName: String(driverResult.data.name || "Driver").trim(),
   } as const;
 }
 
@@ -189,7 +186,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const booking = bookingResult.data as any;
+  const booking = bookingResult.data as Record<string, unknown>;
 
   if (isIneligibleBookingStatus(booking.status)) {
     return NextResponse.json(
@@ -207,6 +204,22 @@ export async function POST(request: Request) {
     );
   }
 
+  if (Boolean(stop.payment_collected)) {
+    return NextResponse.json({
+      success: true,
+      data: {
+        stopId,
+        bookingId,
+        method,
+        amountRecorded: authoritativeBalance,
+        amountReported: authoritativeBalance,
+        balanceDue: authoritativeBalance,
+        alreadyReported: true,
+        reportStatus: "already_reported",
+      },
+    });
+  }
+
   if (authoritativeBalance <= 0) {
     return NextResponse.json({
       success: true,
@@ -215,38 +228,46 @@ export async function POST(request: Request) {
         bookingId,
         method,
         amountRecorded: 0,
-        balanceDue: 0,
-        alreadyPaid: true,
+        amountReported: 0,
+        balanceDue: Number(authoritativeBalance.toFixed(2)),
+        alreadyReported: false,
+        reportStatus: "no_balance_due",
       },
     });
   }
 
   try {
-    const payment = await addBookingPaymentCore({
-      supabase: auth.supabase,
-      bookingId,
-      amount: authoritativeBalance,
-      baseAmount: authoritativeBalance,
-      tipAmount: 0,
-      method,
-      note: `Driver stop ${stopId} manual collection`,
-      stripeSuccessPath: "/admin/routes/driver",
-      stripeCancelPath: "/admin/routes/driver",
-    });
+    const operationalResult = await auth.supabase.rpc(
+      "mark_my_route_stop_payment_collected",
+      {
+        p_stop_id: stopId,
+        p_amount: authoritativeBalance,
+        p_method: method,
+      },
+    );
 
-    const paymentCollectedAt = payment.paidAt || new Date().toISOString();
+    if (operationalResult.error) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: String(operationalResult.error.message || "Could not report payment collection."),
+        },
+        { status: 400 },
+      );
+    }
 
-    const routeStopUpdateResult = await auth.supabase
-      .from("route_stops")
-      .update({
-        payment_collected: true,
-        payment_collected_amount: Number(payment.amount.toFixed(2)),
-        payment_collected_method: method,
-        payment_collected_by: auth.actorName,
-        payment_collected_at: paymentCollectedAt,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", stopId);
+    const operationalData =
+      operationalResult.data && typeof operationalResult.data === "object"
+        ? (operationalResult.data as Record<string, unknown>)
+        : null;
+
+    const amountReported = Number(
+      operationalData?.payment_collected_amount ?? authoritativeBalance,
+    );
+
+    const reportedAt = String(
+      operationalData?.payment_collected_at || new Date().toISOString(),
+    );
 
     return NextResponse.json({
       success: true,
@@ -254,13 +275,16 @@ export async function POST(request: Request) {
         stopId,
         bookingId,
         method,
-        amountRecorded: Number(payment.amount.toFixed(2)),
-        balanceDue: Number(payment.balanceDue.toFixed(2)),
-        alreadyPaid: false,
-        operationalSyncStatus: routeStopUpdateResult.error ? "warning" : "ok",
-        operationalSyncWarning: routeStopUpdateResult.error
-          ? String(routeStopUpdateResult.error.message || "Route stop payment metadata could not be synchronized.")
-          : null,
+        amountRecorded: Number.isFinite(amountReported)
+          ? Number(amountReported.toFixed(2))
+          : Number(authoritativeBalance.toFixed(2)),
+        amountReported: Number.isFinite(amountReported)
+          ? Number(amountReported.toFixed(2))
+          : Number(authoritativeBalance.toFixed(2)),
+        balanceDue: Number(authoritativeBalance.toFixed(2)),
+        alreadyReported: false,
+        reportStatus: "reported",
+        reportedAt,
       },
     });
   } catch (error) {

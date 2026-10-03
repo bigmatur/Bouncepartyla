@@ -1528,16 +1528,16 @@ useEffect(() => {
         setPaymentModalError("");
 
         Alert.alert(
-          result.data.alreadyPaid
-            ? "Already paid"
-            : result.data.operationalSyncStatus === "warning"
-              ? "Payment recorded"
-              : "Payment collected",
-          result.data.alreadyPaid
-            ? "This booking balance is already paid. Route data was refreshed."
-            : result.data.operationalSyncStatus === "warning"
-              ? `${moneyText(result.data.amountRecorded)} was recorded via ${paymentModalMethod.toUpperCase()}. Route state will refresh. ${String(result.data.operationalSyncWarning || "")}`
-              : `${moneyText(result.data.amountRecorded)} was recorded via ${paymentModalMethod.toUpperCase()}.`,
+          result.data.reportStatus === "already_reported"
+            ? "Payment already reported"
+            : result.data.reportStatus === "no_balance_due"
+              ? "No balance due"
+              : "Payment reported",
+          result.data.reportStatus === "already_reported"
+            ? "Payment already reported for this stop. Route data was refreshed."
+            : result.data.reportStatus === "no_balance_due"
+              ? "This stop currently has no balance due to report. Route data was refreshed."
+              : `${moneyText(result.data.amountRecorded)} was reported via ${paymentModalMethod.toUpperCase()}.`,
         );
       } catch (paymentError) {
         setPaymentModalError(
