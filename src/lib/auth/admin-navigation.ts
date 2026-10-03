@@ -62,6 +62,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     children: [
       { label: "Employees", href: "/admin/staff", icon: "☻", permission: "staff.view" },
       { label: "Working Time", href: "/admin/staff/time", icon: "◷", permission: "staff.view" },
+      { label: "Performance", href: "/admin/staff/performance", icon: "▤", permission: "staff.view" },
     ],
   },
   { label: "My Time", href: "/admin/my-time", icon: "◴" },
