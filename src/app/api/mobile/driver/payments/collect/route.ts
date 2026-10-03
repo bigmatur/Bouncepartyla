@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-import { getUnifiedAccess, isStaffRole } from "@/lib/auth/access";
 import { addBookingPaymentCore } from "@/lib/booking/admin-booking-payment";
 
 export const dynamic = "force-dynamic";
@@ -71,20 +70,6 @@ async function authenticate(request: Request) {
     return { response: unauthorized("Invalid or expired session.") } as const;
   }
 
-  const access = await getUnifiedAccess(supabase);
-
-  if (!access.user || !access.isActive || !isStaffRole(access.role)) {
-    return {
-      response: forbidden("Driver route access required."),
-    } as const;
-  }
-
-  if (!(access.role === "driver" || access.can("preview.driver") || access.can("routes.view"))) {
-    return {
-      response: forbidden("Driver route access required."),
-    } as const;
-  }
-
   const driverResult = await supabase
     .from("route_drivers")
     .select("id, name")
@@ -103,7 +88,7 @@ async function authenticate(request: Request) {
 
   return {
     supabase,
-    actorName: String(access.displayName || driverResult.data.name || "Driver").trim(),
+    actorName: String(driverResult.data.name || "Driver").trim(),
   } as const;
 }
 
