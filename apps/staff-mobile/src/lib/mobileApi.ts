@@ -31,7 +31,9 @@ async function authenticatedFetch<T>(
   }
 
   try {
-    const response = await fetch(`${appUrl()}${path}`, {
+    const requestUrl = `${appUrl()}${path}`;
+
+    const response = await fetch(requestUrl, {
       ...init,
       headers: {
         Accept: "application/json",
@@ -41,17 +43,55 @@ async function authenticatedFetch<T>(
       },
     });
 
-    const body = await response
-      .json()
-      .catch(() => ({} as Record<string, unknown>));
+    const responseText = await response.text();
+
+    let body: Record<string, unknown> = {};
+
+    if (responseText) {
+      try {
+        const parsed = JSON.parse(responseText);
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          !Array.isArray(parsed)
+        ) {
+          body = parsed as Record<string, unknown>;
+        }
+      } catch {
+        body = {};
+      }
+    }
+
+    const contentType =
+      String(response.headers.get("content-type") || "unknown")
+        .trim() || "unknown";
+
+    const normalizedBody = responseText
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const bodyPreview =
+      normalizedBody.length > 250
+        ? `${normalizedBody.slice(0, 250)}...`
+        : normalizedBody || "(empty)";
+
+    const diagnosticBase = [
+      `HTTP ${response.status}`,
+      `URL: ${response.url || requestUrl}`,
+      `Content-Type: ${contentType}`,
+    ].join("\n");
 
     if (!response.ok || body?.success === false) {
+      if (typeof body?.error === "string") {
+        return {
+          success: false,
+          error: `${body.error}\n${diagnosticBase}`,
+        };
+      }
+
       return {
         success: false,
-        error:
-          typeof body?.error === "string"
-            ? body.error
-            : `Request failed (${response.status}).`,
+        error: `${diagnosticBase}\nBody: ${bodyPreview}`,
       };
     }
 
