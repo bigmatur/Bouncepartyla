@@ -174,11 +174,39 @@ function createDriverKey(params: { profileId: string | null; name: string }) {
   return `name-${slugify(params.name)}`;
 }
 
-function buildDriverDirectory(employees: WorkingEmployeeRow[], stops: RouteStopRow[]) {
+function buildRouteDriverNameSet(stops: RouteStopRow[]) {
+  const names = new Set<string>();
+
+  for (const stop of stops) {
+    const normalized = normalizeName(stop.driver_name);
+
+    if (normalized) {
+      names.add(normalized);
+    }
+  }
+
+  return names;
+}
+
+function isPerformanceDriverEmployee(employee: WorkingEmployeeRow, routeDriverNames: Set<string>) {
+  if (String(employee.role || "").toLowerCase() === "driver") {
+    return true;
+  }
+
+  const normalizedDisplayName = normalizeName(employee.display_name);
+
+  return Boolean(normalizedDisplayName && routeDriverNames.has(normalizedDisplayName));
+}
+
+function buildDriverDirectory(
+  employees: WorkingEmployeeRow[],
+  stops: RouteStopRow[],
+  routeDriverNames: Set<string>,
+) {
   const directory = new Map<string, DriverDirectoryEntry>();
 
   for (const employee of employees) {
-    if (String(employee.role || "").toLowerCase() !== "driver") {
+    if (!isPerformanceDriverEmployee(employee, routeDriverNames)) {
       continue;
     }
 
@@ -1051,9 +1079,11 @@ async function loadSnapshot(params: {
     created_at: row.created_at ? String(row.created_at) : null,
   })) as RouteStopRow[];
 
-  const drivers = buildDriverDirectory(report.employees || [], stops);
+  const routeDriverNames = buildRouteDriverNameSet(stops);
+
+  const drivers = buildDriverDirectory(report.employees || [], stops, routeDriverNames);
   const allShiftIds = (report.employees || [])
-    .filter((employee) => String(employee.role || "").toLowerCase() === "driver")
+    .filter((employee) => isPerformanceDriverEmployee(employee, routeDriverNames))
     .flatMap((employee) => (employee.shifts || []).map((shift) => String(shift.id || "").trim()))
     .filter(Boolean);
 
@@ -1204,7 +1234,7 @@ async function loadSnapshot(params: {
   const employeeByDriver = new Map<string, WorkingEmployeeRow>();
 
   for (const employee of report.employees || []) {
-    if (String(employee.role || "").toLowerCase() !== "driver") {
+    if (!isPerformanceDriverEmployee(employee, routeDriverNames)) {
       continue;
     }
 
