@@ -51,6 +51,31 @@ function statusClass(status: string | null | undefined) {
   return "bg-[#eaf2f9] text-[#355879] ring-1 ring-[#cfe0ef]";
 }
 
+function getDisplayedTaxForRow(
+  row: {
+  cashlessPayment: number;
+  cash: number;
+  taxRatePercent: number;
+  totalTax: number;
+},
+  includeCash: boolean,
+) {
+  const cashless = Number(row.cashlessPayment || 0);
+  const cash = Number(row.cash || 0);
+  const ratePercent = Number(row.taxRatePercent || 0);
+  const taxableBase = includeCash ? cashless + cash : cashless;
+
+  if (!Number.isFinite(taxableBase) || taxableBase <= 0) {
+    return 0;
+  }
+
+  if (!Number.isFinite(ratePercent) || ratePercent <= 0) {
+    return 0;
+  }
+
+  return Number((taxableBase * (ratePercent / 100)).toFixed(2));
+}
+
 function StatCard({
   label,
   value,
@@ -88,11 +113,15 @@ export default async function ReportsPage(props: {
   searchParams?: Promise<{
     from?: string;
     to?: string;
+    includeCash?: string;
   }>;
 }) {
   const searchParams = props.searchParams ? await props.searchParams : {};
   const { supabase } = await requireAdminPermission("reports.view");
   const salesTaxRange = resolveSalesTaxRange(searchParams);
+  const includeCashInTotal = ["1", "true", "on", "yes"].includes(
+    String(searchParams.includeCash || "").toLowerCase(),
+  );
 
   const today = new Date();
   const todayIso = today.toISOString().slice(0, 10);
@@ -288,6 +317,22 @@ export default async function ReportsPage(props: {
     installed: reservations.filter((row: any) => row.status === "installed").length,
   };
 
+  const totalTaxCashlessOnly = Number(
+    salesTaxReport.rows
+      .reduce((sum, row) => sum + getDisplayedTaxForRow(row, false), 0)
+      .toFixed(2),
+  );
+
+  const totalTaxWithCash = Number(
+    salesTaxReport.rows
+      .reduce((sum, row) => sum + getDisplayedTaxForRow(row, true), 0)
+      .toFixed(2),
+  );
+
+  const displayedTotalTax = includeCashInTotal
+    ? totalTaxWithCash
+    : totalTaxCashlessOnly;
+
   return (
     <div className="min-w-0 space-y-4 pb-10 sm:space-y-6">
       <section className="min-w-0 rounded-[22px] border border-black/5 bg-white px-4 py-4 shadow-[0_8px_28px_rgba(0,0,0,0.035)] sm:rounded-[30px] sm:px-6 sm:py-5 sm:shadow-[0_10px_35px_rgba(0,0,0,0.035)]">
@@ -380,6 +425,17 @@ export default async function ReportsPage(props: {
                   Apply dates
                 </button>
               </div>
+
+              <label className="col-span-2 inline-flex min-h-10 items-center gap-2 rounded-xl border border-[#d8cec0] bg-[#fcfaf7] px-3 text-xs font-semibold text-[#2b2a28] sm:col-span-3 sm:min-h-11 sm:text-sm">
+                <input
+                  type="checkbox"
+                  name="includeCash"
+                  value="1"
+                  defaultChecked={includeCashInTotal}
+                  className="h-4 w-4 rounded border-[#cbb69d] text-[#23313f] focus:ring-[#d8e8f7]"
+                />
+                Include cash in Total tax
+              </label>
             </form>
           </div>
         </div>
@@ -409,7 +465,7 @@ export default async function ReportsPage(props: {
                 Total tax
               </div>
               <div className="mt-1 break-words text-sm font-bold leading-tight text-[#1f1e1b] sm:text-lg sm:font-semibold">
-                {formatMoney(salesTaxReport.totals.totalTax)}
+                {formatMoney(displayedTotalTax)}
               </div>
             </div>
           </div>
@@ -456,7 +512,7 @@ export default async function ReportsPage(props: {
                     Tax
                   </div>
                   <div className="mt-0.5 text-xs font-bold text-[#1f1e1b]">
-                    {formatMoney(row.totalTax)}
+                    {formatMoney(getDisplayedTaxForRow(row, includeCashInTotal))}
                   </div>
                 </div>
               </div>
@@ -543,7 +599,7 @@ export default async function ReportsPage(props: {
                     {formatSalesTaxPercent(row.taxRatePercent)}
                   </td>
                   <td className="px-5 py-4 text-right font-semibold text-[#1f1e1b]">
-                    {formatMoney(row.totalTax)}
+                    {formatMoney(getDisplayedTaxForRow(row, includeCashInTotal))}
                   </td>
                 </tr>
               ))}
