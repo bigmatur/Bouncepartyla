@@ -172,7 +172,14 @@ function SummaryCard({ label, value, hint }: { label: string; value: string | nu
 export default async function AdminBookingsPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ q?: string; status?: string; date?: string; view?: string; saved?: string }>;
+  searchParams?: Promise<{
+    q?: string;
+    status?: string;
+    date?: string;
+    view?: string;
+    balance?: string;
+    saved?: string;
+  }>;
 }) {
   const resolvedSearchParams = searchParams ? await searchParams : {};
 
@@ -180,6 +187,7 @@ export default async function AdminBookingsPage({
   const selectedStatus = String(resolvedSearchParams?.status || "all");
   const selectedDate = String(resolvedSearchParams?.date || "").trim();
   const selectedView = String(resolvedSearchParams?.view || "active").trim();
+  const selectedBalance = String(resolvedSearchParams?.balance || "all").trim();
   const saved = String(resolvedSearchParams?.saved || "").trim();
 
   const returnParams = new URLSearchParams();
@@ -188,6 +196,7 @@ export default async function AdminBookingsPage({
   if (selectedStatus && selectedStatus !== "all") returnParams.set("status", selectedStatus);
   if (selectedDate) returnParams.set("date", selectedDate);
   if (selectedView && selectedView !== "active") returnParams.set("view", selectedView);
+  if (selectedBalance && selectedBalance !== "all") returnParams.set("balance", selectedBalance);
 
   const returnTo = `/admin/bookings${returnParams.toString() ? `?${returnParams.toString()}` : ""}`;
 
@@ -354,6 +363,11 @@ export default async function AdminBookingsPage({
       })
     : scopedBookings;
 
+  const filteredBookings =
+    selectedBalance === "due"
+      ? bookings.filter((booking: any) => Number(booking.balance_due || 0) > 0)
+      : bookings;
+
   const productIds = Array.from(
     new Set(
       scopedBookings
@@ -419,7 +433,7 @@ export default async function AdminBookingsPage({
   const today = todayISO();
   const todayBookings = scopedBookings.filter((booking: any) => booking.event_date === today);
   const openBookings = scopedBookings.filter((booking: any) => !["cancelled", "canceled", "closed", "refunded"].includes(String(booking.status || "")));
-  const totalBalance = bookings.reduce((sum: number, booking: any) => sum + Number(booking.balance_due || 0), 0);
+  const totalBalance = filteredBookings.reduce((sum: number, booking: any) => sum + Number(booking.balance_due || 0), 0);
 
   const statusOptions = [
     "draft",
@@ -482,7 +496,7 @@ export default async function AdminBookingsPage({
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-xs font-bold text-[#23313f] [&::-webkit-details-marker]:hidden">
               <span>Filters</span>
               <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold text-[#6c6258] ring-1 ring-[#e7ddd1]">
-                {selectedDate || "Any date"} · {selectedStatus === "all" ? "All" : prettyStatus(selectedStatus)}
+                {selectedDate || "Any date"} · {selectedStatus === "all" ? "All" : prettyStatus(selectedStatus)} · {selectedBalance === "due" ? "Unpaid" : "Any balance"}
               </span>
             </summary>
 
@@ -502,6 +516,11 @@ export default async function AdminBookingsPage({
                 <option value="all">All bookings</option>
               </select>
 
+              <select name="balance" defaultValue={selectedBalance} className="col-span-2 min-w-0 rounded-xl border border-[#d8cec0] bg-white px-3 py-2.5 text-xs outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]">
+                <option value="all">Any balance</option>
+                <option value="due">Unpaid balance only</option>
+              </select>
+
               <input name="q" defaultValue={query} placeholder="Customer, phone, booking #..." className="col-span-2 min-w-0 rounded-xl border border-[#d8cec0] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]" />
 
               <button type="submit" className="col-span-2 rounded-xl bg-[#23313f] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#18222d]">
@@ -510,7 +529,7 @@ export default async function AdminBookingsPage({
             </form>
           </details>
 
-          <form className="bookings-filter-desktop mt-5 hidden gap-3 sm:grid md:grid-cols-[150px_190px_160px_minmax(0,1fr)_110px]">
+          <form className="bookings-filter-desktop mt-5 hidden gap-3 sm:grid md:grid-cols-[150px_180px_160px_180px_minmax(0,1fr)_110px]">
             <input type="date" name="date" defaultValue={selectedDate} className="w-full rounded-2xl border border-[#d8cec0] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]" />
 
             <select name="status" defaultValue={selectedStatus} className="w-full rounded-2xl border border-[#d8cec0] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]">
@@ -524,6 +543,11 @@ export default async function AdminBookingsPage({
               <option value="active">Active only</option>
               <option value="archived">Archive only</option>
               <option value="all">All bookings</option>
+            </select>
+
+            <select name="balance" defaultValue={selectedBalance} className="w-full rounded-2xl border border-[#d8cec0] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]">
+              <option value="all">Any balance</option>
+              <option value="due">Unpaid balance only</option>
             </select>
 
             <input name="q" defaultValue={query} placeholder="Search customer, phone, booking number, address..." className="w-full rounded-2xl border border-[#d8cec0] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7]" />
@@ -584,7 +608,7 @@ export default async function AdminBookingsPage({
           ) : null}
 
         <div className="divide-y divide-[#eee5d9]">
-          {bookings.map((booking: any) => {
+          {filteredBookings.map((booking: any) => {
             const customer = getOne(booking.customers);
             const bookingItems = booking.booking_items || [];
             const products = bookingItems
@@ -863,7 +887,7 @@ export default async function AdminBookingsPage({
             );
           })}
 
-          {bookings.length === 0 && (
+          {filteredBookings.length === 0 && (
             <div className="px-4 py-10 text-center sm:px-6 sm:py-16">
               <div className="text-base font-bold text-[#1f1e1b] sm:text-lg sm:font-semibold">No bookings found</div>
               <p className="mt-2 text-sm text-[#6c6258]">Try another date, status, or search query.</p>
