@@ -292,6 +292,37 @@ function lateMinutesForStop(stop: RouteStopRow) {
   return Math.max(0, lateRaw);
 }
 
+function stopOperationalDeadline(stop: RouteStopRow) {
+  return plannedDateForStop(stop, stop.scheduled_end_time || stop.scheduled_start_time);
+}
+
+function incompleteRouteExceptionDue(params: {
+  stop: RouteStopRow;
+  dayKey: string;
+  todayBusinessDate: string | null;
+  nowMs: number;
+}) {
+  if (!params.todayBusinessDate) {
+    return false;
+  }
+
+  if (params.dayKey < params.todayBusinessDate) {
+    return true;
+  }
+
+  if (params.dayKey > params.todayBusinessDate) {
+    return false;
+  }
+
+  const deadline = stopOperationalDeadline(params.stop);
+
+  if (!deadline) {
+    return false;
+  }
+
+  return params.nowMs >= deadline.getTime();
+}
+
 function stopLink(stopId: string) {
   return `/admin/routes/driver/stops/${encodeURIComponent(stopId)}`;
 }
@@ -416,21 +447,31 @@ function buildDriverDetail(params: {
   const dayStops = [] as DriverPerformanceDetail["dayStops"];
   const exceptions: ExceptionItem[] = [];
   const categoryTotals = new Map<string, number>();
-  const nowIso = new Date().toISOString();
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const nowMs = now.getTime();
   const todayBusinessDate = toLosAngelesDateKey(nowIso);
 
   const shifts = params.employee?.shifts || [];
 
-  const staleShifts = shifts.filter((shift) => isStaleOpenShift(shift));
+  const staleShifts = shifts.filter((shift) => {
+    if (shift.work_date < params.range.from || shift.work_date > params.range.to) {
+      return false;
+    }
+
+    return isStaleOpenShift(shift);
+  });
 
   for (const staleShift of staleShifts) {
     addUniqueException(exceptions, {
       id: `stale:${staleShift.id}`,
       type: "stale_open_shift",
+      severity: "critical",
       dateTime: staleShift.clock_in_at,
       driverName: params.driver.name,
       reference: staleShift.id,
       description: "Open shift has been running longer than 24 hours.",
+      stopDate: staleShift.work_date,
       href: `/admin/staff/time?from=${encodeURIComponent(params.range.from)}&to=${encodeURIComponent(params.range.to)}`,
     });
   }
@@ -612,10 +653,20 @@ function buildDriverDetail(params: {
         addUniqueException(exceptions, {
           id: `invalid-pair:${stop.id}`,
           type: "invalid_arrival_completion_pair",
+          severity: "warning",
           dateTime: stop.completed_at || stop.arrived_at || `${day}T00:00:00.000Z`,
           driverName: params.driver.name,
           reference: stop.id,
           description: "Completed stop is missing a valid arrival-to-completion pair.",
+          stopType: stop.stop_type,
+          stopStatus: stop.status,
+          customerName: stop.customer_name,
+          bookingId: stop.booking_id,
+          stopDate: stop.stop_date,
+          scheduledStartTime: stop.scheduled_start_time,
+          scheduledEndTime: stop.scheduled_end_time,
+          arrivedAt: stop.arrived_at,
+          completedAt: stop.completed_at,
           href: stopLink(stop.id),
         });
       }
@@ -635,10 +686,21 @@ function buildDriverDetail(params: {
           addUniqueException(exceptions, {
             id: `late:${stop.id}`,
             type: "late_stop",
+            severity: "critical",
             dateTime: stop.arrived_at || `${day}T00:00:00.000Z`,
             driverName: params.driver.name,
             reference: stop.id,
             description: `Arrival outside planned window by ${lateMinutes} minutes (includes ${DEFAULT_LATE_TOLERANCE_MINUTES} minute tolerance).`,
+            lateMinutes,
+            stopType: stop.stop_type,
+            stopStatus: stop.status,
+            customerName: stop.customer_name,
+            bookingId: stop.booking_id,
+            stopDate: stop.stop_date,
+            scheduledStartTime: stop.scheduled_start_time,
+            scheduledEndTime: stop.scheduled_end_time,
+            arrivedAt: stop.arrived_at,
+            completedAt: stop.completed_at,
             href: stopLink(stop.id),
           });
         } else {
@@ -667,10 +729,20 @@ function buildDriverDetail(params: {
           addUniqueException(exceptions, {
             id: `proof:${stop.id}`,
             type: "missing_required_delivery_proof",
+            severity: "warning",
             dateTime: stop.completed_at || `${day}T00:00:00.000Z`,
             driverName: params.driver.name,
             reference: stop.id,
             description: "Required delivery proof is missing for a completed stop.",
+            stopType: stop.stop_type,
+            stopStatus: stop.status,
+            customerName: stop.customer_name,
+            bookingId: stop.booking_id,
+            stopDate: stop.stop_date,
+            scheduledStartTime: stop.scheduled_start_time,
+            scheduledEndTime: stop.scheduled_end_time,
+            arrivedAt: stop.arrived_at,
+            completedAt: stop.completed_at,
             href: stopLink(stop.id),
           });
         }
@@ -721,10 +793,21 @@ function buildDriverDetail(params: {
           addUniqueException(exceptions, {
             id: `long-on-site:${stop.id}`,
             type: "very_long_on_site",
+            severity: "warning",
             dateTime: stop.completed_at || `${day}T00:00:00.000Z`,
             driverName: params.driver.name,
             reference: stop.id,
             description: `On-site duration is ${minutes} minutes, above ${VERY_LONG_ON_SITE_MINUTES} minutes.`,
+            onSiteMinutes: minutes,
+            stopType: stop.stop_type,
+            stopStatus: stop.status,
+            customerName: stop.customer_name,
+            bookingId: stop.booking_id,
+            stopDate: stop.stop_date,
+            scheduledStartTime: stop.scheduled_start_time,
+            scheduledEndTime: stop.scheduled_end_time,
+            arrivedAt: stop.arrived_at,
+            completedAt: stop.completed_at,
             href: stopLink(stop.id),
           });
         }
@@ -736,15 +819,34 @@ function buildDriverDetail(params: {
       const isCompleted = isCompletedStatus(status);
       const isClosed = isCompleted || isCancelledStatus(status) || isFailedStatus(status);
 
-      if (!isClosed && todayBusinessDate && day <= todayBusinessDate) {
+      const shouldFlagIncompleteRoute = !isClosed && incompleteRouteExceptionDue({
+        stop,
+        dayKey: day,
+        todayBusinessDate,
+        nowMs,
+      });
+
+      if (shouldFlagIncompleteRoute) {
+        const expectedDeadline = stopOperationalDeadline(stop);
+
         dayExceptionsCount += 1;
         addUniqueException(exceptions, {
           id: `unfinished:${stop.id}`,
           type: "incomplete_route",
-          dateTime: stop.created_at || `${day}T00:00:00.000Z`,
+          severity: "warning",
+          dateTime: expectedDeadline?.toISOString() || stop.created_at || `${day}T00:00:00.000Z`,
           driverName: params.driver.name,
           reference: stop.id,
-          description: "Stop is still unfinished for an operational day that has already started.",
+          description: "Stop is still unfinished after its expected operational window.",
+          stopType: stop.stop_type,
+          stopStatus: stop.status,
+          customerName: stop.customer_name,
+          bookingId: stop.booking_id,
+          stopDate: stop.stop_date,
+          scheduledStartTime: stop.scheduled_start_time,
+          scheduledEndTime: stop.scheduled_end_time,
+          arrivedAt: stop.arrived_at,
+          completedAt: stop.completed_at,
           href: stopLink(stop.id),
         });
       }

@@ -13,6 +13,7 @@ import {
   PunctualitySection,
   SecondaryKpis,
   StopVolumeChart,
+  TimeDistributionChart,
   TimeUsageChart,
 } from "@/components/admin/staff-performance/PerformanceWidgets";
 import SectionCard from "@/components/admin/ui/SectionCard";
@@ -171,6 +172,7 @@ export default async function StaffPerformanceDriverDetailPage({
       </div>
 
       <div className="grid gap-4">
+        <TimeDistributionChart metrics={selectedDriver.metrics} />
         <PunctualityTrendChart dayStops={selectedDriver.dayStops} period={period} />
       </div>
 

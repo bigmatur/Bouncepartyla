@@ -126,10 +126,22 @@ export type ExceptionItem = {
     | "incomplete_route"
     | "invalid_arrival_completion_pair"
     | "very_long_on_site";
+  severity: "critical" | "warning" | "info";
   dateTime: string;
   driverName: string;
   reference: string;
   description: string;
+  lateMinutes?: number | null;
+  onSiteMinutes?: number | null;
+  stopType?: string | null;
+  stopStatus?: string | null;
+  customerName?: string | null;
+  bookingId?: string | null;
+  stopDate?: string | null;
+  scheduledStartTime?: string | null;
+  scheduledEndTime?: string | null;
+  arrivedAt?: string | null;
+  completedAt?: string | null;
   href: string | null;
 };
 

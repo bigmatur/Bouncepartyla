@@ -220,7 +220,7 @@ function buildStopVolumeBuckets(rows: ReadonlyArray<StopSummaryRow>, period: Res
 }
 
 function chartCanvasWidth(bucketCount: number) {
-  return Math.max(620, bucketCount * 56 + 120);
+  return Math.max(320, Math.min(980, bucketCount * 34 + 110));
 }
 
 function hourAxisLabel(minutes: number) {
@@ -430,7 +430,7 @@ export function PrimaryKpis(props: {
   const onTimePrevious = previous?.onTimePercent ?? null;
 
   return (
-    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
       <StatCard
         label="Working Time"
         value={formatDuration(current.workingMinutes)}
@@ -450,7 +450,13 @@ export function PrimaryKpis(props: {
         tone="green"
       />
       <StatCard
-        label="Exceptions"
+        label="Average On-Site"
+        value={formatDuration(current.averageOnSiteMinutes)}
+        hint={current.onSiteCoverageLabel}
+        tone="blue"
+      />
+      <StatCard
+        label="Needs Attention"
         value={current.exceptions.toLocaleString("en-US")}
         hint={previous ? `${previous.exceptions.toLocaleString("en-US")} previous · ${formatDeltaCount(current.exceptions, previous.exceptions)}` : "Late, stale/open, missing proof, unfinished, invalid timing"}
         tone={current.exceptions > 0 ? "red" : "plain"}
@@ -510,11 +516,16 @@ export function SecondaryKpis(props: {
   ];
 
   return (
-    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      {cards.map((card) => (
-        <StatCard key={card.label} label={card.label} value={card.value} hint={card.hint} tone="plain" />
-      ))}
-    </section>
+    <SectionCard
+      title="Time & Workload"
+      subtitle="Supporting operational counters. Between Stops is derived from completion-to-arrival gaps and is not GPS-measured driving time."
+    >
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {cards.map((card) => (
+          <StatCard key={card.label} label={card.label} value={card.value} hint={card.hint} tone="plain" />
+        ))}
+      </div>
+    </SectionCard>
   );
 }
 
@@ -551,8 +562,8 @@ export function TimeUsageChart(props: {
 
   return (
     <SectionCard
-      title="Time Usage"
-      subtitle="Derived from shift intervals and stop timestamps. Unclassified remains explicit when coverage is incomplete."
+      title="Activity & Time Usage"
+      subtitle="Working time composition by period bucket. Between Stops is derived from timestamps and may include waiting or traffic."
     >
       <div className="space-y-4">
         {buckets.length === 0 ? (
@@ -662,12 +673,105 @@ export function TimeUsageChart(props: {
   );
 }
 
+export function TimeDistributionChart(props: {
+  metrics: DriverPerformanceDetail["metrics"] | DriverPerformanceSnapshot["teamMetrics"];
+}) {
+  const values = [
+    { key: "on_site", label: "On-site", color: "#3b82f6", minutes: Math.max(0, props.metrics.onSiteMinutes) },
+    {
+      key: "between",
+      label: "Between Stops (derived)",
+      color: "#10b981",
+      minutes: Math.max(0, Number(props.metrics.betweenStopsMinutes || 0)),
+    },
+    { key: "break", label: "Explicit Break", color: "#f59e0b", minutes: Math.max(0, props.metrics.explicitBreakMinutes) },
+    { key: "unclassified", label: "Unclassified", color: "#9ca3af", minutes: Math.max(0, props.metrics.unclassifiedMinutes) },
+  ];
+
+  const total = values.reduce((sum, item) => sum + item.minutes, 0);
+  const radius = 56;
+  const stroke = 18;
+  const circumference = 2 * Math.PI * radius;
+  let offset = 0;
+
+  return (
+    <SectionCard
+      title="Time Distribution"
+      subtitle="Distribution of classified working time for the selected scope."
+    >
+      {total <= 0 ? (
+        <p className="text-sm text-[#81766c]">No classified time data in selected period.</p>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-[180px_minmax(0,1fr)] md:items-center">
+          <div className="mx-auto h-[150px] w-[150px]">
+            <svg width="150" height="150" viewBox="0 0 150 150" role="img" aria-label="Time distribution donut chart">
+              <g transform="translate(75,75) rotate(-90)">
+                <circle r={radius} cx={0} cy={0} fill="none" stroke="#efe7dd" strokeWidth={stroke} />
+                {values.map((item) => {
+                  if (item.minutes <= 0) {
+                    return null;
+                  }
+
+                  const ratio = item.minutes / total;
+                  const dash = ratio * circumference;
+                  const segment = (
+                    <circle
+                      key={item.key}
+                      r={radius}
+                      cx={0}
+                      cy={0}
+                      fill="none"
+                      stroke={item.color}
+                      strokeWidth={stroke}
+                      strokeDasharray={`${dash} ${circumference - dash}`}
+                      strokeDashoffset={-offset}
+                      strokeLinecap="butt"
+                    />
+                  );
+
+                  offset += dash;
+                  return segment;
+                })}
+              </g>
+              <text x="75" y="70" textAnchor="middle" fontSize="11" fill="#7b6f63" fontWeight="700">
+                Working
+              </text>
+              <text x="75" y="89" textAnchor="middle" fontSize="16" fill="#2b2621" fontWeight="800">
+                {formatDuration(total)}
+              </text>
+            </svg>
+          </div>
+
+          <div className="space-y-2.5">
+            {values.map((item) => {
+              const ratio = total > 0 ? (item.minutes / total) * 100 : 0;
+
+              return (
+                <div key={item.key} className="rounded-xl border border-[#ece2d8] bg-[#fcfaf7] p-2.5">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <div className="inline-flex items-center gap-2 font-semibold text-[#3a342d]">
+                      <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                      {item.label}
+                    </div>
+                    <div className="text-[#655a50]">{ratio.toFixed(1)}%</div>
+                  </div>
+                  <div className="mt-1.5 text-sm font-semibold text-[#28231e]">{formatDuration(item.minutes)}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
 export function StopVolumeChart(props: {
   dayStops: DriverPerformanceDetail["dayStops"] | DriverPerformanceSnapshot["teamDayStops"];
   period: ResolvedPeriod;
 }) {
   const rows = buildStopVolumeBuckets(props.dayStops, props.period);
-  const max = Math.max(1, ...rows.map((row) => Math.max(row.deliveries, row.pickups)));
+  const maxCompleted = Math.max(1, ...rows.map((row) => row.completed));
   const width = chartCanvasWidth(rows.length);
   const chartHeight = 270;
   const left = 44;
@@ -677,34 +781,38 @@ export function StopVolumeChart(props: {
   const plotHeight = chartHeight - top - bottom;
   const availableWidth = width - left - right;
   const step = rows.length > 0 ? availableWidth / rows.length : availableWidth;
-  const singleBarWidth = Math.max(8, Math.min(14, step * 0.22));
+  const barWidth = Math.max(16, Math.min(30, step * 0.56));
 
   const gridFractions = [0, 0.25, 0.5, 0.75, 1];
 
   return (
-    <SectionCard title="Stop Volume" subtitle="Business-local daily stop counts. Cancelled stops are never treated as completed workload.">
+    <SectionCard title="Stops & Punctuality" subtitle="Completed stop volume with punctuality composition. No dual-axis scaling.">
       {rows.length === 0 ? (
         <p className="text-sm text-[#81766c]">No route stops found in selected period.</p>
       ) : (
         <div className="space-y-4">
           <div className="flex flex-wrap gap-3 text-[11px] text-[#6c6258]">
             <div className="inline-flex items-center gap-1.5">
-              <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#3b82f6]" />
-              <span>Deliveries</span>
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#16a34a]" />
+              <span>On-time completed</span>
             </div>
             <div className="inline-flex items-center gap-1.5">
-              <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#10b981]" />
-              <span>Pickups</span>
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#dc2626]" />
+              <span>Late completed</span>
+            </div>
+            <div className="inline-flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-[#9ca3af]" />
+              <span>Completed (timing unavailable)</span>
             </div>
           </div>
 
           <div className="overflow-x-auto pb-1">
-            <svg width={width} height={chartHeight} role="img" aria-label="Stop volume trend with deliveries and pickups by period bucket">
+            <svg width={width} height={chartHeight} role="img" aria-label="Completed stop volume with on-time and late composition by period bucket">
               <rect x={0} y={0} width={width} height={chartHeight} fill="#fff" rx={12} />
 
               {gridFractions.map((fraction) => {
                 const y = top + plotHeight - fraction * plotHeight;
-                const value = Math.round(max * fraction);
+                const value = Math.round(maxCompleted * fraction);
                 return (
                   <g key={`grid-${fraction}`}>
                     <line x1={left} x2={width - right} y1={y} y2={y} stroke="#ece4d9" strokeWidth={1} />
@@ -717,15 +825,32 @@ export function StopVolumeChart(props: {
 
               {rows.map((row, index) => {
                 const xCenter = left + step * index + step / 2;
-                const groupX = xCenter - singleBarWidth - 3;
-                const deliveryHeight = (row.deliveries / max) * plotHeight;
-                const pickupHeight = (row.pickups / max) * plotHeight;
+                const x = xCenter - barWidth / 2;
+                const onTimeCompleted = Math.min(row.onTimeStops, row.completed);
+                const lateCompleted = Math.min(row.lateStops, Math.max(0, row.completed - onTimeCompleted));
+                const unmatchedCompleted = Math.max(0, row.completed - onTimeCompleted - lateCompleted);
+
+                const onTimeHeight = (onTimeCompleted / maxCompleted) * plotHeight;
+                const lateHeight = (lateCompleted / maxCompleted) * plotHeight;
+                const unmatchedHeight = (unmatchedCompleted / maxCompleted) * plotHeight;
+                const totalHeight = (row.completed / maxCompleted) * plotHeight;
+
+                let cursorY = top + plotHeight;
+                cursorY -= onTimeHeight;
+                const onTimeY = cursorY;
+                cursorY -= lateHeight;
+                const lateY = cursorY;
+                cursorY -= unmatchedHeight;
+                const unmatchedY = cursorY;
 
                 const title = [
                   row.detailLabel,
+                  `Completed: ${row.completed}`,
+                  `On-time completed: ${onTimeCompleted}`,
+                  `Late completed: ${lateCompleted}`,
+                  `Completed (timing unavailable): ${unmatchedCompleted}`,
                   `Deliveries: ${row.deliveries}`,
                   `Pickups: ${row.pickups}`,
-                  `Completed: ${row.completed}`,
                   `Failed: ${row.failed}`,
                   `Cancelled: ${row.cancelled}`,
                 ].join("\n");
@@ -735,19 +860,36 @@ export function StopVolumeChart(props: {
                     <title>{title}</title>
 
                     <rect
-                      x={groupX}
-                      y={top + plotHeight - deliveryHeight}
-                      width={singleBarWidth}
-                      height={deliveryHeight}
-                      fill="#3b82f6"
+                      x={x}
+                      y={top + plotHeight - totalHeight}
+                      width={barWidth}
+                      height={totalHeight}
+                      fill="#f1ebe2"
+                      rx={2}
+                    />
+
+                    <rect
+                      x={x}
+                      y={unmatchedY}
+                      width={barWidth}
+                      height={unmatchedHeight}
+                      fill="#9ca3af"
                       rx={2}
                     />
                     <rect
-                      x={groupX + singleBarWidth + 6}
-                      y={top + plotHeight - pickupHeight}
-                      width={singleBarWidth}
-                      height={pickupHeight}
-                      fill="#10b981"
+                      x={x}
+                      y={lateY}
+                      width={barWidth}
+                      height={lateHeight}
+                      fill="#dc2626"
+                      rx={2}
+                    />
+                    <rect
+                      x={x}
+                      y={onTimeY}
+                      width={barWidth}
+                      height={onTimeHeight}
+                      fill="#16a34a"
                       rx={2}
                     />
 
@@ -764,7 +906,9 @@ export function StopVolumeChart(props: {
             {rows.slice(-4).map((row) => (
               <div key={`meta-${row.key}`} className="rounded-lg border border-[#eee5d9] bg-[#fbf9f6] px-2 py-1.5">
                 <span className="font-semibold text-[#3a342d]">{row.detailLabel}</span>
-                <span> · Completed {row.completed} · Failed {row.failed} · Cancelled {row.cancelled}</span>
+                <span>
+                  {` · Completed ${row.completed} · On-time ${row.onTimeStops} · Late ${row.lateStops} · Del ${row.deliveries} · Pk ${row.pickups}`}
+                </span>
               </div>
             ))}
           </div>
@@ -985,42 +1129,113 @@ export function OperationalQualitySection(props: {
 export function ExceptionsSection(props: {
   items: DriverPerformanceDetail["exceptions"] | DriverPerformanceSnapshot["teamExceptions"];
 }) {
+  const labelForType = (type: DriverPerformanceDetail["exceptions"][number]["type"]) => {
+    if (type === "late_stop") return "Late stop";
+    if (type === "very_long_on_site") return "Very long on-site";
+    if (type === "incomplete_route") return "Incomplete route";
+    if (type === "stale_open_shift") return "Stale open shift";
+    if (type === "missing_required_delivery_proof") return "Missing delivery proof";
+    if (type === "invalid_arrival_completion_pair") return "Invalid timing pair";
+    return String(type).replace(/_/g, " ");
+  };
+
+  const severityTone = (severity: DriverPerformanceDetail["exceptions"][number]["severity"]) => {
+    if (severity === "critical") {
+      return "border-red-200 bg-red-50/70";
+    }
+
+    if (severity === "warning") {
+      return "border-amber-200 bg-amber-50/70";
+    }
+
+    return "border-[#e9dfd3] bg-[#fcfaf7]";
+  };
+
+  const severityBadge = (item: DriverPerformanceDetail["exceptions"][number]) => {
+    if (item.type === "late_stop") {
+      return item.lateMinutes != null
+        ? `LATE +${Math.max(0, Math.round(item.lateMinutes))} min`
+        : "LATE";
+    }
+
+    if (item.type === "very_long_on_site") {
+      return item.onSiteMinutes != null
+        ? `ON-SITE ${formatDuration(item.onSiteMinutes)}`
+        : "LONG ON-SITE";
+    }
+
+    if (item.type === "incomplete_route") return "UNFINISHED";
+    if (item.type === "stale_open_shift") return "STALE SHIFT";
+    if (item.type === "missing_required_delivery_proof") return "MISSING PROOF";
+    if (item.type === "invalid_arrival_completion_pair") return "TIMING REVIEW";
+    return "REVIEW";
+  };
+
+  const badgeTone = (item: DriverPerformanceDetail["exceptions"][number]) => {
+    if (item.severity === "critical") {
+      return "bg-red-100 text-red-800";
+    }
+
+    if (item.severity === "warning") {
+      return "bg-amber-100 text-amber-900";
+    }
+
+    return "bg-[#ece5dc] text-[#5f554b]";
+  };
+
   return (
-    <SectionCard title="Exceptions" subtitle="Factual operational exceptions. No fault attribution.">
+    <SectionCard title="Needs Attention" subtitle="Operational exceptions with context. No employee scoring or fault attribution.">
       {props.items.length === 0 ? (
         <p className="text-sm text-[#81766c]">No exceptions found for this period.</p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full border-separate border-spacing-0 text-sm">
-            <thead>
-              <tr className="text-left text-xs uppercase tracking-[0.08em] text-[#7d7266]">
-                <th className="border-b border-[#e8ddd1] px-2 py-2">Type</th>
-                <th className="border-b border-[#e8ddd1] px-2 py-2">Date/Time</th>
-                <th className="border-b border-[#e8ddd1] px-2 py-2">Driver</th>
-                <th className="border-b border-[#e8ddd1] px-2 py-2">Reference</th>
-                <th className="border-b border-[#e8ddd1] px-2 py-2">Details</th>
-              </tr>
-            </thead>
-            <tbody>
-              {props.items.slice(0, 50).map((item) => (
-                <tr key={item.id} className="text-[#3a342d]">
-                  <td className="border-b border-[#f1e9df] px-2 py-2">{item.type.replaceAll("_", " ")}</td>
-                  <td className="border-b border-[#f1e9df] px-2 py-2">{formatDateTimeLabel(item.dateTime)}</td>
-                  <td className="border-b border-[#f1e9df] px-2 py-2">{item.driverName}</td>
-                  <td className="border-b border-[#f1e9df] px-2 py-2">
-                    {item.href ? (
-                      <Link href={item.href} className="text-[#2f6bb3] underline">
-                        {item.reference}
-                      </Link>
-                    ) : (
-                      item.reference
-                    )}
-                  </td>
-                  <td className="border-b border-[#f1e9df] px-2 py-2">{item.description}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-2.5">
+          {props.items.slice(0, 60).map((item) => (
+            <article
+              key={item.id}
+              className={[
+                "rounded-2xl border p-3 sm:p-3.5",
+                severityTone(item.severity),
+              ].join(" ")}
+            >
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={["rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.06em]", badgeTone(item)].join(" ")}>
+                      {severityBadge(item)}
+                    </span>
+                    <span className="text-sm font-semibold text-[#2f2924]">{labelForType(item.type)}</span>
+                  </div>
+                  <div className="mt-1.5 text-xs text-[#6a5f54]">
+                    {formatDateTimeLabel(item.dateTime)} · {item.driverName}
+                    {item.stopType ? ` · ${String(item.stopType).replace(/_/g, " ")}` : ""}
+                    {item.customerName ? ` · ${item.customerName}` : ""}
+                  </div>
+                </div>
+
+                {item.href ? (
+                  <Link
+                    href={item.href}
+                    className="rounded-full border border-[#d9cfc2] bg-white px-3 py-1.5 text-xs font-semibold text-[#2f6bb3]"
+                  >
+                    Inspect record
+                  </Link>
+                ) : null}
+              </div>
+
+              <p className="mt-2 text-sm text-[#3a342d]">{item.description}</p>
+
+              <div className="mt-2 grid gap-1 text-[11px] text-[#6f6459] sm:grid-cols-2 lg:grid-cols-4">
+                <div>Booking: {item.bookingId || "—"}</div>
+                <div>Scheduled: {item.scheduledStartTime || "—"}{item.scheduledEndTime ? ` - ${item.scheduledEndTime}` : ""}</div>
+                <div>Arrived: {item.arrivedAt ? formatDateTimeLabel(item.arrivedAt) : "—"}</div>
+                <div>Completed: {item.completedAt ? formatDateTimeLabel(item.completedAt) : "—"}</div>
+              </div>
+
+              <div className="mt-1.5 text-[10px] text-[#8a7c6f]">
+                Reference: {item.reference}
+              </div>
+            </article>
+          ))}
         </div>
       )}
     </SectionCard>
@@ -1035,7 +1250,50 @@ export function DriversTable(props: {
 }) {
   return (
     <SectionCard title="Drivers" subtitle="Neutral default sort by driver name. Columns are factual operational metrics.">
-      <div className="overflow-x-auto">
+      <div className="space-y-2 md:hidden">
+        {props.snapshot.perDriver.map((row) => {
+          const previousRow = props.comparison?.perDriver.find(
+            (item) => item.driver.driverKey === row.driver.driverKey,
+          );
+
+          const query = periodQueryParams(props.period, {
+            driver: row.driver.driverKey,
+          });
+
+          const onTimeDelta = formatDeltaPoints(
+            row.metrics.onTimePercent,
+            previousRow?.metrics.onTimePercent ?? null,
+          );
+
+          return (
+            <article key={`mobile-${row.driver.driverKey}`} className="rounded-2xl border border-[#e9dfd3] bg-[#fcfaf7] p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <Link href={`${props.detailBasePath}/${encodeURIComponent(row.driver.driverKey)}?${query}`} className="text-sm font-semibold text-[#2f6bb3] underline">
+                    {row.driver.name}
+                  </Link>
+                  <div className="mt-1 text-xs text-[#6f6459]">
+                    Working {formatDuration(row.metrics.workingMinutes)} · Completed {row.metrics.completedStops}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-sm font-semibold text-[#2f2924]">{formatPercent(row.metrics.onTimePercent)}</div>
+                  {props.comparison ? <div className={`text-[10px] ${deltaTone(onTimeDelta)}`}>{onTimeDelta}</div> : null}
+                </div>
+              </div>
+
+              <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-[#6a5f54]">
+                <div>Del {row.metrics.deliveries}</div>
+                <div>Pk {row.metrics.pickups}</div>
+                <div>Avg on-site {formatDuration(row.metrics.averageOnSiteMinutes)}</div>
+                <div>Exceptions {row.metrics.exceptions}</div>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+
+      <div className="hidden overflow-x-auto md:block">
         <table className="min-w-[940px] w-full border-separate border-spacing-0 text-sm">
           <thead>
             <tr className="text-left text-xs uppercase tracking-[0.08em] text-[#7d7266]">
@@ -1103,7 +1361,45 @@ export function DailyPerformanceTable(props: {
 
   return (
     <SectionCard title="Daily Performance" subtitle="Textual daily view for accessibility and auditability.">
-      <div className="overflow-x-auto">
+      <div className="space-y-2 md:hidden">
+        {props.rows.map((row) => {
+          const stop = stopByDate.get(row.date);
+          const onTime = stop && stop.punctualityEligibleStops > 0
+            ? (stop.onTimeStops / stop.punctualityEligibleStops) * 100
+            : null;
+          const selected = row.date === props.activeDay;
+
+          return (
+            <article
+              key={`mobile-${row.date}`}
+              className={[
+                "rounded-2xl border p-3",
+                selected ? "border-[#b8d2ef] bg-[#f4f7fb]" : "border-[#e9dfd3] bg-[#fcfaf7]",
+              ].join(" ")}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <Link href={props.dayHref(row.date)} className="text-sm font-semibold text-[#2f6bb3] underline">
+                  {toBusinessDateLabel(row.date)}
+                </Link>
+                <div className="text-xs text-[#6d6258]">{selected ? "Selected" : ""}</div>
+              </div>
+
+              <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-[#665b50]">
+                <div>Working {formatDuration(row.workingMinutes)}</div>
+                <div>On-site {formatDuration(row.onSiteMinutes)}</div>
+                <div>Between {formatDuration(row.betweenStopsMinutes)}</div>
+                <div>Break {formatDuration(row.breakMinutes)}</div>
+                <div>Completed {stop?.completed ?? 0}</div>
+                <div>On-time {formatPercent(onTime)}</div>
+                <div>Late {stop?.lateStops ?? 0}</div>
+                <div>Exceptions {stop?.exceptions ?? 0}</div>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+
+      <div className="hidden overflow-x-auto md:block">
         <table className="min-w-[1020px] w-full border-separate border-spacing-0 text-sm">
           <thead>
             <tr className="text-left text-xs uppercase tracking-[0.08em] text-[#7d7266]">
