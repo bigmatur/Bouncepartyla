@@ -9,6 +9,8 @@ type SearchParams = {
   from?: string;
   to?: string;
   view?: "overview" | "products" | "components" | "payments" | "analytics";
+  locations?: string;
+  taxCities?: string;
 };
 
 type RankedRow = { name: string; quantity: number; revenue: number };
@@ -212,6 +214,8 @@ export default async function DashboardPage({ searchParams }: { searchParams?: S
   const params = searchParams || {};
   const period = resolveRange(params);
   const view = params.view || "overview";
+  const showAllLocations = params.locations === "all";
+  const showAllTaxCities = params.taxCities === "all";
   const fromTs = `${period.from}T00:00:00`;
   const toTs = `${period.to}T23:59:59.999`;
   const ga4Analytics = view === "analytics"
@@ -376,8 +380,7 @@ export default async function DashboardPage({ searchParams }: { searchParams?: S
       );
 
     const salesTaxRows = [...locationGroups]
-      .sort((a, b) => b.tax - a.tax || a.city.localeCompare(b.city))
-      .slice(0, 8);
+      .sort((a, b) => b.tax - a.tax || a.city.localeCompare(b.city));
 
     const successful = payments.filter((p) => ["paid", "completed", "succeeded", "success"].includes(String(p.status || "paid").toLowerCase()));
 
@@ -438,6 +441,8 @@ export default async function DashboardPage({ searchParams }: { searchParams?: S
   const addOnRevenue = addOns.reduce((sum, row) => sum + row.revenue, 0);
 
   const query = `range=${encodeURIComponent(period.range)}&from=${period.from}&to=${period.to}`;
+  const locationsDetailsHref = `/admin?${query}&view=overview${showAllLocations ? "" : "&locations=all"}${showAllTaxCities ? "&taxCities=all" : ""}`;
+  const taxCitiesDetailsHref = `/admin?${query}&view=overview${showAllLocations ? "&locations=all" : ""}${showAllTaxCities ? "" : "&taxCities=all"}`;
 
   return (
     <div className="admin-ipad-page admin-ipad-dashboard mx-auto w-full max-w-[1480px] space-y-4 pb-24 sm:space-y-5 sm:pb-12">
@@ -552,10 +557,10 @@ export default async function DashboardPage({ searchParams }: { searchParams?: S
           <section className="grid gap-4 sm:gap-5 lg:grid-cols-2">
             <Card title="Sales by location" subtitle="Bookings grouped by city for the selected period.">
               <CompactList
-                rows={locationGroups.slice(0, 6).map((row) => ({
+                rows={(showAllLocations ? locationGroups : locationGroups.slice(0, 6)).map((row) => ({
                   name: row.city,
                   value: row.revenue,
-                  subtitle: `${row.bookings.toLocaleString("en-US")} bookings`,
+                  subtitle: `${row.bookings.toLocaleString("en-US")} bookings · ${gross > 0 ? ((row.revenue / gross) * 100).toFixed(1) : "0.0"}% of sales`,
                   accent: "bg-[#c9964f]",
                 }))}
                 keyName="location"
@@ -563,6 +568,11 @@ export default async function DashboardPage({ searchParams }: { searchParams?: S
                 formatter={(value) => money(value)}
                 emptyText="No location sales in this period."
               />
+              {locationGroups.length > 6 ? (
+                <Link href={locationsDetailsHref} className="mt-4 flex min-h-10 items-center justify-center border-t border-[#efe6dc] pt-3 text-xs font-bold text-[#8a642f] transition hover:text-[#6f4e22]">
+                  {showAllLocations ? "Show less" : `View details · ${locationGroups.length} cities`}
+                </Link>
+              ) : null}
             </Card>
 
             <Card title="Sales tax" subtitle="Tax collected by city for the selected period.">
@@ -571,10 +581,10 @@ export default async function DashboardPage({ searchParams }: { searchParams?: S
                 <div className="text-xl font-bold tracking-tight text-[#28231f] sm:text-2xl">{money(tax)}</div>
               </div>
               <CompactList
-                rows={salesTaxRows.map((row) => ({
+                rows={(showAllTaxCities ? salesTaxRows : salesTaxRows.slice(0, 8)).map((row) => ({
                   name: row.city,
                   value: row.tax,
-                  subtitle: `${row.bookings.toLocaleString("en-US")} bookings`,
+                  subtitle: `${row.bookings.toLocaleString("en-US")} bookings · ${tax > 0 ? ((row.tax / tax) * 100).toFixed(1) : "0.0"}% of tax`,
                   accent: "bg-[#243342]",
                 }))}
                 keyName="sales-tax"
@@ -582,6 +592,11 @@ export default async function DashboardPage({ searchParams }: { searchParams?: S
                 formatter={(value) => money(value)}
                 emptyText="No sales tax recorded in this period."
               />
+              {salesTaxRows.length > 8 ? (
+                <Link href={taxCitiesDetailsHref} className="mt-4 flex min-h-10 items-center justify-center border-t border-[#efe6dc] pt-3 text-xs font-bold text-[#42566a] transition hover:text-[#243342]">
+                  {showAllTaxCities ? "Show less" : `View details · ${salesTaxRows.length} cities`}
+                </Link>
+              ) : null}
             </Card>
           </section>
 
