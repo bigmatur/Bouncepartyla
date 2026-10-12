@@ -89,6 +89,12 @@ function parseAmountOptions(value: string) {
   return unique.length > 0 ? unique : [5, 10, 20];
 }
 
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    String(value || ""),
+  );
+}
+
 
 
 function isRlsPolicyError(error: any) {
@@ -827,6 +833,78 @@ export async function updateDeliveryPricingSettingsAction(formData: FormData) {
 
   revalidateSettings();
   redirect("/admin/settings?section=delivery&saved=delivery");
+}
+
+export async function updateCustomerBookingApprovalSettingsAction(formData: FormData) {
+  const { supabase } = await requireAdminPermission("settings.edit");
+  const settingsId = await getOrCreateSystemSettingsId();
+
+  const lastMinuteEnabled = getBoolean(formData, "customerBookingLastMinuteEnabled");
+  const lastMinuteValue = Math.max(1, Math.floor(getNumber(formData, "customerBookingLastMinuteValue", 24)));
+  const lastMinuteUnit = getString(formData, "customerBookingLastMinuteUnit") === "days" ? "days" : "hours";
+
+  const parkVenueLimitEnabled = getBoolean(formData, "customerBookingParkVenueLimitEnabled");
+  const parkVenueDailyLimit = Math.max(0, Math.floor(getNumber(formData, "customerBookingParkVenueDailyLimit", 0)));
+
+  const mappedOptionIds = Array.from(
+    new Set(
+      formData
+        .getAll("approvalParkVenueOptionIds")
+        .map((value) => String(value || "").trim())
+        .filter((value) => isUuid(value)),
+    ),
+  );
+
+  const settingsUpdateResult = await supabase
+    .from("system_settings")
+    .update({
+      customer_booking_last_minute_enabled: lastMinuteEnabled,
+      customer_booking_last_minute_value: lastMinuteValue,
+      customer_booking_last_minute_unit: lastMinuteUnit,
+      customer_booking_park_venue_limit_enabled: parkVenueLimitEnabled,
+      customer_booking_park_venue_daily_limit: parkVenueDailyLimit,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", settingsId);
+
+  if (settingsUpdateResult.error) {
+    throw new Error(settingsUpdateResult.error.message);
+  }
+
+  const deactivateResult = await supabase
+    .from("customer_booking_approval_option_map")
+    .update({
+      active: false,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("active", true);
+
+  if (deactivateResult.error && !isMissingTableError(deactivateResult.error)) {
+    throw new Error(deactivateResult.error.message);
+  }
+
+  if (mappedOptionIds.length > 0) {
+    const upsertRows = mappedOptionIds.map((modifierGroupOptionId) => ({
+      modifier_group_option_id: modifierGroupOptionId,
+      location_kind: "venue",
+      active: true,
+      updated_at: new Date().toISOString(),
+    }));
+
+    const upsertResult = await supabase
+      .from("customer_booking_approval_option_map")
+      .upsert(upsertRows, {
+        onConflict: "modifier_group_option_id",
+      });
+
+    if (upsertResult.error) {
+      throw new Error(upsertResult.error.message);
+    }
+  }
+
+  revalidateSettings();
+  revalidatePath("/account/book-now");
+  redirect("/admin/settings?section=customer-booking-approval&saved=customer-booking-approval");
 }
 
 export async function updateWarehouseAddressSettingsAction(formData: FormData) {

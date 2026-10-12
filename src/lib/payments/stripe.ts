@@ -210,6 +210,7 @@ export async function syncStripeCheckoutSessionPayment(input: {
   const paymentIntentId = String(session?.payment_intent || "").trim();
   const source = String(session?.metadata?.source || "stripe_checkout").trim();
   const checkoutAttemptId = String(session?.metadata?.booking_checkout_attempt_id || "").trim();
+  const approvalRevisionFromSession = Number(session?.metadata?.customer_approval_revision || 0);
   const amount = Number(session?.amount_total || 0) / 100;
   const tipAmount = Math.max(0, Number(session?.metadata?.tip_amount || 0));
 
@@ -218,6 +219,129 @@ export async function syncStripeCheckoutSessionPayment(input: {
   }
 
   const supabase = createServiceClient();
+  let temporaryApprovalValid = true;
+  let temporaryApprovalStatus: "approval_not_active" | "approval_revision_mismatch" | null = null;
+  let temporaryAttemptAlreadyFinalized = false;
+
+  if (source === "customer_temporary_deposit") {
+    if (!checkoutAttemptId) {
+      return {
+        success: false,
+        status: "integrity_error_missing_checkout_attempt_id",
+        bookingId,
+        source,
+        paymentAmount: Number(amount.toFixed(2)),
+        finalizeResult: null,
+        routeSyncResult: null,
+      };
+    }
+
+    const attemptResult = await supabase
+      .from("booking_checkout_attempts")
+      .select("id, booking_id, state, stripe_checkout_session_id, approval_revision")
+      .eq("id", checkoutAttemptId)
+      .maybeSingle();
+
+    if (attemptResult.error) {
+      throw new Error(attemptResult.error.message);
+    }
+
+    const attemptRow = attemptResult.data as {
+      id?: string | null;
+      booking_id?: string | null;
+      state?: string | null;
+      stripe_checkout_session_id?: string | null;
+      approval_revision?: number | null;
+    } | null;
+
+    if (!attemptRow?.id) {
+      return {
+        success: false,
+        status: "integrity_error_attempt_not_found",
+        bookingId,
+        source,
+        paymentAmount: Number(amount.toFixed(2)),
+        finalizeResult: null,
+        routeSyncResult: null,
+      };
+    }
+
+    if (String(attemptRow.booking_id || "") !== bookingId) {
+      return {
+        success: false,
+        status: "integrity_error_attempt_booking_mismatch",
+        bookingId,
+        source,
+        paymentAmount: Number(amount.toFixed(2)),
+        finalizeResult: null,
+        routeSyncResult: null,
+      };
+    }
+
+    if (
+      attemptRow.stripe_checkout_session_id
+      && String(attemptRow.stripe_checkout_session_id) !== sessionId
+    ) {
+      return {
+        success: false,
+        status: "integrity_error_attempt_session_mismatch",
+        bookingId,
+        source,
+        paymentAmount: Number(amount.toFixed(2)),
+        finalizeResult: null,
+        routeSyncResult: null,
+      };
+    }
+
+    if (String(attemptRow.state || "") === "finalized") {
+      temporaryAttemptAlreadyFinalized = true;
+    }
+
+    const bookingStateResult = await supabase
+      .from("bookings")
+      .select("id, booking_source, status, customer_approval_state, customer_approval_revision")
+      .eq("id", bookingId)
+      .maybeSingle();
+
+    if (bookingStateResult.error) {
+      throw new Error(bookingStateResult.error.message);
+    }
+
+    const bookingState = bookingStateResult.data as {
+      booking_source?: string | null;
+      status?: string | null;
+      customer_approval_state?: string | null;
+      customer_approval_revision?: number | null;
+    } | null;
+
+    const bookingSource = String(bookingState?.booking_source || "").toLowerCase();
+    const bookingStatus = String(bookingState?.status || "").toLowerCase();
+    const approvalState = String(bookingState?.customer_approval_state || "").toLowerCase();
+    const currentRevision = Number(bookingState?.customer_approval_revision || 0);
+
+    if (bookingSource === "customer_self_service") {
+      const revisionMismatch =
+        Number.isFinite(approvalRevisionFromSession)
+        && approvalRevisionFromSession > 0
+        && currentRevision > 0
+        && approvalRevisionFromSession !== currentRevision;
+
+      temporaryApprovalValid =
+        bookingStatus === "pending_deposit"
+        && approvalState === "approved"
+        && !revisionMismatch;
+
+      temporaryApprovalStatus = revisionMismatch
+        ? "approval_revision_mismatch"
+        : "approval_not_active";
+
+      if (temporaryAttemptAlreadyFinalized) {
+        temporaryApprovalValid = true;
+        temporaryApprovalStatus = null;
+      }
+    }
+  }
+
   const existing = await supabase
     .from("payments")
     .select("id")
@@ -236,7 +360,9 @@ export async function syncStripeCheckoutSessionPayment(input: {
       status: "paid",
       external_reference: sessionId,
       tip_amount: Number(tipAmount.toFixed(2)),
-      note: `Stripe Checkout paid. Source: ${source}. PaymentIntent: ${paymentIntentId || "n/a"}`,
+      note: temporaryApprovalValid
+        ? `Stripe Checkout paid. Source: ${source}. PaymentIntent: ${paymentIntentId || "n/a"}`
+        : `Stripe Checkout captured but blocked for reconciliation. Source: ${source}. PaymentIntent: ${paymentIntentId || "n/a"}`,
       paid_at: new Date().toISOString(),
     });
 
@@ -245,10 +371,32 @@ export async function syncStripeCheckoutSessionPayment(input: {
     }
   }
 
-  if (source === "customer_temporary_deposit" && !checkoutAttemptId) {
+  if (source === "customer_temporary_deposit" && temporaryAttemptAlreadyFinalized) {
+    return {
+      success: true,
+      status: "paid",
+      bookingId,
+      source,
+      paymentAmount: Number(amount.toFixed(2)),
+      finalizeResult: { success: true, status: "already_finalized" },
+      routeSyncResult: null,
+      idempotent: true,
+    };
+  }
+
+  if (source === "customer_temporary_deposit" && !temporaryApprovalValid) {
+    if (checkoutAttemptId) {
+      await supabase.rpc("release_booking_checkout_attempt_hold", {
+        p_booking_id: bookingId,
+        p_attempt_id: checkoutAttemptId,
+        p_stripe_checkout_session_id: sessionId || null,
+        p_reason: "approval_not_active_or_revision_mismatch",
+      });
+    }
+
     return {
       success: false,
-      status: "integrity_error_missing_checkout_attempt_id",
+      status: temporaryApprovalStatus || "approval_not_active",
       bookingId,
       source,
       paymentAmount: Number(amount.toFixed(2)),

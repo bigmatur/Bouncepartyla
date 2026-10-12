@@ -1,4 +1,7 @@
-import { payCustomerBookingBalanceByCardAction } from "../actions";
+import {
+  payApprovedCustomerBookingDepositAction,
+  payCustomerBookingBalanceByCardAction,
+} from "../actions";
 
 function money(value: number | string | null | undefined) {
   const parsed = Number(value ?? 0);
@@ -13,11 +16,13 @@ function money(value: number | string | null | undefined) {
 type MobileBalancePaymentBarProps = {
   bookingId: string;
   balanceDue: number;
+  isApprovalFlow?: boolean;
 };
 
 export default function MobileBalancePaymentBar({
   bookingId,
   balanceDue,
+  isApprovalFlow = false,
 }: MobileBalancePaymentBarProps) {
   return (
     <div className="fixed inset-x-3 bottom-3 z-50 rounded-[20px] border border-black/10 bg-white/95 p-2 shadow-[0_16px_45px_rgba(0,0,0,0.16)] backdrop-blur-xl print:hidden lg:hidden">
@@ -31,10 +36,10 @@ export default function MobileBalancePaymentBar({
           </div>
         </div>
 
-        <form action={payCustomerBookingBalanceByCardAction}>
+        <form action={isApprovalFlow ? payApprovedCustomerBookingDepositAction : payCustomerBookingBalanceByCardAction}>
           <input type="hidden" name="bookingId" value={bookingId} />
           <button className="inline-flex min-h-11 items-center justify-center rounded-full bg-[#23313f] px-4 text-sm font-semibold text-white">
-            Pay balance
+            {isApprovalFlow ? "Continue to payment" : "Pay balance"}
           </button>
         </form>
       </div>

@@ -114,17 +114,23 @@ export default async function CustomerBookingDetailsPage({
   // Read the source directly as a fallback because older get_my_booking_details
   // RPC versions may not expose booking_source yet.
   let bookingSource = String((details.booking as any).booking_source || "").trim();
+  let customerApprovalState = String((details.booking as any).customer_approval_state || "").trim();
 
-  if (!bookingSource && !isAdminPreview) {
+  if ((!bookingSource || !customerApprovalState) && !isAdminPreview) {
     const sourceLookup = await supabase
       .from("bookings")
-      .select("booking_source")
+      .select("booking_source, customer_approval_state, customer_approval_expires_at, customer_approval_revision, customer_approval_reasons")
       .eq("id", bookingId)
       .maybeSingle();
 
     if (!sourceLookup.error) {
       bookingSource = String(sourceLookup.data?.booking_source || "").trim();
+      customerApprovalState = String(sourceLookup.data?.customer_approval_state || "").trim();
       (details.booking as any).booking_source = bookingSource || null;
+      (details.booking as any).customer_approval_state = customerApprovalState || null;
+      (details.booking as any).customer_approval_expires_at = sourceLookup.data?.customer_approval_expires_at || null;
+      (details.booking as any).customer_approval_revision = sourceLookup.data?.customer_approval_revision ?? null;
+      (details.booking as any).customer_approval_reasons = sourceLookup.data?.customer_approval_reasons || [];
     }
   }
 

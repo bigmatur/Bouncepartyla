@@ -8,8 +8,16 @@ import { requireCustomerAccess } from "@/lib/auth/require-customer";
 import { executeCreateBooking } from "@/features/booking/engine/create-booking";
 import { buildCustomerCreateBookingCommand } from "@/features/booking/adapters/customer-create-booking-command";
 import { validateBookingItemsAvailability } from "@/features/booking/server/validate-booking-items-availability";
-import { processNotificationQueueBestEffort } from "@/lib/notifications/engine";
+import {
+  enqueueStaffBookingNotification,
+  processNotificationQueueBestEffort,
+} from "@/lib/notifications/engine";
 import { createStripeCheckoutSession } from "@/lib/payments/stripe";
+import {
+  type CustomerApprovalReason,
+  evaluateCustomerBookingApproval,
+  requestCustomerBookingApproval,
+} from "@/lib/booking/customer-approval";
 import {
   attachAvailabilityToBookingItems,
   getCombinedReservationWindow,
@@ -60,6 +68,79 @@ function escapeHtml(value: string) {
     .replaceAll("'", "&#039;");
 }
 
+async function signCustomerBookingContractIfAccepted(params: {
+  supabase: any;
+  bookingId: string;
+  bookingNumber: string;
+  customerName: string;
+  eventDate: string;
+  totalAmount: number;
+  depositAmount: number;
+  contractAccepted: boolean;
+  contractSignerName: string;
+  contractSignatureDataUrl: string;
+  contractRenderedHtml: string;
+}) {
+  if (!params.contractAccepted) {
+    return;
+  }
+
+  const renderedContract =
+    params.contractRenderedHtml.trim() ||
+    `
+        <section>
+          <h2>Rental Agreement</h2>
+          <p><strong>Customer:</strong> ${escapeHtml(params.customerName)}</p>
+          <p><strong>Booking:</strong> ${escapeHtml(params.bookingNumber)}</p>
+          <p><strong>Event date:</strong> ${escapeHtml(params.eventDate)}</p>
+          <p><strong>Total:</strong> $${Number(params.totalAmount || 0).toFixed(2)}</p>
+          <p><strong>Deposit:</strong> $${Number(params.depositAmount || 0).toFixed(2)}</p>
+          <p><strong>Client signature:</strong> ${escapeHtml(params.contractSignerName || params.customerName)}</p>
+        </section>
+      `;
+  const signatureImageDataUrl = /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(
+    params.contractSignatureDataUrl,
+  )
+    ? params.contractSignatureDataUrl
+    : null;
+  const documentHashSha256 = toSha256(renderedContract);
+
+  const { data: signResult, error: signError } = await params.supabase.rpc(
+    "sign_customer_booking_contract",
+    {
+      p_booking_id: params.bookingId,
+      p_signer_name: params.contractSignerName || params.customerName,
+      p_rendered_html: renderedContract,
+      p_document_hash: documentHashSha256,
+      p_signature_image_data_url: signatureImageDataUrl,
+    },
+  );
+
+  const signStatus = signResult as {
+    success?: boolean;
+    status?: string;
+  } | null;
+  const signErrorMessage = String(signError?.message || "").toLowerCase();
+  const signFunctionMissing =
+    signErrorMessage.includes("could not find the function") ||
+    signErrorMessage.includes("schema cache") ||
+    signErrorMessage.includes("sign_customer_booking_contract");
+
+  if (signError && signFunctionMissing) {
+    throw new Error(
+      "Customer contract signing RPC is not installed. Apply migration 063 before accepting Stripe bookings.",
+    );
+  }
+
+  if (signError) {
+    throw new Error(signError.message);
+  }
+
+  if (signStatus && !signStatus.success) {
+    throw new Error(signStatus.status || "contract_sign_failed");
+  }
+}
+
 function classifyBookingError(error: unknown): {
   code: "availability" | "contract" | "validation" | "system";
   message: string;
@@ -86,6 +167,20 @@ function classifyBookingError(error: unknown): {
     };
   }
 
+  if (
+    lower.includes("approval_request_failed") ||
+    lower.includes("booking approval settings") ||
+    lower.includes(
+      "event start time is required before this booking can be submitted",
+    )
+  ) {
+    return {
+      code: "validation",
+      message: raw,
+      focus: "summary",
+    };
+  }
+
   if (lower.includes("contract") || lower.includes("signature")) {
     return {
       code: "contract",
@@ -104,7 +199,9 @@ function classifyBookingError(error: unknown): {
       code: "validation",
       message: raw,
       focus:
-        lower.includes("address") || lower.includes("zip") || lower.includes("city")
+        lower.includes("address") ||
+        lower.includes("zip") ||
+        lower.includes("city")
           ? "address"
           : lower.includes("quantity")
             ? "quantity"
@@ -149,7 +246,7 @@ function buildBookNowRedirectUrl(params: {
   if (Object.keys(params.selectedModifierOptionQuantities).length > 0) {
     query.set(
       "selectedModifierOptionQuantities",
-      JSON.stringify(params.selectedModifierOptionQuantities)
+      JSON.stringify(params.selectedModifierOptionQuantities),
     );
   }
 
@@ -168,17 +265,59 @@ function buildBookNowRedirectUrl(params: {
   return `/account/book-now?${query.toString()}`;
 }
 
+export async function preflightCustomerBookingApprovalAction(
+  formData: FormData,
+) {
+  const { supabase } = await requireCustomerAccess();
+  const eventDate = getString(formData, "eventDate");
+  const eventStartTime = getString(formData, "eventStartTime");
+  const indexedBookingItems = parseCustomerBookingItems(formData);
+  const productId =
+    getString(formData, "productId") || indexedBookingItems[0]?.productId || "";
+  const requestedItems =
+    indexedBookingItems.length > 0
+      ? indexedBookingItems
+      : productId
+        ? [{ productId, quantity: 1 }]
+        : [];
+  const allSelectedOptionIds = Array.from(
+    new Set(
+      requestedItems.flatMap(
+        (item) =>
+          parseModifierSelectionsForProduct(formData, item.productId).optionIds,
+      ),
+    ),
+  );
+  const evaluation = await evaluateCustomerBookingApproval({
+    supabase,
+    eventDate,
+    eventStartTime: eventStartTime || undefined,
+    selectedModifierOptionIds: allSelectedOptionIds,
+  });
+  return {
+    ok: evaluation.ok,
+    requiresApproval: evaluation.requiresApproval,
+    reasons: evaluation.reasons,
+    configErrors: evaluation.configErrors,
+  };
+}
 export async function createCustomerBookingAction(formData: FormData) {
   const { supabase, access } = await requireCustomerAccess();
 
   const indexedBookingItems = parseCustomerBookingItems(formData);
   const firstIndexedItem = indexedBookingItems[0];
-  const productId = getString(formData, "productId") || firstIndexedItem?.productId || "";
+  const productId =
+    getString(formData, "productId") || firstIndexedItem?.productId || "";
   const bookingAttemptId = getString(formData, "bookingAttemptId");
   const eventDate = getString(formData, "eventDate");
   const eventStartTime = getString(formData, "eventStartTime");
   const eventEndTime = getString(formData, "eventEndTime");
-  const quantity = Math.max(1, Math.floor(getNumber(formData, "quantity", firstIndexedItem?.quantity || 1)));
+  const quantity = Math.max(
+    1,
+    Math.floor(
+      getNumber(formData, "quantity", firstIndexedItem?.quantity || 1),
+    ),
+  );
   const setupAddress = getString(formData, "setupAddress");
   const setupCity = getString(formData, "setupCity");
   const setupState = getString(formData, "setupState");
@@ -199,23 +338,36 @@ export async function createCustomerBookingAction(formData: FormData) {
     .getAll("selectedModifierGroupOptionIds")
     .map((value) => String(value || "").trim())
     .filter(Boolean);
-  const selectedModifierOptionQuantitiesRaw = parseModifierQuantityJson(formData);
+  const selectedModifierOptionQuantitiesRaw =
+    parseModifierQuantityJson(formData);
   const indexedModifiers = productId
     ? parseModifierSelectionsForProduct(formData, productId)
     : { optionIds: [] as string[], quantities: {} as Record<string, number> };
-  const selectedModifierGroupOptionIds = selectedModifierGroupOptionIdsRaw.length > 0
-    ? selectedModifierGroupOptionIdsRaw
-    : indexedModifiers.optionIds;
+  const selectedModifierGroupOptionIds =
+    selectedModifierGroupOptionIdsRaw.length > 0
+      ? selectedModifierGroupOptionIdsRaw
+      : indexedModifiers.optionIds;
   const selectedModifierOptionQuantities =
     Object.keys(selectedModifierOptionQuantitiesRaw).length > 0
       ? selectedModifierOptionQuantitiesRaw
       : indexedModifiers.quantities;
 
-  const contractAcceptedRaw = getString(formData, "contractAccepted").toLowerCase();
-  const contractAccepted = ["yes", "true", "1", "on"].includes(contractAcceptedRaw);
+  const contractAcceptedRaw = getString(
+    formData,
+    "contractAccepted",
+  ).toLowerCase();
+  const contractAccepted = ["yes", "true", "1", "on"].includes(
+    contractAcceptedRaw,
+  );
   const contractSignerName = getString(formData, "contractSignerName");
-  const contractManualSignature = getString(formData, "contractManualSignature");
-  const contractSignatureDataUrl = getString(formData, "contractSignatureDataUrl");
+  const contractManualSignature = getString(
+    formData,
+    "contractManualSignature",
+  );
+  const contractSignatureDataUrl = getString(
+    formData,
+    "contractSignatureDataUrl",
+  );
   const contractRenderedHtml = getString(formData, "contractRenderedHtml");
 
   let safeExistingCustomerId = "";
@@ -266,7 +418,10 @@ export async function createCustomerBookingAction(formData: FormData) {
       .limit(1)
       .maybeSingle();
 
-    if (existingAttemptResult.error && String(existingAttemptResult.error.code || "") !== "42703") {
+    if (
+      existingAttemptResult.error &&
+      String(existingAttemptResult.error.code || "") !== "42703"
+    ) {
       throw new Error(existingAttemptResult.error.message);
     }
 
@@ -281,7 +436,9 @@ export async function createCustomerBookingAction(formData: FormData) {
 
   const contractSettingsResult = await supabase
     .from("booking_contract_settings")
-    .select("require_contract_before_payment, require_typed_signature, signature_label")
+    .select(
+      "require_contract_before_payment, require_typed_signature, signature_label",
+    )
     .limit(1)
     .maybeSingle();
 
@@ -296,28 +453,34 @@ export async function createCustomerBookingAction(formData: FormData) {
       throw new Error("Contract must be accepted before booking.");
     }
 
-    if (contractSettings?.require_typed_signature !== false && !contractSignerName) {
+    if (
+      contractSettings?.require_typed_signature !== false &&
+      !contractSignerName
+    ) {
       throw new Error("Type your full name to sign the contract.");
     }
   }
 
-  const customerName = [customerFirstName, customerLastName]
-    .filter(Boolean)
-    .join(" ")
-    .trim() ||
+  const customerName =
+    [customerFirstName, customerLastName].filter(Boolean).join(" ").trim() ||
     customerNameField ||
     String(access.displayName || access.user?.email || "Customer").trim();
 
   const resolvedCustomerId = safeExistingCustomerId;
-  const customerEmail = String(customerEmailField || access.user?.email || "").trim();
+  const customerEmail = String(
+    customerEmailField || access.user?.email || "",
+  ).trim();
   const customerPhone = String(customerPhoneInput || "").trim();
-  const requestedItems = indexedBookingItems.length > 0
-    ? indexedBookingItems
-    : [{ productId, quantity }];
-
+  const requestedItems =
+    indexedBookingItems.length > 0
+      ? indexedBookingItems
+      : [{ productId, quantity }];
   const requestedItemsWithModifiers = normalizeBookingItemRequests(
     requestedItems.map((item) => {
-      const itemModifiers = parseModifierSelectionsForProduct(formData, item.productId);
+      const itemModifiers = parseModifierSelectionsForProduct(
+        formData,
+        item.productId,
+      );
 
       return {
         productId: item.productId,
@@ -329,6 +492,7 @@ export async function createCustomerBookingAction(formData: FormData) {
   );
 
   let provisionalBookingId: string | null = null;
+  let skipCleanupOnError = false;
 
   try {
     const availabilityResults = await validateBookingItemsAvailability({
@@ -366,127 +530,249 @@ export async function createCustomerBookingAction(formData: FormData) {
       reservedUntil,
     });
 
+    const allSelectedOptionIds = Array.from(
+      new Set(
+        requestedItemsWithModifiers.flatMap(
+          (item) => item.selectedModifierGroupOptionIds || [],
+        ),
+      ),
+    );
+
+    const approvalEvaluation = await evaluateCustomerBookingApproval({
+      supabase,
+      eventDate,
+      eventStartTime: eventStartTime || undefined,
+      selectedModifierOptionIds: allSelectedOptionIds,
+    });
+
+    if (!approvalEvaluation.ok) {
+      if (
+        approvalEvaluation.configErrors.includes("event_start_time_required")
+      ) {
+        throw new Error(
+          "Event start time is required before this booking can be submitted.",
+        );
+      }
+
+      if (
+        approvalEvaluation.configErrors.includes("park_venue_mapping_required")
+      ) {
+        throw new Error(
+          "Booking approval settings are not configured for Park/Venue options. Please contact support.",
+        );
+      }
+
+      if (approvalEvaluation.configErrors.includes("event_time_in_past")) {
+        throw new Error("Event start time must be in the future.");
+      }
+
+      throw new Error(
+        "Booking approval rules are not configured correctly. Please contact support.",
+      );
+    }
+
+    if (approvalEvaluation.requiresApproval) {
+      (command as any).deferInventoryReservation = true;
+    }
+
     const result = await executeCreateBooking({
       supabase,
       command,
     });
 
-    provisionalBookingId =
-      String(result.booking?.id || "").trim() || null;
+    provisionalBookingId = String(result.booking?.id || "").trim() || null;
 
     const provisionalBookingUpdate = await supabase.rpc(
-  "mark_my_booking_pending_deposit",
-  {
-    p_booking_id: result.booking.id,
-  },
-);
+      "mark_my_booking_pending_deposit",
+      {
+        p_booking_id: result.booking.id,
+      },
+    );
 
-if (provisionalBookingUpdate.error) {
-  throw new Error(provisionalBookingUpdate.error.message);
-}
+    if (provisionalBookingUpdate.error) {
+      throw new Error(provisionalBookingUpdate.error.message);
+    }
 
-const provisionalResult = provisionalBookingUpdate.data as {
-  success?: boolean;
-  status?: string;
-} | null;
+    const provisionalResult = provisionalBookingUpdate.data as {
+      success?: boolean;
+      status?: string;
+    } | null;
 
-if (!provisionalResult?.success) {
-  throw new Error(
-    `Could not prepare customer booking for deposit: ${
-      provisionalResult?.status || "unknown_error"
-    }`,
-  );
-}
-
-    if (contractAccepted) {
-      const bookingNumber = String(result.booking?.booking_number || result.booking?.id || "");
-      const renderedContract = contractRenderedHtml.trim() || `
-        <section>
-          <h2>Rental Agreement</h2>
-          <p><strong>Customer:</strong> ${escapeHtml(customerName)}</p>
-          <p><strong>Booking:</strong> ${escapeHtml(bookingNumber)}</p>
-          <p><strong>Event date:</strong> ${escapeHtml(eventDate)}</p>
-          <p><strong>Total:</strong> $${Number(result.booking?.total_amount || 0).toFixed(2)}</p>
-          <p><strong>Deposit:</strong> $${Number(result.booking?.deposit_amount || 0).toFixed(2)}</p>
-          <p><strong>Client signature:</strong> ${escapeHtml(contractSignerName || customerName)}</p>
-        </section>
-      `;
-      const signatureImageDataUrl = /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(contractSignatureDataUrl)
-        ? contractSignatureDataUrl
-        : null;
-      const documentHashSha256 = toSha256(renderedContract);
-
-      const { data: signResult, error: signError } = await supabase.rpc(
-        "sign_customer_booking_contract",
-        {
-          p_booking_id: result.booking.id,
-          p_signer_name: contractSignerName || customerName,
-          p_rendered_html: renderedContract,
-          p_document_hash: documentHashSha256,
-          p_signature_image_data_url: signatureImageDataUrl,
-        },
+    if (!provisionalResult?.success) {
+      throw new Error(
+        `Could not prepare customer booking for deposit: ${
+          provisionalResult?.status || "unknown_error"
+        }`,
       );
+    }
 
-      const signStatus = signResult as { success?: boolean; status?: string } | null;
-      const signErrorMessage = String(signError?.message || "").toLowerCase();
-      const signFunctionMissing =
-        signErrorMessage.includes("could not find the function") ||
-        signErrorMessage.includes("schema cache") ||
-        signErrorMessage.includes("sign_customer_booking_contract");
+    const capacityRecheck = await evaluateCustomerBookingApproval({
+      supabase,
+      eventDate,
+      eventStartTime: eventStartTime || undefined,
+      selectedModifierOptionIds: allSelectedOptionIds,
+      bookingId: result.booking.id,
+    });
 
-      if (signError && signFunctionMissing) {
-        throw new Error(
-          "Customer contract signing RPC is not installed. Apply migration 063 before accepting Stripe bookings.",
-        );
-      }
+    const requiresApprovalAfterRecheck =
+      approvalEvaluation.requiresApproval ||
+      !capacityRecheck.ok ||
+      capacityRecheck.requiresApproval;
+    const effectiveApprovalReasons: CustomerApprovalReason[] =
+      capacityRecheck.ok && capacityRecheck.requiresApproval
+        ? capacityRecheck.reasons
+        : approvalEvaluation.reasons.length > 0
+          ? approvalEvaluation.reasons
+          : ["park_venue_capacity"];
 
-      if (signError) {
-        throw new Error(signError.message);
-      }
+    const bookingNumber = String(
+      result.booking?.booking_number || result.booking?.id || "",
+    );
+    await signCustomerBookingContractIfAccepted({
+      supabase,
+      bookingId: result.booking.id,
+      bookingNumber,
+      customerName,
+      eventDate,
+      totalAmount: Number(result.booking?.total_amount || 0),
+      depositAmount: Number(result.booking?.deposit_amount || 0),
+      contractAccepted,
+      contractSignerName,
+      contractSignatureDataUrl,
+      contractRenderedHtml,
+    });
 
-      if (signStatus && !signStatus.success) {
-        throw new Error(signStatus.status || "contract_sign_failed");
-      }
-
-      if (paymentAmount > 0) {
-        const totalCharge = Number((paymentAmount + tipAmount).toFixed(2));
-        const session = await createStripeCheckoutSession({
-          bookingId: result.booking.id,
-          amount: totalCharge,
-          baseAmount: paymentAmount,
-          tipAmount,
-          customerEmail: customerEmail || null,
-          source: "customer_initial_deposit",
-          successPath: `/account/bookings/${result.booking.id}`,
-          cancelPath: `/api/stripe/checkout/cancel?booking_id=${encodeURIComponent(result.booking.id)}`,
-          expiresAt: Math.floor(Date.now() / 1000) + 30 * 60,
-          description: `Bounce Party LA deposit ${bookingNumber || String(result.booking.id).slice(0, 8)}`,
-        });
-
-        revalidatePath(`/account/bookings/${result.booking.id}`);
-        redirect(session.url);
-      } else {
-        const { data: completionResult, error: completionError } = await supabase.rpc(
-          "complete_customer_booking_checkout",
+    if (requiresApprovalAfterRecheck) {
+      if (!approvalEvaluation.requiresApproval) {
+        const prepareResult = await supabase.rpc(
+          "prepare_customer_booking_for_pending_approval",
           {
             p_booking_id: result.booking.id,
-            p_amount: 0,
-            p_method: paymentMethod,
-            p_payment_reference: paymentReference || null,
+            p_reason: "post_create_capacity_recheck",
           },
         );
 
-        const completionStatus = completionResult as { success?: boolean; status?: string } | null;
-        if (completionError) throw new Error(completionError.message);
-        if (completionStatus && !completionStatus.success) {
-          throw new Error(completionStatus.status || "booking_finalize_failed");
+        if (prepareResult.error) {
+          throw new Error(prepareResult.error.message);
         }
 
-        await processNotificationQueueBestEffort({
+        const preparePayload = (
+          Array.isArray(prepareResult.data)
+            ? prepareResult.data[0]
+            : prepareResult.data
+        ) as { success?: boolean; status?: string } | null;
+
+        if (!preparePayload?.success || preparePayload.status !== "prepared") {
+          throw new Error(
+            `Booking recheck preparation failed: ${preparePayload?.status || "unknown_error"}`,
+          );
+        }
+      }
+
+      const snapshot = {
+        event_date: eventDate,
+        event_start_time: eventStartTime || null,
+        event_end_time: eventEndTime || null,
+        setup_address: setupAddress || null,
+        setup_city: setupCity || null,
+        setup_zip: setupZip || null,
+        reasons: effectiveApprovalReasons,
+        recheck_ok: capacityRecheck.ok,
+        recheck_config_errors: capacityRecheck.configErrors,
+        selected_modifier_option_ids: allSelectedOptionIds,
+      };
+
+      await requestCustomerBookingApproval({
+        supabase,
+        bookingId: result.booking.id,
+        reasons: effectiveApprovalReasons,
+        snapshot,
+      });
+
+      skipCleanupOnError = true;
+
+      try {
+        const dedupeSuffix = `revision-${Date.now()}`;
+        await Promise.all([
+          enqueueStaffBookingNotification({
+            eventCode: "customer_booking_approval_requested",
+            bookingId: result.booking.id,
+            recipientRole: "admin",
+            dedupeSuffix,
+            payload: {
+              action_url: `/admin/bookings/${result.booking.id}`,
+            },
+          }),
+          enqueueStaffBookingNotification({
+            eventCode: "customer_booking_approval_requested",
+            bookingId: result.booking.id,
+            recipientRole: "manager",
+            dedupeSuffix,
+            payload: {
+              action_url: `/admin/bookings/${result.booking.id}`,
+            },
+          }),
+        ]);
+      } catch (notifyError) {
+        console.error("Approval request staff notification enqueue failed", {
           bookingId: result.booking.id,
-          limit: 20,
+          error:
+            notifyError instanceof Error
+              ? notifyError.message
+              : String(notifyError),
         });
       }
+
+      await processNotificationQueueBestEffort({
+        bookingId: result.booking.id,
+        limit: 20,
+      });
+
+      revalidatePath(`/account/bookings/${result.booking.id}`);
+      redirect(
+        `/account/bookings/${result.booking.id}?approval=pending&bookingErrorCode=approval_pending`,
+      );
+    }
+
+    if (paymentAmount > 0) {
+      const totalCharge = Number((paymentAmount + tipAmount).toFixed(2));
+      const session = await createStripeCheckoutSession({
+        bookingId: result.booking.id,
+        amount: totalCharge,
+        baseAmount: paymentAmount,
+        tipAmount,
+        customerEmail: customerEmail || null,
+        source: "customer_initial_deposit",
+        successPath: `/account/bookings/${result.booking.id}`,
+        cancelPath: `/api/stripe/checkout/cancel?booking_id=${encodeURIComponent(result.booking.id)}`,
+        expiresAt: Math.floor(Date.now() / 1000) + 30 * 60,
+        description: `Bounce Party LA deposit ${bookingNumber || String(result.booking.id).slice(0, 8)}`,
+      });
+
+      revalidatePath(`/account/bookings/${result.booking.id}`);
+      redirect(session.url);
+    } else {
+      const { data: completionResult, error: completionError } =
+        await supabase.rpc("complete_customer_booking_checkout", {
+          p_booking_id: result.booking.id,
+          p_amount: 0,
+          p_method: paymentMethod,
+          p_payment_reference: paymentReference || null,
+        });
+
+      const completionStatus = completionResult as {
+        success?: boolean;
+        status?: string;
+      } | null;
+      if (completionError) throw new Error(completionError.message);
+      if (completionStatus && !completionStatus.success) {
+        throw new Error(completionStatus.status || "booking_finalize_failed");
+      }
+
+      await processNotificationQueueBestEffort({
+        bookingId: result.booking.id,
+        limit: 20,
+      });
     }
 
     revalidatePath(`/account/bookings/${result.booking.id}`);
@@ -497,7 +783,7 @@ if (!provisionalResult?.success) {
       throw error;
     }
 
-    if (provisionalBookingId) {
+    if (provisionalBookingId && !skipCleanupOnError) {
       try {
         const cleanup = await supabase.rpc(
           "cancel_my_unpaid_customer_stripe_booking",
@@ -507,25 +793,19 @@ if (!provisionalResult?.success) {
         );
 
         if (cleanup.error) {
-          console.error(
-            "Failed customer checkout cleanup RPC:",
-            {
-              bookingId: provisionalBookingId,
-              message: cleanup.error.message,
-            },
-          );
+          console.error("Failed customer checkout cleanup RPC:", {
+            bookingId: provisionalBookingId,
+            message: cleanup.error.message,
+          });
         }
       } catch (cleanupError) {
-        console.error(
-          "Customer checkout cleanup threw:",
-          {
-            bookingId: provisionalBookingId,
-            error:
-              cleanupError instanceof Error
-                ? cleanupError.message
-                : String(cleanupError),
-          },
-        );
+        console.error("Customer checkout cleanup threw:", {
+          bookingId: provisionalBookingId,
+          error:
+            cleanupError instanceof Error
+              ? cleanupError.message
+              : String(cleanupError),
+        });
       }
     }
 
@@ -544,7 +824,7 @@ if (!provisionalResult?.success) {
         bookingError: classified.message,
         bookingErrorCode: classified.code,
         bookingFocus: classified.focus,
-      })
+      }),
     );
   }
 }

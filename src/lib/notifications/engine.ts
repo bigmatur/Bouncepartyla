@@ -92,6 +92,29 @@ export async function enqueueBookingNotification(params: {
   return Number(result.data || 0);
 }
 
+export async function enqueueStaffBookingNotification(params: {
+  eventCode: string;
+  bookingId: string;
+  recipientRole: "admin" | "manager" | "driver" | "cleaner";
+  dedupeSuffix?: string | null;
+  payload?: Record<string, unknown>;
+}) {
+  const supabase = createServiceClient();
+  const result = await supabase.rpc("enqueue_staff_booking_notification", {
+    p_event_code: params.eventCode,
+    p_booking_id: params.bookingId,
+    p_recipient_role: params.recipientRole,
+    p_dedupe_suffix: params.dedupeSuffix || null,
+    p_payload: params.payload || {},
+  });
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  return Number(result.data || 0);
+}
+
 
 async function sendTwilioSms(params: { to: string; body: string }) {
   const sid = String(process.env.TWILIO_ACCOUNT_SID || "").trim();

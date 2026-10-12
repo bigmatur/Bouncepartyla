@@ -25,6 +25,7 @@ type CustomerBooking = {
   booking_number: string | null;
   status: string;
   booking_source?: string | null;
+  customer_approval_state?: string | null;
 
   event_date: string;
   event_start_time: string | null;
@@ -101,6 +102,7 @@ function formatDateTime(value: string) {
 
 function bookingStatusLabel(value: string) {
   const labels: Record<string, string> = {
+    awaiting_approval: "Awaiting review",
     draft: "Booking started",
     quote: "Quote prepared",
     pending_deposit: "Waiting for deposit",
@@ -157,6 +159,9 @@ function contractStatusLabel(value: string) {
 
 function getStatusClass(status: string) {
   switch (status) {
+    case "awaiting_approval":
+      return "bg-sky-50 text-sky-700";
+
     case "cancelled":
     case "refunded":
       return "bg-red-50 text-red-700";
@@ -259,6 +264,8 @@ export default async function AccountPage({
           id,
           booking_number,
           status,
+          booking_source,
+          customer_approval_state,
           event_date,
           event_start_time,
           event_end_time,
@@ -604,6 +611,7 @@ export default async function AccountPage({
       booking_number,
       status,
       booking_source,
+      customer_approval_state,
       event_date,
       event_start_time,
       event_end_time,
@@ -670,7 +678,7 @@ export default async function AccountPage({
   if (pendingBookingIds.length > 0) {
     const sourceRows = await supabase
       .from("bookings")
-      .select("id, booking_source, amount_paid, payment_status")
+      .select("id, booking_source, customer_approval_state, amount_paid, payment_status")
       .in("id", pendingBookingIds);
 
     if (!sourceRows.error) {
@@ -679,6 +687,7 @@ export default async function AccountPage({
           String(row.id),
           {
             booking_source: String(row.booking_source || ""),
+            customer_approval_state: row.customer_approval_state ? String(row.customer_approval_state) : null,
             amount_paid: Number(row.amount_paid || 0),
             payment_status: String(row.payment_status || ""),
           },
@@ -690,6 +699,7 @@ export default async function AccountPage({
         return {
           ...booking,
           booking_source: booking.booking_source || state?.booking_source || null,
+          customer_approval_state: booking.customer_approval_state || state?.customer_approval_state || null,
           amount_paid: state ? state.amount_paid : booking.amount_paid,
           payment_status: state?.payment_status || booking.payment_status,
         };
@@ -702,12 +712,30 @@ export default async function AccountPage({
       !(
         String(booking.status || "").toLowerCase() === "pending_deposit" &&
         String(booking.booking_source || "").toLowerCase() === "customer_self_service" &&
+        !["pending", "approved", "rejected", "expired"].includes(
+          String(booking.customer_approval_state || "").toLowerCase(),
+        ) &&
         Number(booking.amount_paid || 0) <= 0 &&
         ["", "unpaid"].includes(String(booking.payment_status || "").toLowerCase())
       ),
   );
 
-  const actionRequiredBookings = bookings.filter((booking) => {
+  const bookingsWithDisplayStatus = bookings.map((booking) => {
+    const source = String(booking.booking_source || "").toLowerCase();
+    const status = String(booking.status || "").toLowerCase();
+    const approval = String(booking.customer_approval_state || "").toLowerCase();
+
+    if (source === "customer_self_service" && status === "pending_deposit" && approval === "pending") {
+      return {
+        ...booking,
+        status: "awaiting_approval",
+      };
+    }
+
+    return booking;
+  });
+
+  const actionRequiredBookings = bookingsWithDisplayStatus.filter((booking) => {
     return (
       String(booking.booking_source || "").toLowerCase() === "admin" &&
       String(booking.status || "").toLowerCase() === "pending_deposit"
@@ -743,7 +771,7 @@ export default async function AccountPage({
     }
   }
 
-  const ordinaryBookings = bookings.filter(
+  const ordinaryBookings = bookingsWithDisplayStatus.filter(
     (booking) => !actionRequiredBookingIds.includes(booking.id),
   );
 
@@ -754,7 +782,7 @@ export default async function AccountPage({
       .join(" ") ||
     "Customer";
 
-  const upcomingBookings = bookings.filter(
+  const upcomingBookings = bookingsWithDisplayStatus.filter(
     (booking) =>
       booking.status !== "cancelled" &&
       booking.status !== "refunded" &&
@@ -762,7 +790,7 @@ export default async function AccountPage({
       booking.status !== "returned",
   );
 
-  const completedBookings = bookings.filter(
+  const completedBookings = bookingsWithDisplayStatus.filter(
     (booking) =>
       booking.status === "closed" ||
       booking.status === "returned" ||

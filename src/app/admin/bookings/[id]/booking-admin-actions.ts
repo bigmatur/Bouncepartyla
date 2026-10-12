@@ -5,6 +5,10 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getUnifiedAccess, isStaffRole, type AppPermission } from "@/lib/auth/access";
 import { cancelBookingWithSupabase } from "@/lib/booking/cancel-booking";
+import {
+  enqueueBookingNotification,
+  processNotificationQueueBestEffort,
+} from "@/lib/notifications/engine";
 
 function getString(formData: FormData, key: string) {
   const value = formData.get(key);
@@ -530,4 +534,161 @@ export async function deleteBookingPermanentlyAction(formData: FormData) {
   revalidatePath("/admin/routes/driver/checklists");
 
   redirect("/admin/bookings?saved=booking-deleted");
+}
+
+export async function approveCustomerBookingApprovalAction(formData: FormData) {
+  const supabase = await createClient();
+  await assertBookingPermission(supabase, "bookings.edit");
+
+  const bookingId = getString(formData, "bookingId");
+  const revision = Number(getString(formData, "approvalRevision") || "0");
+  const customerComment = getString(formData, "customerComment");
+
+  if (!bookingId) {
+    throw new Error("Booking ID is required.");
+  }
+
+  const bookingLookup = await supabase
+    .from("bookings")
+    .select("id, booking_source, status, customer_approval_state")
+    .eq("id", bookingId)
+    .maybeSingle();
+
+  if (bookingLookup.error || !bookingLookup.data) {
+    throw new Error("Booking not found.");
+  }
+
+  const source = String((bookingLookup.data as any).booking_source || "").toLowerCase();
+  const status = String((bookingLookup.data as any).status || "").toLowerCase();
+  const approvalState = String((bookingLookup.data as any).customer_approval_state || "").toLowerCase();
+
+  if (source !== "customer_self_service" || status !== "pending_deposit") {
+    throw new Error("Approval action is available only for pending customer self-service bookings.");
+  }
+
+  if (approvalState !== "pending" && approvalState !== "expired") {
+    throw new Error("Booking approval request is not pending.");
+  }
+
+  const review = await supabase.rpc("approve_customer_booking_approval", {
+    p_booking_id: bookingId,
+    p_revision: Number.isFinite(revision) && revision > 0 ? revision : null,
+    p_customer_comment: customerComment || null,
+  });
+
+  if (review.error) {
+    throw new Error(review.error.message);
+  }
+
+  const reviewPayload =
+    review.data && typeof review.data === "object" && !Array.isArray(review.data)
+      ? (review.data as {
+          success?: boolean;
+          status?: string;
+          hold_expires_at?: string | null;
+          park_venue_capacity_warning?: boolean;
+        })
+      : null;
+
+  if (!reviewPayload?.success) {
+    throw new Error(String(reviewPayload?.status || "approval_review_failed"));
+  }
+
+  try {
+    await enqueueBookingNotification({
+      eventCode: "customer_booking_approval_approved",
+      bookingId,
+      dedupeSuffix: `revision-${revision || Date.now()}`,
+      payload: {
+        action_url: `/account/bookings/${bookingId}`,
+        expires_at: String(reviewPayload.hold_expires_at || ""),
+      },
+    });
+  } catch (error) {
+    console.error("Failed to enqueue approval-approved notification", {
+      bookingId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  await processNotificationQueueBestEffort({ bookingId, limit: 20 });
+  await revalidateBookingPages(bookingId);
+
+  redirect(
+    `/admin/bookings/${bookingId}?saved=approval-approved${
+      reviewPayload.park_venue_capacity_warning ? "&approvalWarning=park-capacity" : ""
+    }`,
+  );
+}
+
+export async function rejectCustomerBookingApprovalAction(formData: FormData) {
+  const supabase = await createClient();
+  await assertBookingPermission(supabase, "bookings.edit");
+
+  const bookingId = getString(formData, "bookingId");
+  const revision = Number(getString(formData, "approvalRevision") || "0");
+  const customerComment = getString(formData, "customerComment");
+
+  if (!bookingId) {
+    throw new Error("Booking ID is required.");
+  }
+
+  const review = await supabase.rpc("review_customer_booking_approval", {
+    p_booking_id: bookingId,
+    p_revision: Number.isFinite(revision) && revision > 0 ? revision : null,
+    p_decision: "rejected",
+    p_customer_comment: customerComment || null,
+    p_hold_expires_at: null,
+  });
+
+  if (review.error) {
+    throw new Error(review.error.message);
+  }
+
+  const reviewPayload =
+    review.data && typeof review.data === "object" && !Array.isArray(review.data)
+      ? (review.data as { success?: boolean; status?: string })
+      : null;
+
+  if (!reviewPayload?.success) {
+    throw new Error(String(reviewPayload?.status || "approval_review_failed"));
+  }
+
+  const activeAttempts = await supabase
+    .from("booking_checkout_attempts")
+    .select("id, stripe_checkout_session_id")
+    .eq("booking_id", bookingId)
+    .in("state", ["holding", "stripe_bound"]);
+
+  if (!activeAttempts.error) {
+    for (const row of activeAttempts.data || []) {
+      await supabase.rpc("release_booking_checkout_attempt_hold", {
+        p_booking_id: bookingId,
+        p_attempt_id: String((row as any).id || ""),
+        p_stripe_checkout_session_id: (row as any).stripe_checkout_session_id || null,
+        p_reason: "approval_rejected",
+      });
+    }
+  }
+
+  try {
+    await enqueueBookingNotification({
+      eventCode: "customer_booking_approval_rejected",
+      bookingId,
+      dedupeSuffix: `revision-${revision || Date.now()}`,
+      payload: {
+        action_url: `/account/bookings/${bookingId}`,
+      },
+    });
+  } catch (error) {
+    console.error("Failed to enqueue approval-rejected notification", {
+      bookingId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  await processNotificationQueueBestEffort({ bookingId, limit: 20 });
+  await revalidateBookingPages(bookingId);
+
+  redirect(`/admin/bookings/${bookingId}?saved=approval-rejected`);
 }

@@ -20,6 +20,7 @@ import {
   updatePaymentMethodsAction,
   updateDeliveryPricingSettingsAction,
   updateAccountHelpSettingsAction,
+  updateCustomerBookingApprovalSettingsAction,
   updateReceiptDesignSettingsAction,
   resendContractAction,
   updateWarehouseAddressSettingsAction,
@@ -181,6 +182,7 @@ type SettingsSection =
   | "regional"
   | "operations"
   | "delivery"
+  | "customer-booking-approval"
   | "payments"
   | "account-help"
   | "receipt"
@@ -194,6 +196,7 @@ function parseSettingsSection(value?: string): SettingsSection {
     value === "regional" ||
     value === "operations" ||
     value === "delivery" ||
+    value === "customer-booking-approval" ||
     value === "payments" ||
     value === "account-help" ||
     value === "receipt" ||
@@ -239,6 +242,8 @@ export default async function AdminSettingsPage(props: {
     discountSecurityResult,
     contractSettingsResult,
     handoverSettingsResult,
+    approvalOptionMapResult,
+    approvalOptionsResult,
     contractsResult,
     contractRenderedResult,
   ] = await Promise.all([
@@ -260,7 +265,12 @@ export default async function AdminSettingsPage(props: {
         delivery_pricing_mode,
         free_delivery_miles,
         price_per_mile,
-        minimum_delivery_fee
+        minimum_delivery_fee,
+        customer_booking_last_minute_enabled,
+        customer_booking_last_minute_value,
+        customer_booking_last_minute_unit,
+        customer_booking_park_venue_limit_enabled,
+        customer_booking_park_venue_daily_limit
       `
       )
       .limit(1)
@@ -338,6 +348,28 @@ export default async function AdminSettingsPage(props: {
       )
       .limit(1)
       .maybeSingle(),
+
+    supabase
+      .from("customer_booking_approval_option_map")
+      .select("modifier_group_option_id, location_kind, active"),
+
+    supabase
+      .from("modifier_group_options")
+      .select(
+        `
+        id,
+        label_override,
+        modifiers (
+          id,
+          name
+        ),
+        modifier_groups (
+          id,
+          name
+        )
+      `,
+      )
+      .order("id", { ascending: true }),
 
     supabase
       .from("contracts")
@@ -523,6 +555,43 @@ export default async function AdminSettingsPage(props: {
 
   const hasHandoverSettingsTable = !handoverSettingsResult.error;
 
+  if (approvalOptionMapResult.error && !isMissingTableError(approvalOptionMapResult.error)) {
+    throw new Error(approvalOptionMapResult.error.message);
+  }
+
+  if (approvalOptionsResult.error && !isMissingTableError(approvalOptionsResult.error)) {
+    throw new Error(approvalOptionsResult.error.message);
+  }
+
+  const approvalSettings = {
+    lastMinuteEnabled: Boolean((settings as any).customer_booking_last_minute_enabled ?? false),
+    lastMinuteValue: Math.max(1, Number((settings as any).customer_booking_last_minute_value || 24)),
+    lastMinuteUnit:
+      String((settings as any).customer_booking_last_minute_unit || "hours") === "days"
+        ? "days"
+        : "hours",
+    parkVenueLimitEnabled: Boolean((settings as any).customer_booking_park_venue_limit_enabled ?? false),
+    parkVenueDailyLimit: Math.max(0, Number((settings as any).customer_booking_park_venue_daily_limit || 0)),
+  };
+
+  const mappedOptionIds = new Set(
+    (approvalOptionMapResult.data || [])
+      .filter((row: any) => row.active)
+      .map((row: any) => String(row.modifier_group_option_id || ""))
+      .filter(Boolean),
+  );
+
+  const approvalSelectableOptions = (approvalOptionsResult.data || []).map((row: any) => {
+    const modifier = getOne(row.modifiers);
+    const group = getOne(row.modifier_groups);
+
+    return {
+      id: String(row.id),
+      groupName: String(group?.name || "Modifier group"),
+      optionLabel: String(row.label_override || modifier?.name || "Option"),
+    };
+  });
+
   if (contractsResult.error) {
     throw new Error(contractsResult.error.message);
   }
@@ -652,6 +721,7 @@ export default async function AdminSettingsPage(props: {
             { id: "regional", label: "Regional" },
             { id: "operations", label: "Hours & Address" },
             { id: "delivery", label: "Delivery" },
+            { id: "customer-booking-approval", label: "Customer Booking Approval" },
             { id: "payments", label: "Payments" },
             { id: "account-help", label: "Account Help" },
             { id: "receipt", label: "Receipt Design" },
@@ -1700,6 +1770,129 @@ export default async function AdminSettingsPage(props: {
             )}
           </div>
         </section>
+      </section>
+      )}
+
+      {activeSection === "customer-booking-approval" && (
+      <section className="grid min-w-0 gap-4 sm:gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <section className="rounded-[30px] border border-black/5 bg-white shadow-[0_12px_40px_rgba(0,0,0,0.04)]">
+          <div className="border-b border-[#eee5d9] px-3.5 py-3 sm:px-6 sm:py-5">
+            <h3 className="text-xl font-semibold text-[#1f1e1b]">Customer booking approval</h3>
+            <p className="mt-1 text-sm leading-6 text-[#6c6258]">
+              Configure when self-service customer bookings must be reviewed by staff before payment.
+            </p>
+          </div>
+
+          <form action={updateCustomerBookingApprovalSettingsAction} className="space-y-5 p-3.5 sm:p-6">
+            <div className="rounded-2xl border border-[#e7ddd0] bg-[#fcfaf7] p-4">
+              <label className="flex items-center justify-between gap-4 text-sm font-semibold text-[#1f1e1b]">
+                <span>Enable Last minute approval</span>
+                <input
+                  type="checkbox"
+                  name="customerBookingLastMinuteEnabled"
+                  defaultChecked={approvalSettings.lastMinuteEnabled}
+                  className="h-5 w-5"
+                />
+              </label>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <Field label="Threshold value" hint="Positive integer.">
+                  <Input
+                    name="customerBookingLastMinuteValue"
+                    type="number"
+                    min={1}
+                    step={1}
+                    defaultValue={String(approvalSettings.lastMinuteValue)}
+                  />
+                </Field>
+
+                <Field label="Threshold unit" hint="Days are treated as 24-hour windows.">
+                  <select
+                    name="customerBookingLastMinuteUnit"
+                    defaultValue={approvalSettings.lastMinuteUnit}
+                    className="w-full min-w-0 rounded-xl border border-[#d8cec0] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#23313f] focus:ring-2 focus:ring-[#d8e8f7] sm:rounded-2xl sm:px-4 sm:py-3"
+                  >
+                    <option value="hours">Hours</option>
+                    <option value="days">Days</option>
+                  </select>
+                </Field>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-[#e7ddd0] bg-[#fcfaf7] p-4">
+              <label className="flex items-center justify-between gap-4 text-sm font-semibold text-[#1f1e1b]">
+                <span>Enable Park / Venue daily limit</span>
+                <input
+                  type="checkbox"
+                  name="customerBookingParkVenueLimitEnabled"
+                  defaultChecked={approvalSettings.parkVenueLimitEnabled}
+                  className="h-5 w-5"
+                />
+              </label>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <Field
+                  label="Daily limit"
+                  hint="0 means every self-service Park / Venue booking requires approval."
+                >
+                  <Input
+                    name="customerBookingParkVenueDailyLimit"
+                    type="number"
+                    min={0}
+                    step={1}
+                    defaultValue={String(approvalSettings.parkVenueDailyLimit)}
+                  />
+                </Field>
+
+                <Field label="Mapped options" hint="Select modifier options that represent Park / Venue delivery.">
+                  <div className="h-[200px] overflow-auto rounded-2xl border border-[#d8cec0] bg-white p-3">
+                    <div className="space-y-2">
+                      {approvalSelectableOptions.map((option) => (
+                        <label key={option.id} className="flex items-start gap-2 rounded-xl px-2 py-1.5 text-sm text-[#2f2924] hover:bg-[#f7f2ec]">
+                          <input
+                            type="checkbox"
+                            name="approvalParkVenueOptionIds"
+                            value={option.id}
+                            defaultChecked={mappedOptionIds.has(option.id)}
+                            className="mt-1 h-4 w-4"
+                          />
+                          <span>
+                            <span className="block font-semibold">{option.optionLabel}</span>
+                            <span className="block text-xs text-[#75695d]">{option.groupName}</span>
+                          </span>
+                        </label>
+                      ))}
+                      {approvalSelectableOptions.length === 0 ? (
+                        <div className="text-sm text-[#8b8177]">No modifier options available.</div>
+                      ) : null}
+                    </div>
+                  </div>
+                </Field>
+              </div>
+            </div>
+
+            <div className="flex justify-end border-t border-[#eee5d9] pt-5">
+              <button
+                type="submit"
+                className="rounded-full bg-[#23313f] px-8 py-3 text-sm font-semibold text-white transition hover:bg-[#18222d]"
+              >
+                Save approval settings
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <aside className="space-y-4">
+          <section className="rounded-[30px] border border-black/5 bg-white p-6 shadow-[0_12px_40px_rgba(0,0,0,0.04)]">
+            <h3 className="text-lg font-semibold text-[#1f1e1b]">How this works</h3>
+            <ul className="mt-3 list-disc space-y-2 pl-5 text-sm leading-6 text-[#6c6258]">
+              <li>Rules apply only to customer self-service bookings.</li>
+              <li>Admin-created bookings and admin/mobile-admin flows bypass these checks.</li>
+              <li>When triggered, customer submits a request without immediate payment.</li>
+              <li>Approved requests unlock deposit checkout until the hold expires.</li>
+            </ul>
+          </section>
+        </aside>
       </section>
       )}
 

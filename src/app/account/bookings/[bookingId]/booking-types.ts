@@ -3,6 +3,10 @@ export type BookingRecord = {
   booking_number: string | null;
   status: string;
   booking_source?: string | null;
+  customer_approval_state?: string | null;
+  customer_approval_revision?: number | null;
+  customer_approval_expires_at?: string | null;
+  customer_approval_reasons?: string[] | null;
 
   event_date: string;
   event_start_time: string | null;

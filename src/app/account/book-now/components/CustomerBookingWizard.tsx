@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createCustomerBookingAction } from "../actions";
+import {
+  createCustomerBookingAction,
+  preflightCustomerBookingApprovalAction,
+} from "../actions";
 import { checkBookingItemAvailabilityAction } from "@/lib/booking/check-booking-item-availability";
 import { calculateBookingPricingAction } from "@/app/admin/bookings/new/pricing-actions";
 import { verifyDiscountPasswordAction } from "@/app/admin/settings/actions";
@@ -273,7 +276,9 @@ function buildHalfHourSlots(fromMinutes: number, toMinutes: number) {
 }
 
 function splitFullName(value: string | null | undefined) {
-  const normalized = String(value || "").trim().replace(/\s+/g, " ");
+  const normalized = String(value || "")
+    .trim()
+    .replace(/\s+/g, " ");
 
   if (!normalized) {
     return {
@@ -311,20 +316,24 @@ function getWorkingWindowForDate(params: {
   }
 
   const exception = params.workingHourExceptions.find(
-    (item) => item.exception_date === params.eventDate
+    (item) => item.exception_date === params.eventDate,
   );
 
   if (exception) {
     return {
       isOpen: exception.is_open !== false,
-      openTime: exception.open_time ? String(exception.open_time).slice(0, 5) : null,
-      closeTime: exception.close_time ? String(exception.close_time).slice(0, 5) : null,
+      openTime: exception.open_time
+        ? String(exception.open_time).slice(0, 5)
+        : null,
+      closeTime: exception.close_time
+        ? String(exception.close_time).slice(0, 5)
+        : null,
     };
   }
 
   const dayOfWeek = new Date(`${params.eventDate}T00:00:00`).getDay();
   const row = params.workingHours.find(
-    (item) => Number(item.day_of_week) === dayOfWeek
+    (item) => Number(item.day_of_week) === dayOfWeek,
   );
 
   if (!row) {
@@ -444,6 +453,7 @@ export default function NewBookingWizard({
   initialSetupCity,
   initialSetupZip,
   initialBookingError,
+  initialBookingErrorCode,
   initialBookingFocus,
   bookingAttemptId,
   forceBookingActor,
@@ -469,6 +479,7 @@ export default function NewBookingWizard({
   initialSetupCity?: string;
   initialSetupZip?: string;
   initialBookingError?: string;
+  initialBookingErrorCode?: string;
   initialBookingFocus?: string;
   bookingAttemptId: string;
   forceBookingActor?: BookingActor;
@@ -485,10 +496,12 @@ export default function NewBookingWizard({
   const [customerSearch, setCustomerSearch] = useState("");
 
   const [eventDate, setEventDate] = useState(initialEventDate || "");
-  const [eventStartTime, setEventStartTime] = useState(initialEventStartTime || "");
+  const [eventStartTime, setEventStartTime] = useState(
+    initialEventStartTime || "",
+  );
   const [eventEndTime, setEventEndTime] = useState(initialEventEndTime || "");
   const [bookingActor, setBookingActor] = useState<BookingActor>(
-    forceBookingActor || "customer"
+    forceBookingActor || "customer",
   );
 
   const [setupAddress, setSetupAddress] = useState(initialSetupAddress || "");
@@ -509,7 +522,7 @@ export default function NewBookingWizard({
       }
 
       const initialProduct = products.find(
-        (product) => String(product.id) === requestedProductId
+        (product) => String(product.id) === requestedProductId,
       );
 
       if (!initialProduct) {
@@ -524,7 +537,7 @@ export default function NewBookingWizard({
           notes: "",
         },
       ];
-    }
+    },
   );
 
   const [selectedModifierOptions, setSelectedModifierOptions] = useState<
@@ -550,15 +563,21 @@ export default function NewBookingWizard({
 
   const [contractModalOpen, setContractModalOpen] = useState(false);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [approvalModalOpen, setApprovalModalOpen] = useState(false);
+  const [approvalChecking, setApprovalChecking] = useState(false);
+  const [approvalSubmission, setApprovalSubmission] = useState(false);
+  const [approvalReasons, setApprovalReasons] = useState<
+    Array<"last_minute" | "park_venue_capacity">
+  >([]);
   const [paymentMethod, setPaymentMethod] = useState(
-    paymentMethods[0]?.method || ""
+    paymentMethods[0]?.method || "",
   );
   const [tipMode, setTipMode] = useState<"percent" | "amount">(
-    tipSettings.tipMode || "percent"
+    tipSettings.tipMode || "percent",
   );
   const [paymentAmount, setPaymentAmount] = useState(0);
   const [tipPercent, setTipPercent] = useState<number>(
-    Number(tipSettings.defaultTipPercent || 0)
+    Number(tipSettings.defaultTipPercent || 0),
   );
   const [tipAmount, setTipAmount] = useState(0);
   const [tipAmountEdited, setTipAmountEdited] = useState(false);
@@ -568,14 +587,16 @@ export default function NewBookingWizard({
   const [discountPassword, setDiscountPassword] = useState("");
   const [discountAuthorized, setDiscountAuthorized] = useState(false);
   const [discountAuthLoading, setDiscountAuthLoading] = useState(false);
-  const [discountAuthMessage, setDiscountAuthMessage] = useState<string | null>(null);
+  const [discountAuthMessage, setDiscountAuthMessage] = useState<string | null>(
+    null,
+  );
   const [discountEditorOpen, setDiscountEditorOpen] = useState(false);
   const [contractAccepted, setContractAccepted] = useState(false);
   const [contractSignerName, setContractSignerName] = useState("");
   const [contractManualSignature, setContractManualSignature] = useState("");
   const [contractSignatureDataUrl, setContractSignatureDataUrl] = useState("");
   const [bookingSubmitError, setBookingSubmitError] = useState(
-    initialBookingError || ""
+    initialBookingError || "",
   );
 
   useEffect(() => {
@@ -595,7 +616,18 @@ export default function NewBookingWizard({
     }
 
     setBookingSubmitStarted(false);
-    setBookingSubmitError(initialBookingError);
+    const code = String(initialBookingErrorCode || "").toLowerCase();
+    if (code === "approval_pending") {
+      setBookingSubmitError(
+        "Your request is awaiting our team\'s review. No payment has been taken. We\'ll notify you once delivery availability is confirmed.",
+      );
+    } else if (code === "approval_configuration") {
+      setBookingSubmitError(
+        "Booking approval settings are incomplete. Please contact support before submitting this request.",
+      );
+    } else {
+      setBookingSubmitError(initialBookingError);
+    }
 
     const focus = String(initialBookingFocus || "").toLowerCase();
     const stepByFocus: Record<string, number> = {
@@ -608,11 +640,11 @@ export default function NewBookingWizard({
 
     const nextStep = stepByFocus[focus] || 5;
     setStep(nextStep);
-  }, [initialBookingError, initialBookingFocus]);
+  }, [initialBookingError, initialBookingErrorCode, initialBookingFocus]);
 
   const [pricingLoading, setPricingLoading] = useState(false);
   const [pricingResult, setPricingResult] = useState<PricingResult | null>(
-    null
+    null,
   );
 
   const formRef = useRef<HTMLFormElement | null>(null);
@@ -621,8 +653,12 @@ export default function NewBookingWizard({
   const signatureDrawingRef = useRef(false);
   const discountEditorRef = useRef<HTMLDivElement | null>(null);
   const availabilityRequestCounterRef = useRef(0);
-  const latestAvailabilityRequestByProductRef = useRef<Record<string, number>>({});
-  const bookingSubmitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestAvailabilityRequestByProductRef = useRef<Record<string, number>>(
+    {},
+  );
+  const bookingSubmitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   useEffect(() => {
     return () => {
@@ -761,14 +797,14 @@ export default function NewBookingWizard({
 
     setExistingCustomerId(onlyCustomer.id);
     setCustomerSearch(
-      onlyCustomer.full_name || onlyCustomer.phone || onlyCustomer.email || ""
+      onlyCustomer.full_name || onlyCustomer.phone || onlyCustomer.email || "",
     );
   }, [customers, existingCustomerId]);
 
   function selectExistingCustomer(customer: Customer) {
     setExistingCustomerId(customer.id);
     setCustomerSearch(
-      customer.full_name || customer.phone || customer.email || ""
+      customer.full_name || customer.phone || customer.email || "",
     );
   }
 
@@ -798,7 +834,9 @@ export default function NewBookingWizard({
       const next: Record<string, number> = {};
 
       for (const selectedProduct of selectedProducts) {
-        const groupsCount = getGroupsForProduct(selectedProduct.productId).length;
+        const groupsCount = getGroupsForProduct(
+          selectedProduct.productId,
+        ).length;
 
         if (groupsCount <= 0) {
           continue;
@@ -807,7 +845,7 @@ export default function NewBookingWizard({
         const existing = current[selectedProduct.productId] || 0;
         next[selectedProduct.productId] = Math.max(
           0,
-          Math.min(existing, groupsCount - 1)
+          Math.min(existing, groupsCount - 1),
         );
       }
 
@@ -817,7 +855,7 @@ export default function NewBookingWizard({
 
   useEffect(() => {
     setActiveOptionsProductIndex((current) =>
-      Math.max(0, Math.min(current, Math.max(0, selectedProducts.length - 1)))
+      Math.max(0, Math.min(current, Math.max(0, selectedProducts.length - 1))),
     );
   }, [selectedProducts.length]);
 
@@ -864,7 +902,12 @@ export default function NewBookingWizard({
     }
 
     return rows;
-  }, [selectedProducts, modifierGroups, selectedModifierOptions, selectedModifierQuantities]);
+  }, [
+    selectedProducts,
+    modifierGroups,
+    selectedModifierOptions,
+    selectedModifierQuantities,
+  ]);
 
   const modifiersSubtotal = selectedModifierRows.reduce((sum, row) => {
     const selectedProduct = selectedProducts.find(
@@ -968,18 +1011,23 @@ export default function NewBookingWizard({
           const perUnit = Number(product?.deposit_amount || 0);
           return sum + perUnit * item.quantity;
         }, 0)
-        .toFixed(2)
+        .toFixed(2),
     );
   }, [selectedProducts, products]);
 
   const safeDiscountAmount = Number(
-    Math.max(0, Math.min(discountAuthorized ? discountAmount : 0, subtotal)).toFixed(2)
+    Math.max(
+      0,
+      Math.min(discountAuthorized ? discountAmount : 0, subtotal),
+    ).toFixed(2),
   );
   const taxableSubtotal = Number((subtotal - safeDiscountAmount).toFixed(2));
   const taxAmount = Number(
-    ((taxableSubtotal + deliveryFee) * (taxRate / 100)).toFixed(2)
+    ((taxableSubtotal + deliveryFee) * (taxRate / 100)).toFixed(2),
   );
-  const totalAmount = Number((taxableSubtotal + deliveryFee + taxAmount).toFixed(2));
+  const totalAmount = Number(
+    (taxableSubtotal + deliveryFee + taxAmount).toFixed(2),
+  );
   const balanceDue = Number((totalAmount - depositAmount).toFixed(2));
 
   useEffect(() => {
@@ -996,7 +1044,8 @@ export default function NewBookingWizard({
     }
 
     setPaymentAmount(depositAmount);
-    const initialTipMode = tipSettings.tipMode === "amount" ? "amount" : "percent";
+    const initialTipMode =
+      tipSettings.tipMode === "amount" ? "amount" : "percent";
 
     setTipMode(initialTipMode);
     setTipPercent(0);
@@ -1030,11 +1079,7 @@ export default function NewBookingWizard({
     setContractAccepted(false);
 
     if (!contractSignerName) {
-      setContractSignerName(
-        customerName ||
-          selectedCustomer?.full_name ||
-          ""
-      );
+      setContractSignerName(customerName || selectedCustomer?.full_name || "");
     }
 
     setContractSignatureDataUrl("");
@@ -1166,7 +1211,7 @@ export default function NewBookingWizard({
 
   function addProduct(product: Product) {
     const exists = selectedProducts.find(
-      (item) => item.productId === product.id
+      (item) => item.productId === product.id,
     );
 
     if (exists) {
@@ -1177,8 +1222,8 @@ export default function NewBookingWizard({
                 ...item,
                 quantity: item.quantity + 1,
               }
-            : item
-        )
+            : item,
+        ),
       );
 
       resetPricing();
@@ -1200,7 +1245,7 @@ export default function NewBookingWizard({
 
   function removeProduct(productId: string) {
     setSelectedProducts((current) =>
-      current.filter((item) => item.productId !== productId)
+      current.filter((item) => item.productId !== productId),
     );
 
     setSelectedModifierOptions((current) => {
@@ -1232,12 +1277,12 @@ export default function NewBookingWizard({
 
   function updateSelectedProduct(
     productId: string,
-    patch: Partial<SelectedProduct>
+    patch: Partial<SelectedProduct>,
   ) {
     setSelectedProducts((current) =>
       current.map((item) =>
-        item.productId === productId ? { ...item, ...patch } : item
-      )
+        item.productId === productId ? { ...item, ...patch } : item,
+      ),
     );
 
     setAvailabilityByProductId((current) => {
@@ -1330,9 +1375,10 @@ export default function NewBookingWizard({
 
     setSelectedModifierOptions((current) => {
       const existing = current[key] || [];
-      const selected = safeQuantity > 0
-        ? Array.from(new Set([...existing, optionId]))
-        : existing.filter((id) => id !== optionId);
+      const selected =
+        safeQuantity > 0
+          ? Array.from(new Set([...existing, optionId]))
+          : existing.filter((id) => id !== optionId);
 
       return { ...current, [key]: selected };
     });
@@ -1357,7 +1403,11 @@ export default function NewBookingWizard({
     return Math.max(0, Math.min(index, Math.max(0, groupsCount - 1)));
   }
 
-  function setOptionGroupIndex(productId: string, nextIndex: number, groupsCount: number) {
+  function setOptionGroupIndex(
+    productId: string,
+    nextIndex: number,
+    groupsCount: number,
+  ) {
     const safe = Math.max(0, Math.min(nextIndex, Math.max(0, groupsCount - 1)));
 
     setOptionGroupIndexByProduct((current) => ({
@@ -1437,9 +1487,7 @@ export default function NewBookingWizard({
 
       const productModifierOptions = modifierGroups
         .filter(
-          (group) =>
-            group.productId === product.id &&
-            group.active !== false,
+          (group) => group.productId === product.id && group.active !== false,
         )
         .flatMap((group) =>
           group.options
@@ -1488,7 +1536,9 @@ export default function NewBookingWizard({
         modifierAvailability: result.modifierAvailability || [],
       };
 
-      if (latestAvailabilityRequestByProductRef.current[product.id] !== requestId) {
+      if (
+        latestAvailabilityRequestByProductRef.current[product.id] !== requestId
+      ) {
         return state;
       }
 
@@ -1510,7 +1560,9 @@ export default function NewBookingWizard({
         modifierAvailability: [],
       };
 
-      if (latestAvailabilityRequestByProductRef.current[product.id] !== requestId) {
+      if (
+        latestAvailabilityRequestByProductRef.current[product.id] !== requestId
+      ) {
         return state;
       }
 
@@ -1557,10 +1609,7 @@ export default function NewBookingWizard({
       return;
     }
 
-    const nextQuantity = Math.max(
-      0,
-      Math.floor(Number(nextQuantityRaw || 0)),
-    );
+    const nextQuantity = Math.max(0, Math.floor(Number(nextQuantityRaw || 0)));
 
     if (nextQuantity <= 0) {
       removeProduct(productId);
@@ -1597,7 +1646,7 @@ export default function NewBookingWizard({
   async function checkSelectedProductAvailability(productId: string) {
     const product = getProduct(productId);
     const selectedProduct = selectedProducts.find(
-      (item) => item.productId === productId
+      (item) => item.productId === productId,
     );
 
     if (!product || !selectedProduct) return;
@@ -1648,13 +1697,7 @@ export default function NewBookingWizard({
     }, 350);
 
     return () => window.clearTimeout(timer);
-  }, [
-    bookingActor,
-    eventDate,
-    eventEndTime,
-    eventStartTime,
-    selectedProducts,
-  ]);
+  }, [bookingActor, eventDate, eventEndTime, eventStartTime, selectedProducts]);
 
   /*
    * Do not auto-check every catalog product when the Products step opens.
@@ -1797,8 +1840,7 @@ export default function NewBookingWizard({
   const unavailableSelectedProducts = selectedProducts.filter((item) => {
     const state = availabilityByProductId[item.productId];
     return (
-      state?.checked &&
-      (state.productAvailable ?? state.available) === false
+      state?.checked && (state.productAvailable ?? state.available) === false
     );
   });
 
@@ -1845,15 +1887,15 @@ export default function NewBookingWizard({
           groupId: group.id,
           groupName: group.name,
         }));
-    }
+    },
   );
 
   const hasCustomer = Boolean(existingCustomerId || customerName.trim());
   const hasRequiredCustomerFields = Boolean(
     customerFirstName.trim() &&
-      customerLastName.trim() &&
-      customerPhone.trim() &&
-      customerEmail.trim()
+    customerLastName.trim() &&
+    customerPhone.trim() &&
+    customerEmail.trim(),
   );
   const hasEventDate = Boolean(eventDate);
 
@@ -1866,13 +1908,17 @@ export default function NewBookingWizard({
   }, [eventDate, workingHourExceptions, workingHours]);
 
   const customerStartTimeOptions = useMemo(() => {
-    if (!workingWindow.isOpen || !workingWindow.openTime || !workingWindow.closeTime) {
+    if (
+      !workingWindow.isOpen ||
+      !workingWindow.openTime ||
+      !workingWindow.closeTime
+    ) {
       return [] as string[];
     }
 
     return buildHalfHourSlots(
       timeToMinutes(workingWindow.openTime),
-      timeToMinutes(workingWindow.closeTime) - 30
+      timeToMinutes(workingWindow.closeTime) - 30,
     );
   }, [workingWindow]);
 
@@ -1881,7 +1927,9 @@ export default function NewBookingWizard({
   }, []);
 
   const startTimeOptions =
-    bookingActor === "customer" ? customerStartTimeOptions : allStartTimeOptions;
+    bookingActor === "customer"
+      ? customerStartTimeOptions
+      : allStartTimeOptions;
 
   const endTimeOptions = useMemo(() => {
     if (!eventStartTime) {
@@ -1895,7 +1943,10 @@ export default function NewBookingWizard({
         return [] as string[];
       }
 
-      return buildHalfHourSlots(fromMinutes, timeToMinutes(workingWindow.closeTime));
+      return buildHalfHourSlots(
+        fromMinutes,
+        timeToMinutes(workingWindow.closeTime),
+      );
     }
 
     return buildHalfHourSlots(fromMinutes, 23 * 60 + 30);
@@ -1956,10 +2007,7 @@ export default function NewBookingWizard({
       "<h2>Rental Agreement</h2><p>Customer: {{customer_name}}</p><p>Event date: {{event_date}}</p><p>Total: {{total_amount}}</p><p>{{signature_label}}: {{signature_name}}</p><p>Date: {{signature_date}}</p>";
 
     const customer =
-      customerName ||
-      selectedCustomer?.full_name ||
-      customerName ||
-      "Customer";
+      customerName || selectedCustomer?.full_name || customerName || "Customer";
 
     const signatureMarkup = contractSignatureDataUrl
       ? `<img src="${contractSignatureDataUrl}" alt="Manual signature" style="display:block;max-width:280px;height:auto;border-bottom:1px solid #d8cec0;padding-bottom:2px;" />`
@@ -1968,10 +2016,7 @@ export default function NewBookingWizard({
     const replacements: Record<string, string> = {
       customer_name: customer,
       customer_email:
-        customerEmail ||
-        selectedCustomer?.email ||
-        customerEmail ||
-        "",
+        customerEmail || selectedCustomer?.email || customerEmail || "",
       event_date: eventDate || "",
       event_start_time: eventStartTime || "",
       event_end_time: eventEndTime || "",
@@ -1996,7 +2041,7 @@ export default function NewBookingWizard({
       /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g,
       (_, key) => {
         return replacements[key] ?? "";
-      }
+      },
     );
 
     const productRows = selectedProducts
@@ -2063,6 +2108,59 @@ export default function NewBookingWizard({
     totalAmount,
   ]);
 
+  async function checkCustomerApprovalBeforePayment() {
+    const form = formRef.current;
+
+    if (!form) {
+      setPaymentError("Booking form is not ready. Please try again.");
+      return false;
+    }
+
+    if (approvalChecking) {
+      return false;
+    }
+
+    setApprovalChecking(true);
+    setPaymentError(null);
+
+    try {
+      const result = await preflightCustomerBookingApprovalAction(
+        new FormData(form),
+      );
+
+      if (!result.ok) {
+        const message = result.configErrors.includes(
+          "event_start_time_required",
+        )
+          ? "Enter the event start time before continuing."
+          : result.configErrors.includes("event_time_in_past")
+            ? "Event start time must be in the future."
+            : result.configErrors.includes("park_venue_mapping_required")
+              ? "Park / Venue approval settings are incomplete. Please contact us."
+              : "We could not verify this booking for payment. Please try again.";
+
+        setPaymentError(message);
+        return false;
+      }
+
+      if (result.requiresApproval) {
+        setApprovalReasons(result.reasons);
+        setApprovalModalOpen(true);
+        return false;
+      }
+
+      setApprovalReasons([]);
+      return true;
+    } catch {
+      setPaymentError(
+        "We could not verify this booking for payment. Please try again.",
+      );
+      return false;
+    } finally {
+      setApprovalChecking(false);
+    }
+  }
+
   async function openPaymentModal() {
     if (!pricingReady) {
       setPaymentError(
@@ -2115,11 +2213,16 @@ export default function NewBookingWizard({
       return;
     }
 
+    const canProceedToPayment = await checkCustomerApprovalBeforePayment();
+    if (!canProceedToPayment) {
+      return;
+    }
+
     setPaymentAmount(depositAmount);
     setPaymentModalOpen(true);
   }
 
-  function confirmContractAndOpenPos() {
+  async function confirmContractAndOpenPos() {
     if (!pricingReady) {
       setPaymentError(
         pricingLoading
@@ -2150,8 +2253,50 @@ export default function NewBookingWizard({
 
     setPaymentError(null);
     setContractModalOpen(false);
+
+    const canProceedToPayment = await checkCustomerApprovalBeforePayment();
+    if (!canProceedToPayment) {
+      return;
+    }
+
     setPaymentAmount(depositAmount);
     setPaymentModalOpen(true);
+  }
+
+  function confirmApprovalRequest() {
+    if (bookingSubmitStarted) {
+      return;
+    }
+
+    const form = formRef.current;
+
+    if (!form) {
+      setPaymentError("Booking form is not ready. Please try again.");
+      return;
+    }
+
+    if (!form.reportValidity()) {
+      setPaymentError("Complete required fields before creating booking.");
+      return;
+    }
+
+    setApprovalSubmission(true);
+    setBookingSubmitStarted(true);
+    setApprovalModalOpen(false);
+
+    if (bookingSubmitTimeoutRef.current) {
+      clearTimeout(bookingSubmitTimeoutRef.current);
+    }
+
+    bookingSubmitTimeoutRef.current = setTimeout(() => {
+      setBookingSubmitStarted(false);
+      setApprovalSubmission(false);
+      setBookingSubmitError(
+        "Booking request is taking longer than expected. Please try again.",
+      );
+    }, 30000);
+
+    form.requestSubmit();
   }
 
   async function confirmCreateBooking() {
@@ -2208,6 +2353,7 @@ export default function NewBookingWizard({
       return;
     }
 
+    setApprovalSubmission(false);
     setBookingSubmitStarted(true);
     setPaymentModalOpen(false);
 
@@ -2218,7 +2364,7 @@ export default function NewBookingWizard({
     bookingSubmitTimeoutRef.current = setTimeout(() => {
       setBookingSubmitStarted(false);
       setBookingSubmitError(
-        "Booking request is taking longer than expected. Please try again."
+        "Booking request is taking longer than expected. Please try again.",
       );
     }, 30000);
 
@@ -2271,7 +2417,9 @@ export default function NewBookingWizard({
       setPaymentError(null);
     } catch (error: any) {
       setDiscountAuthorized(false);
-      setDiscountAuthMessage(error?.message || "Failed to verify discount code.");
+      setDiscountAuthMessage(
+        error?.message || "Failed to verify discount code.",
+      );
     } finally {
       setDiscountAuthLoading(false);
     }
@@ -2291,7 +2439,9 @@ export default function NewBookingWizard({
     return { x, y };
   }
 
-  function onSignaturePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
+  function onSignaturePointerDown(
+    event: React.PointerEvent<HTMLCanvasElement>,
+  ) {
     event.preventDefault();
 
     const canvas = signatureCanvasRef.current;
@@ -2311,7 +2461,9 @@ export default function NewBookingWizard({
     setPaymentError(null);
   }
 
-  function onSignaturePointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
+  function onSignaturePointerMove(
+    event: React.PointerEvent<HTMLCanvasElement>,
+  ) {
     if (!signatureDrawingRef.current) {
       return;
     }
@@ -2348,28 +2500,30 @@ export default function NewBookingWizard({
     setContractSignatureDataUrl("");
   }
 
-  const totalChargeNow = Number((paymentAmount + (tipSettings.tipsEnabled ? tipAmount : 0)).toFixed(2));
+  const totalChargeNow = Number(
+    (paymentAmount + (tipSettings.tipsEnabled ? tipAmount : 0)).toFixed(2),
+  );
 
   const stepIsValid: Record<number, boolean> = {
     1: hasRequiredCustomerFields,
     2: Boolean(
       eventDate &&
-        eventStartTime &&
-        eventEndTime &&
-        setupAddress.trim() &&
-        setupCity.trim() &&
-        setupZip.trim()
+      eventStartTime &&
+      eventEndTime &&
+      setupAddress.trim() &&
+      setupCity.trim() &&
+      setupZip.trim(),
     ),
     3: Boolean(
       selectedProducts.length > 0 &&
-        unavailableSelectedProducts.length === 0 &&
-        uncheckedSelectedProducts.length === 0 &&
-        !selectedProductsAreChecking
+      unavailableSelectedProducts.length === 0 &&
+      uncheckedSelectedProducts.length === 0 &&
+      !selectedProductsAreChecking,
     ),
     4: Boolean(
       selectedProducts.length > 0 &&
-        missingRequiredModifierGroups.length === 0 &&
-        unavailableSelectedModifierRows.length === 0
+      missingRequiredModifierGroups.length === 0 &&
+      unavailableSelectedModifierRows.length === 0,
     ),
     5: canCreateBooking,
   };
@@ -2389,7 +2543,11 @@ export default function NewBookingWizard({
       className="space-y-4 pb-[calc(7.5rem+env(safe-area-inset-bottom))] md:space-y-6 md:pb-0"
     >
       <input type="hidden" name="bookingAttemptId" value={bookingAttemptId} />
-      <input type="hidden" name="existingCustomerId" value={existingCustomerId} />
+      <input
+        type="hidden"
+        name="existingCustomerId"
+        value={existingCustomerId}
+      />
       <input type="hidden" name="customerFirstName" value={customerFirstName} />
       <input type="hidden" name="customerLastName" value={customerLastName} />
       <input type="hidden" name="customerName" value={customerName} />
@@ -2414,36 +2572,104 @@ export default function NewBookingWizard({
       <input type="hidden" name="paymentAmount" value={paymentAmount} />
       <input type="hidden" name="tipMode" value={tipMode} />
       <input type="hidden" name="tipPercent" value={tipPercent} />
-      <input type="hidden" name="tipAmount" value={tipSettings.tipsEnabled ? tipAmount : 0} />
+      <input
+        type="hidden"
+        name="tipAmount"
+        value={tipSettings.tipsEnabled ? tipAmount : 0}
+      />
       <input type="hidden" name="discountAmount" value={safeDiscountAmount} />
-      <input type="hidden" name="discountAuthorized" value={discountAuthorized ? "true" : "false"} />
+      <input
+        type="hidden"
+        name="discountAuthorized"
+        value={discountAuthorized ? "true" : "false"}
+      />
       <input type="hidden" name="discountPassword" value={discountPassword} />
-      <input type="hidden" name="contractAccepted" value={contractAccepted ? "yes" : "no"} />
-      <input type="hidden" name="contractSignerName" value={contractSignerName} />
-      <input type="hidden" name="contractManualSignature" value={contractManualSignature} />
-      <input type="hidden" name="contractSignatureDataUrl" value={contractSignatureDataUrl} />
-      <input type="hidden" name="contractRenderedHtml" value={renderedContractHtml} />
+      <input
+        type="hidden"
+        name="contractAccepted"
+        value={contractAccepted ? "yes" : "no"}
+      />
+      <input
+        type="hidden"
+        name="contractSignerName"
+        value={contractSignerName}
+      />
+      <input
+        type="hidden"
+        name="contractManualSignature"
+        value={contractManualSignature}
+      />
+      <input
+        type="hidden"
+        name="contractSignatureDataUrl"
+        value={contractSignatureDataUrl}
+      />
+      <input
+        type="hidden"
+        name="contractRenderedHtml"
+        value={renderedContractHtml}
+      />
       <input type="hidden" name="paymentReference" value={paymentReference} />
       <input type="hidden" name="notes" value={notes} />
 
       {selectedProducts.map((item, index) => (
         <div key={item.productId}>
-          <input type="hidden" name={`productId_${index}`} value={item.productId} />
-          <input type="hidden" name={`quantity_${index}`} value={item.quantity} />
-          <input type="hidden" name={`unitPrice_${index}`} value={item.unitPrice} />
+          <input
+            type="hidden"
+            name={`productId_${index}`}
+            value={item.productId}
+          />
+          <input
+            type="hidden"
+            name={`quantity_${index}`}
+            value={item.quantity}
+          />
+          <input
+            type="hidden"
+            name={`unitPrice_${index}`}
+            value={item.unitPrice}
+          />
           <input type="hidden" name={`lineNotes_${index}`} value={item.notes} />
         </div>
       ))}
 
       {selectedModifierRows.map((item, index) => (
         <div key={`${item.productId}-${item.groupId}-${item.optionId}`}>
-          <input type="hidden" name={`modifierProductId_${index}`} value={item.productId} />
-          <input type="hidden" name={`modifierGroupId_${index}`} value={item.groupId} />
-          <input type="hidden" name={`modifierGroupName_${index}`} value={item.groupName} />
-          <input type="hidden" name={`modifierOptionId_${index}`} value={item.optionId} />
-          <input type="hidden" name={`modifierOptionName_${index}`} value={item.optionName} />
-          <input type="hidden" name={`modifierPriceDelta_${index}`} value={item.priceDelta} />
-          <input type="hidden" name={`modifierQuantity_${index}`} value={item.quantity} />
+          <input
+            type="hidden"
+            name={`modifierProductId_${index}`}
+            value={item.productId}
+          />
+          <input
+            type="hidden"
+            name={`modifierGroupId_${index}`}
+            value={item.groupId}
+          />
+          <input
+            type="hidden"
+            name={`modifierGroupName_${index}`}
+            value={item.groupName}
+          />
+          <input
+            type="hidden"
+            name={`modifierOptionId_${index}`}
+            value={item.optionId}
+          />
+          <input
+            type="hidden"
+            name={`modifierOptionName_${index}`}
+            value={item.optionName}
+          />
+          <input
+            type="hidden"
+            name={`modifierPriceDelta_${index}`}
+            value={item.priceDelta}
+          />
+          <input
+            type="hidden"
+            name={`modifierQuantity_${index}`}
+            value={item.quantity}
+          />
           <input
             type="hidden"
             name={`modifierInventoryItemId_${index}`}
@@ -2709,7 +2935,8 @@ export default function NewBookingWizard({
             </h3>
 
             <p className="mt-1 hidden text-sm text-[#6c6258] md:block">
-              The address is used to calculate delivery and sales tax automatically.
+              The address is used to calculate delivery and sales tax
+              automatically.
             </p>
           </div>
 
@@ -2805,13 +3032,13 @@ export default function NewBookingWizard({
             {/* Row 4: City + ZIP + State */}
             <div className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4">
               <div className="col-span-2 md:col-span-1">
-              <Field label="City">
-                <Input
-                  value={setupCity}
-                  onChange={(event) => updateSetupCity(event.target.value)}
-                  placeholder="Glendale"
-                />
-              </Field>
+                <Field label="City">
+                  <Input
+                    value={setupCity}
+                    onChange={(event) => updateSetupCity(event.target.value)}
+                    placeholder="Glendale"
+                  />
+                </Field>
               </div>
 
               <Field label="ZIP">
@@ -2857,11 +3084,13 @@ export default function NewBookingWizard({
             </div>
           )}
 
-          {eventDate && bookingActor === "customer" && !workingWindow.isOpen && (
-            <div className="border-t border-[#eee5d9] bg-red-50 px-4 py-3 text-xs font-semibold text-red-700 md:px-6 md:py-4 md:text-sm">
-              Customer bookings are not available on the selected date.
-            </div>
-          )}
+          {eventDate &&
+            bookingActor === "customer" &&
+            !workingWindow.isOpen && (
+              <div className="border-t border-[#eee5d9] bg-red-50 px-4 py-3 text-xs font-semibold text-red-700 md:px-6 md:py-4 md:text-sm">
+                Customer bookings are not available on the selected date.
+              </div>
+            )}
 
           {eventDate &&
             bookingActor === "customer" &&
@@ -2869,10 +3098,8 @@ export default function NewBookingWizard({
             workingWindow.openTime &&
             workingWindow.closeTime && (
               <div className="border-t border-[#eee5d9] bg-[#eaf2f9] px-4 py-3 text-xs font-semibold text-[#355879] md:px-6 md:py-4 md:text-sm">
-                Available {formatTimeLabel(
-                  workingWindow.openTime,
-                  timeFormat
-                )} – {formatTimeLabel(workingWindow.closeTime, timeFormat)}
+                Available {formatTimeLabel(workingWindow.openTime, timeFormat)}{" "}
+                – {formatTimeLabel(workingWindow.closeTime, timeFormat)}
               </div>
             )}
         </section>
@@ -2887,8 +3114,8 @@ export default function NewBookingWizard({
               </h3>
 
               <p className="mt-1 hidden text-sm text-[#6c6258] md:block">
-                Select a product. The system will check inventory for the selected
-                date and time before adding it.
+                Select a product. The system will check inventory for the
+                selected date and time before adding it.
               </p>
             </div>
 
@@ -2897,7 +3124,9 @@ export default function NewBookingWizard({
                 <Field label="Category">
                   <Select
                     value={selectedCategoryId}
-                    onChange={(event) => setSelectedCategoryId(event.target.value)}
+                    onChange={(event) =>
+                      setSelectedCategoryId(event.target.value)
+                    }
                   >
                     <option value="all">All products</option>
                     {categories.map((category) => (
@@ -3052,7 +3281,7 @@ export default function NewBookingWizard({
                       selected
                         ? "border-[#c9964f] bg-[#fff8eb] ring-2 ring-[#c9964f]/30"
                         : (availabilityState?.productAvailable ??
-                            availabilityState?.available) === false
+                              availabilityState?.available) === false
                           ? "border-red-200 bg-red-50"
                           : "border-[#eee5d9] bg-[#fcfaf7]",
                     ].join(" ")}
@@ -3094,7 +3323,9 @@ export default function NewBookingWizard({
                         <span
                           className={`rounded-full px-2.5 py-1 text-[11px] font-semibold md:px-3 md:text-xs ${badge.className}`}
                         >
-                          {availabilityState?.loading ? "Checking..." : badge.label}
+                          {availabilityState?.loading
+                            ? "Checking..."
+                            : badge.label}
                         </span>
 
                         {!selected && (
@@ -3136,7 +3367,8 @@ export default function NewBookingWizard({
                                   "This item is not available right now."}
                               </div>
 
-                              {availabilityState.missingComponents.length > 0 && (
+                              {availabilityState.missingComponents.length >
+                                0 && (
                                 <div className="mt-2 space-y-1">
                                   {availabilityState.missingComponents
                                     .slice(0, 3)
@@ -3280,7 +3512,9 @@ export default function NewBookingWizard({
 
                       <button
                         type="button"
-                        onClick={() => checkSelectedProductAvailability(item.productId)}
+                        onClick={() =>
+                          checkSelectedProductAvailability(item.productId)
+                        }
                         className="mt-3 w-full rounded-full border border-[#d8cec0] bg-white px-4 py-2 text-xs font-semibold text-[#2b2a28] transition hover:bg-[#faf8f5]"
                       >
                         Re-check availability
@@ -3348,7 +3582,8 @@ export default function NewBookingWizard({
                                 : "border-[#d8cec0] bg-white text-[#6c6258]",
                           ].join(" ")}
                         >
-                          {complete ? "✓ " : ""}{index + 1}. {itemProduct?.name || "Product"}
+                          {complete ? "✓ " : ""}
+                          {index + 1}. {itemProduct?.name || "Product"}
                         </button>
                       );
                     })}
@@ -3356,545 +3591,654 @@ export default function NewBookingWizard({
                 </div>
 
                 <div className="rounded-2xl bg-[#eaf2f9] px-3 py-2.5 text-xs font-semibold text-[#355879] ring-1 ring-[#cfe0ef] sm:flex sm:items-center sm:justify-between sm:px-4 sm:py-3 sm:text-sm">
-                  <span>Product {activeOptionsProductIndex + 1} of {selectedProducts.length}</span>
-                  <span className="hidden sm:block">Complete its option groups, then continue to the next product.</span>
+                  <span>
+                    Product {activeOptionsProductIndex + 1} of{" "}
+                    {selectedProducts.length}
+                  </span>
+                  <span className="hidden sm:block">
+                    Complete its option groups, then continue to the next
+                    product.
+                  </span>
                 </div>
               </div>
             )}
 
-            {[selectedProducts[activeOptionsProductIndex]].filter(Boolean).map((selectedProduct) => {
-              const product = getProduct(selectedProduct.productId);
-              const groups = getGroupsForProduct(selectedProduct.productId);
-              const currentGroupIndex = getOptionGroupIndex(
-                selectedProduct.productId,
-                groups.length
-              );
-              const currentGroup = groups[currentGroupIndex] || null;
+            {[selectedProducts[activeOptionsProductIndex]]
+              .filter(Boolean)
+              .map((selectedProduct) => {
+                const product = getProduct(selectedProduct.productId);
+                const groups = getGroupsForProduct(selectedProduct.productId);
+                const currentGroupIndex = getOptionGroupIndex(
+                  selectedProduct.productId,
+                  groups.length,
+                );
+                const currentGroup = groups[currentGroupIndex] || null;
 
-              return (
-                <section
-                  key={selectedProduct.productId}
-                  className="min-w-0 overflow-hidden rounded-[22px] border border-[#eee5d9] bg-[#fcfaf7] sm:rounded-[26px]"
-                >
-                  <div className="border-b border-[#eee5d9] p-4 sm:p-5">
-                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#9a723e]">
-                      Product
+                return (
+                  <section
+                    key={selectedProduct.productId}
+                    className="min-w-0 overflow-hidden rounded-[22px] border border-[#eee5d9] bg-[#fcfaf7] sm:rounded-[26px]"
+                  >
+                    <div className="border-b border-[#eee5d9] p-4 sm:p-5">
+                      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#9a723e]">
+                        Product
+                      </div>
+
+                      <h4 className="mt-1 text-xl font-semibold text-[#1f1e1b]">
+                        {product?.name || "Product"}
+                      </h4>
+
+                      <p className="mt-1 text-sm text-[#6c6258]">
+                        Quantity: {selectedProduct.quantity}
+                      </p>
                     </div>
 
-                    <h4 className="mt-1 text-xl font-semibold text-[#1f1e1b]">
-                      {product?.name || "Product"}
-                    </h4>
-
-                    <p className="mt-1 text-sm text-[#6c6258]">
-                      Quantity: {selectedProduct.quantity}
-                    </p>
-                  </div>
-
-                  <div className="space-y-5 p-3 sm:p-5">
-                    {currentGroup && (() => {
-                      const key = modifierKey(selectedProduct.productId, currentGroup.id);
-                      const selectedOptionIds = selectedModifierOptions[key] || [];
-                      const selectedQuantities = selectedModifierQuantities[key] || {};
-                      const isMultiple = currentGroup.selectionType === "multiple";
-                      const selectedTotalQuantity = selectedOptionIds.reduce(
-                        (sum, optionId) => sum + Math.max(1, Number(selectedQuantities[optionId] || 1)),
-                        0,
-                      );
-                      const maxTotalQuantity =
-                        currentGroup.maxTotalQuantity == null
-                          ? null
-                          : Math.max(1, Number(currentGroup.maxTotalQuantity));
-                      const selectedUnavailableOptionIds =
-                        selectedOptionIds.filter((optionId) => {
-                          const option = currentGroup.options.find(
-                            (item) => item.id === optionId,
+                    <div className="space-y-5 p-3 sm:p-5">
+                      {currentGroup &&
+                        (() => {
+                          const key = modifierKey(
+                            selectedProduct.productId,
+                            currentGroup.id,
                           );
-
-                          if (!option || !option.trackInventory) {
-                            return false;
-                          }
-
-                          const state =
-                            availabilityByProductId[selectedProduct.productId];
-                          const optionAvailability =
-                            state?.modifierAvailability.find(
-                              (item) => item.optionId === optionId,
+                          const selectedOptionIds =
+                            selectedModifierOptions[key] || [];
+                          const selectedQuantities =
+                            selectedModifierQuantities[key] || {};
+                          const isMultiple =
+                            currentGroup.selectionType === "multiple";
+                          const selectedTotalQuantity =
+                            selectedOptionIds.reduce(
+                              (sum, optionId) =>
+                                sum +
+                                Math.max(
+                                  1,
+                                  Number(selectedQuantities[optionId] || 1),
+                                ),
+                              0,
                             );
+                          const maxTotalQuantity =
+                            currentGroup.maxTotalQuantity == null
+                              ? null
+                              : Math.max(
+                                  1,
+                                  Number(currentGroup.maxTotalQuantity),
+                                );
+                          const selectedUnavailableOptionIds =
+                            selectedOptionIds.filter((optionId) => {
+                              const option = currentGroup.options.find(
+                                (item) => item.id === optionId,
+                              );
 
-                          if (!optionAvailability || state?.loading) {
-                            return false;
-                          }
+                              if (!option || !option.trackInventory) {
+                                return false;
+                              }
 
-                          const productQuantity = Math.max(
-                            1,
-                            Number(selectedProduct.quantity || 1),
-                          );
-                          const inventoryPerOption = Math.max(
-                            1,
-                            Number(option.inventoryQuantity || 1),
-                          );
-                          const selectedQuantityForOption = Math.max(
-                            1,
-                            Number(selectedQuantities[optionId] || 1),
-                          );
+                              const state =
+                                availabilityByProductId[
+                                  selectedProduct.productId
+                                ];
+                              const optionAvailability =
+                                state?.modifierAvailability.find(
+                                  (item) => item.optionId === optionId,
+                                );
 
-                          const currentOptionDemand = option.inventoryItemId
-                            ? inventoryPerOption *
-                              productQuantity *
-                              selectedQuantityForOption
-                            : 0;
-                          const totalSelectedDemand = option.inventoryItemId
-                            ? Number(
-                                selectedInventoryDemandByItemId.get(
-                                  option.inventoryItemId,
-                                ) || 0,
-                              )
-                            : 0;
-                          const demandFromOtherSelections = Math.max(
-                            0,
-                            totalSelectedDemand - currentOptionDemand,
-                          );
-                          const quantityNeededForOneSelection =
-                            inventoryPerOption * productQuantity;
-                          const remainingForThisOption = Math.max(
-                            0,
-                            Number(optionAvailability.quantityAvailable || 0) -
-                              demandFromOtherSelections,
-                          );
+                              if (!optionAvailability || state?.loading) {
+                                return false;
+                              }
+
+                              const productQuantity = Math.max(
+                                1,
+                                Number(selectedProduct.quantity || 1),
+                              );
+                              const inventoryPerOption = Math.max(
+                                1,
+                                Number(option.inventoryQuantity || 1),
+                              );
+                              const selectedQuantityForOption = Math.max(
+                                1,
+                                Number(selectedQuantities[optionId] || 1),
+                              );
+
+                              const currentOptionDemand = option.inventoryItemId
+                                ? inventoryPerOption *
+                                  productQuantity *
+                                  selectedQuantityForOption
+                                : 0;
+                              const totalSelectedDemand = option.inventoryItemId
+                                ? Number(
+                                    selectedInventoryDemandByItemId.get(
+                                      option.inventoryItemId,
+                                    ) || 0,
+                                  )
+                                : 0;
+                              const demandFromOtherSelections = Math.max(
+                                0,
+                                totalSelectedDemand - currentOptionDemand,
+                              );
+                              const quantityNeededForOneSelection =
+                                inventoryPerOption * productQuantity;
+                              const remainingForThisOption = Math.max(
+                                0,
+                                Number(
+                                  optionAvailability.quantityAvailable || 0,
+                                ) - demandFromOtherSelections,
+                              );
+
+                              return (
+                                remainingForThisOption <
+                                quantityNeededForOneSelection
+                              );
+                            });
+                          const canMoveNext =
+                            (currentGroup.required === false ||
+                              selectedOptionIds.length > 0) &&
+                            selectedUnavailableOptionIds.length === 0;
+                          const atLastGroup =
+                            currentGroupIndex >= groups.length - 1;
 
                           return (
-                            remainingForThisOption <
-                            quantityNeededForOneSelection
-                          );
-                        });
-                      const canMoveNext =
-                        (currentGroup.required === false ||
-                          selectedOptionIds.length > 0) &&
-                        selectedUnavailableOptionIds.length === 0;
-                      const atLastGroup = currentGroupIndex >= groups.length - 1;
+                            <div
+                              key={currentGroup.id}
+                              className="overflow-hidden rounded-[24px] border border-[#eee5d9] bg-white"
+                            >
+                              <div
+                                className={[
+                                  "grid gap-0",
+                                  currentGroup.imageUrl
+                                    ? "min-w-0 lg:grid-cols-[220px_minmax(0,1fr)]"
+                                    : "min-w-0 lg:grid-cols-1",
+                                ].join(" ")}
+                              >
+                                {currentGroup.imageUrl && (
+                                  <div className="bg-[#efe7dc]">
+                                    <img
+                                      src={currentGroup.imageUrl}
+                                      alt={currentGroup.name}
+                                      className="h-36 w-full object-cover sm:h-full sm:min-h-[220px]"
+                                    />
+                                  </div>
+                                )}
 
-                      return (
-                        <div
-                          key={currentGroup.id}
-                          className="overflow-hidden rounded-[24px] border border-[#eee5d9] bg-white"
-                        >
-                          <div
-                            className={[
-                              "grid gap-0",
-                              currentGroup.imageUrl
-                                ? "min-w-0 lg:grid-cols-[220px_minmax(0,1fr)]"
-                                : "min-w-0 lg:grid-cols-1",
-                            ].join(" ")}
-                          >
-                            {currentGroup.imageUrl && (
-                              <div className="bg-[#efe7dc]">
-                                <img
-                                  src={currentGroup.imageUrl}
-                                  alt={currentGroup.name}
-                                  className="h-36 w-full object-cover sm:h-full sm:min-h-[220px]"
-                                />
-                              </div>
-                            )}
+                                <div className="min-w-0 p-3 sm:p-5">
+                                  <div className="flex flex-wrap items-start justify-between gap-3">
+                                    <div>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <h5 className="text-lg font-semibold text-[#1f1e1b]">
+                                          {currentGroup.name}
+                                        </h5>
 
-                            <div className="min-w-0 p-3 sm:p-5">
-                              <div className="flex flex-wrap items-start justify-between gap-3">
-                                <div>
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <h5 className="text-lg font-semibold text-[#1f1e1b]">
-                                      {currentGroup.name}
-                                    </h5>
+                                        {currentGroup.required ? (
+                                          <span className="rounded-full bg-[#fff4d8] px-3 py-1 text-xs font-semibold text-[#8a6b20] ring-1 ring-[#efd582]">
+                                            Required
+                                          </span>
+                                        ) : (
+                                          <span className="rounded-full bg-[#f3f3f3] px-3 py-1 text-xs font-semibold text-[#68625d] ring-1 ring-[#e0d8cd]">
+                                            Optional
+                                          </span>
+                                        )}
 
-                                    {currentGroup.required ? (
-                                      <span className="rounded-full bg-[#fff4d8] px-3 py-1 text-xs font-semibold text-[#8a6b20] ring-1 ring-[#efd582]">
-                                        Required
-                                      </span>
-                                    ) : (
-                                      <span className="rounded-full bg-[#f3f3f3] px-3 py-1 text-xs font-semibold text-[#68625d] ring-1 ring-[#e0d8cd]">
-                                        Optional
-                                      </span>
-                                    )}
+                                        <span className="rounded-full bg-[#eaf2f9] px-3 py-1 text-xs font-semibold text-[#355879] ring-1 ring-[#cfe0ef]">
+                                          {isMultiple
+                                            ? "Multiple choice"
+                                            : "Single choice"}
+                                        </span>
 
-                                    <span className="rounded-full bg-[#eaf2f9] px-3 py-1 text-xs font-semibold text-[#355879] ring-1 ring-[#cfe0ef]">
-                                      {isMultiple ? "Multiple choice" : "Single choice"}
-                                    </span>
+                                        {isMultiple && (
+                                          <span className="rounded-full bg-[#fff8eb] px-3 py-1 text-xs font-semibold text-[#8a6b20] ring-1 ring-[#efd582]">
+                                            {selectedTotalQuantity}
+                                            {maxTotalQuantity != null
+                                              ? ` of ${maxTotalQuantity}`
+                                              : ""}{" "}
+                                            selected
+                                          </span>
+                                        )}
 
-                                    {isMultiple && (
-                                      <span className="rounded-full bg-[#fff8eb] px-3 py-1 text-xs font-semibold text-[#8a6b20] ring-1 ring-[#efd582]">
-                                        {selectedTotalQuantity}{maxTotalQuantity != null ? ` of ${maxTotalQuantity}` : ""} selected
-                                      </span>
-                                    )}
+                                        <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#6c6258] ring-1 ring-[#eee5d9]">
+                                          Group {currentGroupIndex + 1} of{" "}
+                                          {groups.length}
+                                        </span>
+                                      </div>
 
-                                    <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#6c6258] ring-1 ring-[#eee5d9]">
-                                      Group {currentGroupIndex + 1} of {groups.length}
-                                    </span>
+                                      {currentGroup.description && (
+                                        <p className="mt-2 hidden text-sm leading-6 text-[#6c6258] sm:block">
+                                          {currentGroup.description}
+                                        </p>
+                                      )}
+                                    </div>
                                   </div>
 
-                                  {currentGroup.description && (
-                                    <p className="mt-2 hidden text-sm leading-6 text-[#6c6258] sm:block">
-                                      {currentGroup.description}
-                                    </p>
-                                  )}
-                                </div>
-                              </div>
-
-                              <div className="-mx-3 mt-4 flex min-w-0 max-w-[calc(100%+1.5rem)] snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain px-3 pb-2 sm:mx-0 sm:mt-5 sm:max-w-full sm:px-0">
-                                {currentGroup.options.map((option) => {
-                                  const selected = selectedOptionIds.includes(
-                                    option.id
-                                  );
-                                  const selectedQuantity = selected
-                                    ? Math.max(1, Number(selectedQuantities[option.id] || 1))
-                                    : 0;
-                                  const productAvailability =
-                                    availabilityByProductId[
-                                      selectedProduct.productId
-                                    ];
-                                  const optionAvailability =
-                                    productAvailability?.modifierAvailability.find(
-                                      (item) => item.optionId === option.id,
-                                    );
-                                  const optionChecking =
-                                    option.trackInventory &&
-                                    (productAvailability?.loading === true ||
-                                      !productAvailability?.checked);
-                                  const productQuantity = Math.max(
-                                    1,
-                                    Number(selectedProduct.quantity || 1),
-                                  );
-                                  const inventoryPerOption = Math.max(
-                                    1,
-                                    Number(option.inventoryQuantity || 1),
-                                  );
-                                  const currentOptionDemand =
-                                    selected && option.inventoryItemId
-                                      ? inventoryPerOption *
-                                        productQuantity *
-                                        Math.max(1, selectedQuantity)
-                                      : 0;
-                                  const totalSelectedDemand =
-                                    option.inventoryItemId
-                                      ? Number(
-                                          selectedInventoryDemandByItemId.get(
-                                            option.inventoryItemId,
-                                          ) || 0,
-                                        )
-                                      : 0;
-                                  const demandFromOtherSelections = Math.max(
-                                    0,
-                                    totalSelectedDemand - currentOptionDemand,
-                                  );
-                                  const databaseAvailable = Number(
-                                    optionAvailability?.quantityAvailable || 0,
-                                  );
-                                  const remainingForThisOption = Math.max(
-                                    0,
-                                    databaseAvailable - demandFromOtherSelections,
-                                  );
-                                  const quantityNeededForOneSelection =
-                                    inventoryPerOption * productQuantity;
-                                  const cumulativeUnavailable =
-                                    option.trackInventory &&
-                                    !optionChecking &&
-                                    remainingForThisOption <
-                                      quantityNeededForOneSelection;
-                                  const optionUnavailable =
-                                    option.trackInventory &&
-                                    !optionChecking &&
-                                    cumulativeUnavailable;
-                                  const stockMaximum =
-                                    option.trackInventory && optionAvailability
-                                      ? Math.max(
+                                  <div className="-mx-3 mt-4 flex min-w-0 max-w-[calc(100%+1.5rem)] snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain px-3 pb-2 sm:mx-0 sm:mt-5 sm:max-w-full sm:px-0">
+                                    {currentGroup.options.map((option) => {
+                                      const selected =
+                                        selectedOptionIds.includes(option.id);
+                                      const selectedQuantity = selected
+                                        ? Math.max(
+                                            1,
+                                            Number(
+                                              selectedQuantities[option.id] ||
+                                                1,
+                                            ),
+                                          )
+                                        : 0;
+                                      const productAvailability =
+                                        availabilityByProductId[
+                                          selectedProduct.productId
+                                        ];
+                                      const optionAvailability =
+                                        productAvailability?.modifierAvailability.find(
+                                          (item) => item.optionId === option.id,
+                                        );
+                                      const optionChecking =
+                                        option.trackInventory &&
+                                        (productAvailability?.loading ===
+                                          true ||
+                                          !productAvailability?.checked);
+                                      const productQuantity = Math.max(
+                                        1,
+                                        Number(selectedProduct.quantity || 1),
+                                      );
+                                      const inventoryPerOption = Math.max(
+                                        1,
+                                        Number(option.inventoryQuantity || 1),
+                                      );
+                                      const currentOptionDemand =
+                                        selected && option.inventoryItemId
+                                          ? inventoryPerOption *
+                                            productQuantity *
+                                            Math.max(1, selectedQuantity)
+                                          : 0;
+                                      const totalSelectedDemand =
+                                        option.inventoryItemId
+                                          ? Number(
+                                              selectedInventoryDemandByItemId.get(
+                                                option.inventoryItemId,
+                                              ) || 0,
+                                            )
+                                          : 0;
+                                      const demandFromOtherSelections =
+                                        Math.max(
                                           0,
-                                          Math.floor(
-                                            remainingForThisOption /
-                                              quantityNeededForOneSelection,
-                                          ),
-                                        )
-                                      : Number.POSITIVE_INFINITY;
-                                  const groupRemaining = maxTotalQuantity == null
-                                    ? Number.POSITIVE_INFINITY
-                                    : Math.max(0, maxTotalQuantity - selectedTotalQuantity);
-                                  const optionMaximum = Math.max(
-                                    0,
-                                    Math.min(stockMaximum, selectedQuantity + groupRemaining),
-                                  );
-                                  const groupLimitReached =
-                                    isMultiple && !selected && maxTotalQuantity != null && selectedTotalQuantity >= maxTotalQuantity;
-                                  const optionDisabled =
-                                    (option.trackInventory && (optionChecking || optionUnavailable)) ||
-                                    groupLimitReached;
+                                          totalSelectedDemand -
+                                            currentOptionDemand,
+                                        );
+                                      const databaseAvailable = Number(
+                                        optionAvailability?.quantityAvailable ||
+                                          0,
+                                      );
+                                      const remainingForThisOption = Math.max(
+                                        0,
+                                        databaseAvailable -
+                                          demandFromOtherSelections,
+                                      );
+                                      const quantityNeededForOneSelection =
+                                        inventoryPerOption * productQuantity;
+                                      const cumulativeUnavailable =
+                                        option.trackInventory &&
+                                        !optionChecking &&
+                                        remainingForThisOption <
+                                          quantityNeededForOneSelection;
+                                      const optionUnavailable =
+                                        option.trackInventory &&
+                                        !optionChecking &&
+                                        cumulativeUnavailable;
+                                      const stockMaximum =
+                                        option.trackInventory &&
+                                        optionAvailability
+                                          ? Math.max(
+                                              0,
+                                              Math.floor(
+                                                remainingForThisOption /
+                                                  quantityNeededForOneSelection,
+                                              ),
+                                            )
+                                          : Number.POSITIVE_INFINITY;
+                                      const groupRemaining =
+                                        maxTotalQuantity == null
+                                          ? Number.POSITIVE_INFINITY
+                                          : Math.max(
+                                              0,
+                                              maxTotalQuantity -
+                                                selectedTotalQuantity,
+                                            );
+                                      const optionMaximum = Math.max(
+                                        0,
+                                        Math.min(
+                                          stockMaximum,
+                                          selectedQuantity + groupRemaining,
+                                        ),
+                                      );
+                                      const groupLimitReached =
+                                        isMultiple &&
+                                        !selected &&
+                                        maxTotalQuantity != null &&
+                                        selectedTotalQuantity >=
+                                          maxTotalQuantity;
+                                      const optionDisabled =
+                                        (option.trackInventory &&
+                                          (optionChecking ||
+                                            optionUnavailable)) ||
+                                        groupLimitReached;
 
-                                  return (
-                                    <div
-                                      key={option.id}
-                                      role="button"
-                                      tabIndex={optionDisabled ? -1 : 0}
+                                      return (
+                                        <div
+                                          key={option.id}
+                                          role="button"
+                                          tabIndex={optionDisabled ? -1 : 0}
+                                          onClick={() => {
+                                            if (optionDisabled) {
+                                              return;
+                                            }
+
+                                            if (isMultiple) {
+                                              toggleMultipleModifierOption({
+                                                productId:
+                                                  selectedProduct.productId,
+                                                groupId: currentGroup.id,
+                                                optionId: option.id,
+                                              });
+                                            } else {
+                                              chooseSingleModifierOption({
+                                                productId:
+                                                  selectedProduct.productId,
+                                                groupId: currentGroup.id,
+                                                optionId: option.id,
+                                              });
+                                            }
+                                          }}
+                                          aria-disabled={optionDisabled}
+                                          className={[
+                                            "w-[68vw] max-w-[220px] shrink-0 snap-start overflow-hidden rounded-[16px] border text-left transition sm:w-[190px] sm:rounded-[18px]",
+                                            optionChecking
+                                              ? "cursor-wait border-amber-200 bg-amber-50 opacity-80"
+                                              : optionUnavailable
+                                                ? "cursor-not-allowed border-red-200 bg-red-50 opacity-75"
+                                                : "hover:-translate-y-0.5 hover:shadow-[0_12px_28px_rgba(0,0,0,0.08)]",
+                                            selected && !optionUnavailable
+                                              ? "border-[#c9964f] bg-[#fff8eb] ring-2 ring-[#c9964f]/30"
+                                              : optionUnavailable
+                                                ? "border-red-200 bg-red-50"
+                                                : "border-[#eee5d9] bg-[#fcfaf7]",
+                                          ].join(" ")}
+                                        >
+                                          <div className="flex h-20 items-center justify-center bg-[#efe7dc] p-1.5 sm:h-24">
+                                            {option.imageUrl ? (
+                                              <img
+                                                src={option.imageUrl}
+                                                alt={option.name}
+                                                className="h-full w-full object-contain"
+                                              />
+                                            ) : (
+                                              <div className="flex h-full items-center justify-center text-xs font-semibold text-[#9a7a49]">
+                                                No photo
+                                              </div>
+                                            )}
+                                          </div>
+
+                                          <div className="p-3">
+                                            <div className="flex items-center gap-2">
+                                              <span
+                                                className={[
+                                                  "flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-bold",
+                                                  selected && !optionUnavailable
+                                                    ? "border-[#c9964f] bg-[#c9964f] text-white"
+                                                    : optionUnavailable
+                                                      ? "border-red-300 bg-red-100 text-red-700"
+                                                      : "border-[#d8cec0] bg-white text-transparent",
+                                                ].join(" ")}
+                                              >
+                                                ✓
+                                              </span>
+
+                                              <div className="line-clamp-2 text-sm font-semibold text-[#1f1e1b]">
+                                                {option.name}
+                                              </div>
+                                            </div>
+
+                                            {option.description && (
+                                              <p className="mt-1 hidden line-clamp-2 text-[11px] leading-4 text-[#6c6258] sm:block">
+                                                {option.description}
+                                              </p>
+                                            )}
+
+                                            <div className="mt-2 flex flex-wrap gap-1.5">
+                                              <span className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-semibold text-[#9a723e] ring-1 ring-[#eee5d9]">
+                                                {option.priceDelta > 0
+                                                  ? `+ ${money(option.priceDelta)}`
+                                                  : "Included"}
+                                              </span>
+
+                                              {option.trackInventory ? (
+                                                optionChecking ? (
+                                                  <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200">
+                                                    Checking stock…
+                                                  </span>
+                                                ) : optionUnavailable ? (
+                                                  <span className="rounded-full bg-red-50 px-2.5 py-0.5 text-[11px] font-semibold text-red-700 ring-1 ring-red-200">
+                                                    Unavailable
+                                                  </span>
+                                                ) : (
+                                                  <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                                                    Stock
+                                                  </span>
+                                                )
+                                              ) : (
+                                                <span className="rounded-full bg-neutral-100 px-2.5 py-0.5 text-[11px] font-semibold text-neutral-600 ring-1 ring-neutral-200">
+                                                  No inventory check
+                                                </span>
+                                              )}
+                                            </div>
+
+                                            {option.trackInventory &&
+                                              !optionChecking &&
+                                              optionAvailability && (
+                                                <div
+                                                  className={[
+                                                    "mt-2 hidden rounded-xl px-2.5 py-2 text-[11px] font-medium leading-4 ring-1 sm:block",
+                                                    optionUnavailable
+                                                      ? "bg-red-50 text-red-700 ring-red-100"
+                                                      : "bg-emerald-50 text-emerald-700 ring-emerald-100",
+                                                  ].join(" ")}
+                                                >
+                                                  Need{" "}
+                                                  {
+                                                    quantityNeededForOneSelection
+                                                  }{" "}
+                                                  · Available now{" "}
+                                                  {remainingForThisOption}
+                                                  {demandFromOtherSelections > 0
+                                                    ? ` · Used by other selections ${demandFromOtherSelections}`
+                                                    : ""}
+                                                </div>
+                                              )}
+
+                                            {optionUnavailable &&
+                                              optionAvailability && (
+                                                <div className="mt-2 rounded-xl bg-white px-2.5 py-2 text-[11px] font-medium leading-4 text-red-700 ring-1 ring-red-100">
+                                                  Need{" "}
+                                                  {
+                                                    quantityNeededForOneSelection
+                                                  }
+                                                  , remaining after current
+                                                  selections{" "}
+                                                  {remainingForThisOption}
+                                                </div>
+                                              )}
+
+                                            {isMultiple && selected && (
+                                              <div
+                                                className="mt-3 flex items-center justify-between rounded-xl bg-white p-1.5 ring-1 ring-[#e7ddd0]"
+                                                onClick={(event) =>
+                                                  event.stopPropagation()
+                                                }
+                                              >
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    setMultipleModifierQuantity(
+                                                      {
+                                                        productId:
+                                                          selectedProduct.productId,
+                                                        groupId:
+                                                          currentGroup.id,
+                                                        optionId: option.id,
+                                                        quantity:
+                                                          selectedQuantity - 1,
+                                                      },
+                                                    )
+                                                  }
+                                                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#d8cec0] bg-white text-lg font-semibold text-[#2b2a28] hover:bg-[#faf8f5]"
+                                                >
+                                                  −
+                                                </button>
+                                                <span className="min-w-10 text-center text-sm font-semibold text-[#1f1e1b]">
+                                                  {selectedQuantity}
+                                                </span>
+                                                <button
+                                                  type="button"
+                                                  disabled={
+                                                    selectedQuantity >=
+                                                    optionMaximum
+                                                  }
+                                                  onClick={() =>
+                                                    setMultipleModifierQuantity(
+                                                      {
+                                                        productId:
+                                                          selectedProduct.productId,
+                                                        groupId:
+                                                          currentGroup.id,
+                                                        optionId: option.id,
+                                                        quantity:
+                                                          selectedQuantity + 1,
+                                                      },
+                                                    )
+                                                  }
+                                                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#d8cec0] bg-white text-lg font-semibold text-[#2b2a28] hover:bg-[#faf8f5] disabled:cursor-not-allowed disabled:opacity-40"
+                                                >
+                                                  +
+                                                </button>
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+
+                                    {currentGroup.options.length === 0 && (
+                                      <div className="col-span-full rounded-[20px] border border-dashed border-[#d8cec0] bg-[#fcfaf7] px-5 py-10 text-center text-sm text-[#6c6258]">
+                                        No options inside this group.
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <div
+                                    className="sticky bottom-0 left-0 right-0 z-30 -mx-3 mt-4 grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 border-t border-[#eee5d9] bg-white/95 px-3 pt-3 shadow-[0_-8px_22px_rgba(0,0,0,0.06)] backdrop-blur sm:static sm:mx-0 sm:mt-5 sm:flex sm:flex-wrap sm:bg-transparent sm:px-0 sm:pt-4 sm:shadow-none"
+                                    style={{
+                                      paddingBottom:
+                                        "calc(0.75rem + env(safe-area-inset-bottom))",
+                                    }}
+                                  >
+                                    <button
+                                      type="button"
                                       onClick={() => {
-                                        if (optionDisabled) {
+                                        if (currentGroupIndex > 0) {
+                                          setOptionGroupIndex(
+                                            selectedProduct.productId,
+                                            currentGroupIndex - 1,
+                                            groups.length,
+                                          );
                                           return;
                                         }
 
-                                        if (isMultiple) {
-                                          toggleMultipleModifierOption({
-                                            productId: selectedProduct.productId,
-                                            groupId: currentGroup.id,
-                                            optionId: option.id,
-                                          });
-                                        } else {
-                                          chooseSingleModifierOption({
-                                            productId: selectedProduct.productId,
-                                            groupId: currentGroup.id,
-                                            optionId: option.id,
-                                          });
+                                        if (activeOptionsProductIndex > 0) {
+                                          const previousIndex =
+                                            activeOptionsProductIndex - 1;
+                                          const previousProduct =
+                                            selectedProducts[previousIndex];
+                                          const previousGroups =
+                                            getGroupsForProduct(
+                                              previousProduct.productId,
+                                            );
+                                          setActiveOptionsProductIndex(
+                                            previousIndex,
+                                          );
+                                          setOptionGroupIndex(
+                                            previousProduct.productId,
+                                            Math.max(
+                                              0,
+                                              previousGroups.length - 1,
+                                            ),
+                                            previousGroups.length,
+                                          );
                                         }
                                       }}
-                                      aria-disabled={optionDisabled}
-                                      className={[
-                                        "w-[68vw] max-w-[220px] shrink-0 snap-start overflow-hidden rounded-[16px] border text-left transition sm:w-[190px] sm:rounded-[18px]",
-                                        optionChecking
-                                          ? "cursor-wait border-amber-200 bg-amber-50 opacity-80"
-                                          : optionUnavailable
-                                            ? "cursor-not-allowed border-red-200 bg-red-50 opacity-75"
-                                          : "hover:-translate-y-0.5 hover:shadow-[0_12px_28px_rgba(0,0,0,0.08)]",
-                                        selected && !optionUnavailable
-                                          ? "border-[#c9964f] bg-[#fff8eb] ring-2 ring-[#c9964f]/30"
-                                          : optionUnavailable
-                                            ? "border-red-200 bg-red-50"
-                                            : "border-[#eee5d9] bg-[#fcfaf7]",
-                                      ].join(" ")}
+                                      disabled={
+                                        currentGroupIndex === 0 &&
+                                        activeOptionsProductIndex === 0
+                                      }
+                                      className="min-w-0 shrink-0 rounded-full border border-[#d8cec0] bg-white px-4 py-2.5 text-sm font-semibold text-[#2b2a28] transition hover:bg-[#faf8f5] disabled:cursor-not-allowed disabled:opacity-50"
                                     >
-                                      <div className="flex h-20 items-center justify-center bg-[#efe7dc] p-1.5 sm:h-24">
-                                        {option.imageUrl ? (
-                                          <img
-                                            src={option.imageUrl}
-                                            alt={option.name}
-                                            className="h-full w-full object-contain"
-                                          />
-                                        ) : (
-                                          <div className="flex h-full items-center justify-center text-xs font-semibold text-[#9a7a49]">
-                                            No photo
-                                          </div>
-                                        )}
-                                      </div>
+                                      Previous
+                                    </button>
 
-                                      <div className="p-3">
-                                        <div className="flex items-center gap-2">
-                                          <span
-                                            className={[
-                                              "flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-bold",
-                                              selected && !optionUnavailable
-                                                ? "border-[#c9964f] bg-[#c9964f] text-white"
-                                                : optionUnavailable
-                                                  ? "border-red-300 bg-red-100 text-red-700"
-                                                  : "border-[#d8cec0] bg-white text-transparent",
-                                            ].join(" ")}
-                                          >
-                                            ✓
-                                          </span>
-
-                                          <div className="line-clamp-2 text-sm font-semibold text-[#1f1e1b]">
-                                            {option.name}
-                                          </div>
-                                        </div>
-
-                                        {option.description && (
-                                          <p className="mt-1 hidden line-clamp-2 text-[11px] leading-4 text-[#6c6258] sm:block">
-                                            {option.description}
-                                          </p>
-                                        )}
-
-                                        <div className="mt-2 flex flex-wrap gap-1.5">
-                                          <span className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-semibold text-[#9a723e] ring-1 ring-[#eee5d9]">
-                                            {option.priceDelta > 0
-                                              ? `+ ${money(option.priceDelta)}`
-                                              : "Included"}
-                                          </span>
-
-                                          {option.trackInventory ? (
-                                            optionChecking ? (
-                                              <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200">
-                                                Checking stock…
-                                              </span>
-                                            ) : optionUnavailable ? (
-                                              <span className="rounded-full bg-red-50 px-2.5 py-0.5 text-[11px] font-semibold text-red-700 ring-1 ring-red-200">
-                                                Unavailable
-                                              </span>
-                                            ) : (
-                                              <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
-                                                Stock
-                                              </span>
-                                            )
-                                          ) : (
-                                            <span className="rounded-full bg-neutral-100 px-2.5 py-0.5 text-[11px] font-semibold text-neutral-600 ring-1 ring-neutral-200">
-                                              No inventory check
-                                            </span>
-                                          )}
-                                        </div>
-
-                                        {option.trackInventory && !optionChecking && optionAvailability && (
-                                          <div
-                                            className={[
-                                              "mt-2 hidden rounded-xl px-2.5 py-2 text-[11px] font-medium leading-4 ring-1 sm:block",
-                                              optionUnavailable
-                                                ? "bg-red-50 text-red-700 ring-red-100"
-                                                : "bg-emerald-50 text-emerald-700 ring-emerald-100",
-                                            ].join(" ")}
-                                          >
-                                            Need {quantityNeededForOneSelection} · Available now {remainingForThisOption}
-                                            {demandFromOtherSelections > 0
-                                              ? ` · Used by other selections ${demandFromOtherSelections}`
-                                              : ""}
-                                          </div>
-                                        )}
-
-                                        {optionUnavailable && optionAvailability && (
-                                          <div className="mt-2 rounded-xl bg-white px-2.5 py-2 text-[11px] font-medium leading-4 text-red-700 ring-1 ring-red-100">
-                                            Need {quantityNeededForOneSelection},{" "}
-                                            remaining after current selections{" "}
-                                            {remainingForThisOption}
-                                          </div>
-                                        )}
-
-                                        {isMultiple && selected && (
-                                          <div
-                                            className="mt-3 flex items-center justify-between rounded-xl bg-white p-1.5 ring-1 ring-[#e7ddd0]"
-                                            onClick={(event) => event.stopPropagation()}
-                                          >
-                                            <button
-                                              type="button"
-                                              onClick={() =>
-                                                setMultipleModifierQuantity({
-                                                  productId: selectedProduct.productId,
-                                                  groupId: currentGroup.id,
-                                                  optionId: option.id,
-                                                  quantity: selectedQuantity - 1,
-                                                })
-                                              }
-                                              className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#d8cec0] bg-white text-lg font-semibold text-[#2b2a28] hover:bg-[#faf8f5]"
-                                            >
-                                              −
-                                            </button>
-                                            <span className="min-w-10 text-center text-sm font-semibold text-[#1f1e1b]">
-                                              {selectedQuantity}
-                                            </span>
-                                            <button
-                                              type="button"
-                                              disabled={selectedQuantity >= optionMaximum}
-                                              onClick={() =>
-                                                setMultipleModifierQuantity({
-                                                  productId: selectedProduct.productId,
-                                                  groupId: currentGroup.id,
-                                                  optionId: option.id,
-                                                  quantity: selectedQuantity + 1,
-                                                })
-                                              }
-                                              className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#d8cec0] bg-white text-lg font-semibold text-[#2b2a28] hover:bg-[#faf8f5] disabled:cursor-not-allowed disabled:opacity-40"
-                                            >
-                                              +
-                                            </button>
-                                          </div>
-                                        )}
-                                      </div>
+                                    <div className="hidden text-xs text-[#8f7f6b] sm:block">
+                                      {selectedUnavailableOptionIds.length > 0
+                                        ? "Selected option is unavailable. Choose another."
+                                        : currentGroup.required &&
+                                            selectedOptionIds.length === 0
+                                          ? "Select an option to continue"
+                                          : "You can return later and edit this selection"}
                                     </div>
-                                  );
-                                })}
 
-                                {currentGroup.options.length === 0 && (
-                                  <div className="col-span-full rounded-[20px] border border-dashed border-[#d8cec0] bg-[#fcfaf7] px-5 py-10 text-center text-sm text-[#6c6258]">
-                                    No options inside this group.
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (!atLastGroup) {
+                                          setOptionGroupIndex(
+                                            selectedProduct.productId,
+                                            currentGroupIndex + 1,
+                                            groups.length,
+                                          );
+                                          return;
+                                        }
+
+                                        if (
+                                          activeOptionsProductIndex <
+                                          selectedProducts.length - 1
+                                        ) {
+                                          setActiveOptionsProductIndex(
+                                            (current) => current + 1,
+                                          );
+                                          return;
+                                        }
+
+                                        setStep(5);
+                                      }}
+                                      disabled={!canMoveNext}
+                                      className="min-w-0 w-full rounded-full bg-[#23313f] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#18222d] disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+                                    >
+                                      {atLastGroup
+                                        ? activeOptionsProductIndex <
+                                          selectedProducts.length - 1
+                                          ? "Next product"
+                                          : "Continue to review"
+                                        : "Next option group"}
+                                    </button>
                                   </div>
-                                )}
-                              </div>
-
-                              <div
-                                className="sticky bottom-0 left-0 right-0 z-30 -mx-3 mt-4 grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 border-t border-[#eee5d9] bg-white/95 px-3 pt-3 shadow-[0_-8px_22px_rgba(0,0,0,0.06)] backdrop-blur sm:static sm:mx-0 sm:mt-5 sm:flex sm:flex-wrap sm:bg-transparent sm:px-0 sm:pt-4 sm:shadow-none"
-                                style={{
-                                  paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))",
-                                }}
-                              >
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (currentGroupIndex > 0) {
-                                      setOptionGroupIndex(
-                                        selectedProduct.productId,
-                                        currentGroupIndex - 1,
-                                        groups.length
-                                      );
-                                      return;
-                                    }
-
-                                    if (activeOptionsProductIndex > 0) {
-                                      const previousIndex = activeOptionsProductIndex - 1;
-                                      const previousProduct = selectedProducts[previousIndex];
-                                      const previousGroups = getGroupsForProduct(previousProduct.productId);
-                                      setActiveOptionsProductIndex(previousIndex);
-                                      setOptionGroupIndex(
-                                        previousProduct.productId,
-                                        Math.max(0, previousGroups.length - 1),
-                                        previousGroups.length
-                                      );
-                                    }
-                                  }}
-                                  disabled={currentGroupIndex === 0 && activeOptionsProductIndex === 0}
-                                  className="min-w-0 shrink-0 rounded-full border border-[#d8cec0] bg-white px-4 py-2.5 text-sm font-semibold text-[#2b2a28] transition hover:bg-[#faf8f5] disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                  Previous
-                                </button>
-
-                                <div className="hidden text-xs text-[#8f7f6b] sm:block">
-                                  {selectedUnavailableOptionIds.length > 0
-                                    ? "Selected option is unavailable. Choose another."
-                                    : currentGroup.required &&
-                                        selectedOptionIds.length === 0
-                                      ? "Select an option to continue"
-                                      : "You can return later and edit this selection"}
                                 </div>
-
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (!atLastGroup) {
-                                      setOptionGroupIndex(
-                                        selectedProduct.productId,
-                                        currentGroupIndex + 1,
-                                        groups.length
-                                      );
-                                      return;
-                                    }
-
-                                    if (activeOptionsProductIndex < selectedProducts.length - 1) {
-                                      setActiveOptionsProductIndex((current) => current + 1);
-                                      return;
-                                    }
-
-                                    setStep(5);
-                                  }}
-                                  disabled={!canMoveNext}
-                                  className="min-w-0 w-full rounded-full bg-[#23313f] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#18222d] disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
-                                >
-                                  {atLastGroup
-                                    ? activeOptionsProductIndex < selectedProducts.length - 1
-                                      ? "Next product"
-                                      : "Continue to review"
-                                    : "Next option group"}
-                                </button>
                               </div>
                             </div>
-                          </div>
-                        </div>
-                      );
-                    })()}
+                          );
+                        })()}
 
-                    {groups.length === 0 && (
-                      <div className="rounded-[20px] border border-dashed border-[#d8cec0] bg-white px-5 py-10 text-center text-sm text-[#6c6258]">
-                        This product has no option groups.
-                      </div>
-                    )}
-                  </div>
-                </section>
-              );
-            })}
+                      {groups.length === 0 && (
+                        <div className="rounded-[20px] border border-dashed border-[#d8cec0] bg-white px-5 py-10 text-center text-sm text-[#6c6258]">
+                          This product has no option groups.
+                        </div>
+                      )}
+                    </div>
+                  </section>
+                );
+              })}
 
             {selectedProducts.length === 0 && (
               <div className="rounded-[26px] border border-dashed border-[#d8cec0] bg-[#fcfaf7] px-6 py-14 text-center">
@@ -3921,7 +4265,9 @@ export default function NewBookingWizard({
                         {row.groupName}: {row.optionName}
                       </div>
                       <div className="font-semibold">
-                        {row.priceDelta > 0 ? `+ ${money(row.priceDelta)}` : "$0.00"}
+                        {row.priceDelta > 0
+                          ? `+ ${money(row.priceDelta)}`
+                          : "$0.00"}
                       </div>
                     </div>
                   ))}
@@ -3938,7 +4284,6 @@ export default function NewBookingWizard({
 
       {step === 5 && (
         <section className="grid gap-3 sm:gap-6">
-
           <aside className="space-y-3 sm:space-y-6 xl:ml-auto xl:w-[420px]">
             <section className="rounded-[24px] border border-black/5 bg-white p-4 shadow-[0_12px_40px_rgba(0,0,0,0.04)] sm:rounded-[30px] sm:p-6">
               <div className="flex items-center justify-between gap-3">
@@ -3952,7 +4297,8 @@ export default function NewBookingWizard({
                 </div>
 
                 <span className="rounded-full bg-[#f7f3ed] px-3 py-1 text-xs font-semibold text-[#6c6258] ring-1 ring-[#e7ddd0] sm:hidden">
-                  {selectedProducts.length} item{selectedProducts.length === 1 ? "" : "s"}
+                  {selectedProducts.length} item
+                  {selectedProducts.length === 1 ? "" : "s"}
                 </span>
               </div>
 
@@ -3961,7 +4307,10 @@ export default function NewBookingWizard({
                   const product = getProduct(item.productId);
 
                   return (
-                    <div key={item.productId} className="space-y-1.5 sm:space-y-2">
+                    <div
+                      key={item.productId}
+                      className="space-y-1.5 sm:space-y-2"
+                    >
                       <div className="flex justify-between gap-3 text-sm sm:gap-4">
                         <div className="text-[#6c6258]">
                           {product?.name || "Product"} × {item.quantity}
@@ -4040,9 +4389,7 @@ export default function NewBookingWizard({
                   </div>
 
                   <div className="flex justify-between gap-4 rounded-xl bg-[#f7f3ed] px-3 py-2 text-sm sm:rounded-none sm:bg-transparent sm:px-0 sm:py-0">
-                    <div className="text-[#6c6258]">
-                      Deposit due now
-                    </div>
+                    <div className="text-[#6c6258]">Deposit due now</div>
                     <div className="font-semibold text-[#1f1e1b]">
                       {money(depositAmount)}
                     </div>
@@ -4050,19 +4397,22 @@ export default function NewBookingWizard({
 
                   <div className="mt-1 border-t border-[#eee5d9] pt-3">
                     <div className="mb-2 text-[11px] leading-4 text-[#8b8177]">
-                      Total includes products, selected options, delivery and sales tax.
+                      Total includes products, selected options, delivery and
+                      sales tax.
                     </div>
 
                     <div className="flex items-end justify-between gap-4">
-                    <div>
-                      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9a723e] sm:hidden">
-                        Booking total
+                      <div>
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9a723e] sm:hidden">
+                          Booking total
+                        </div>
+                        <div className="font-semibold text-[#1f1e1b]">
+                          Total
+                        </div>
                       </div>
-                      <div className="font-semibold text-[#1f1e1b]">Total</div>
-                    </div>
-                    <div className="text-2xl font-semibold text-[#1f1e1b]">
-                      {money(totalAmount)}
-                    </div>
+                      <div className="text-2xl font-semibold text-[#1f1e1b]">
+                        {money(totalAmount)}
+                      </div>
                     </div>
                   </div>
 
@@ -4106,7 +4456,6 @@ export default function NewBookingWizard({
             {unavailableSelectedModifierRows.length > 0 && (
               <div className="rounded-[18px] bg-red-50 p-3 text-xs leading-5 text-red-700 ring-1 ring-red-100 sm:rounded-[24px] sm:p-4 sm:text-sm sm:leading-6">
                 Return to Options and choose another available option.
-
                 {cumulativeModifierInventoryConflicts.length > 0 && (
                   <div className="mt-2 space-y-1">
                     {cumulativeModifierInventoryConflicts.map((conflict) => (
@@ -4216,8 +4565,9 @@ export default function NewBookingWizard({
               {step === 1
                 ? customerName || "Customer details"
                 : step === 2
-                  ? [eventStartTime, eventEndTime].filter(Boolean).join(" – ") ||
-                    "Choose time and address"
+                  ? [eventStartTime, eventEndTime]
+                      .filter(Boolean)
+                      .join(" – ") || "Choose time and address"
                   : step === 3
                     ? selectedProducts.length > 0
                       ? `${money(productSubtotal)}`
@@ -4261,13 +4611,17 @@ export default function NewBookingWizard({
                 Contract signature required
               </h3>
               <p className="mt-1 text-sm text-[#6c6258]">
-                Review and sign contract. POS checkout opens only after signature.
+                {bookingActor === "customer"
+                  ? "Review and sign contract. Payment opens only after signature."
+                  : "Review and sign contract. POS checkout opens only after signature."}
               </p>
             </div>
 
             <div className="flex-1 space-y-3 overflow-y-auto p-4 pb-28 sm:space-y-4 sm:p-6">
               <div className="max-h-[320px] overflow-y-auto rounded-2xl bg-white p-4 text-sm leading-6 text-[#4b4339] ring-1 ring-[#eee5d9]">
-                <div dangerouslySetInnerHTML={{ __html: renderedContractHtml }} />
+                <div
+                  dangerouslySetInnerHTML={{ __html: renderedContractHtml }}
+                />
               </div>
 
               <div className="rounded-2xl border border-dashed border-[#d8cec0] bg-[#fcfaf7] p-4">
@@ -4279,7 +4633,9 @@ export default function NewBookingWizard({
                     <Field label={signatureLabel}>
                       <Input
                         value={contractSignerName}
-                        onChange={(event) => setContractSignerName(event.target.value)}
+                        onChange={(event) =>
+                          setContractSignerName(event.target.value)
+                        }
                         placeholder="Client full name"
                       />
                     </Field>
@@ -4295,7 +4651,9 @@ export default function NewBookingWizard({
                       <input
                         type="checkbox"
                         checked={contractAccepted}
-                        onChange={(event) => setContractAccepted(event.target.checked)}
+                        onChange={(event) =>
+                          setContractAccepted(event.target.checked)
+                        }
                         className="h-5 w-5"
                       />
                       I read and agree with the contract terms
@@ -4315,7 +4673,8 @@ export default function NewBookingWizard({
                       />
                       <div className="mt-2 flex items-center justify-between gap-3">
                         <div className="text-xs text-[#6c6258]">
-                          Use finger or mouse to sign. This signature is saved with the contract.
+                          Use finger or mouse to sign. This signature is saved
+                          with the contract.
                         </div>
                         <button
                           type="button"
@@ -4328,7 +4687,6 @@ export default function NewBookingWizard({
                     </div>
                   </Field>
                 </div>
-
               </div>
 
               {paymentError && (
@@ -4352,7 +4710,7 @@ export default function NewBookingWizard({
                 onClick={confirmContractAndOpenPos}
                 className="rounded-full bg-[#23313f] px-5 py-2.5 text-sm font-semibold text-white"
               >
-                Continue to POS
+                {bookingActor === "customer" ? "Continue to payment" : "Continue to POS"}
               </button>
             </div>
           </div>
@@ -4407,7 +4765,9 @@ export default function NewBookingWizard({
                 <div className="mt-3 hidden grid-cols-2 gap-4 border-t border-white/15 pt-3 text-sm sm:grid">
                   <div>
                     <div className="text-white/65">Base payment</div>
-                    <div className="text-lg font-semibold">{money(paymentAmount)}</div>
+                    <div className="text-lg font-semibold">
+                      {money(paymentAmount)}
+                    </div>
                   </div>
                   <div>
                     <div className="text-white/65">Tip</div>
@@ -4464,7 +4824,9 @@ export default function NewBookingWizard({
                       !tipAmountEdited &&
                       tipMode === "percent"
                     ) {
-                      setTipAmount(Number(((next * tipPercent) / 100).toFixed(2)));
+                      setTipAmount(
+                        Number(((next * tipPercent) / 100).toFixed(2)),
+                      );
                     }
                   }}
                 />
@@ -4505,12 +4867,15 @@ export default function NewBookingWizard({
                             onClick={() => applyTipPercent(percent)}
                             className={[
                               "flex min-h-[62px] flex-col items-center justify-center rounded-2xl border px-3 py-2 text-center transition sm:min-h-[86px] sm:px-4 sm:py-3",
-                              Number(percent) === Number(tipPercent) && !tipAmountEdited
+                              Number(percent) === Number(tipPercent) &&
+                              !tipAmountEdited
                                 ? "border-[#23313f] bg-[#23313f] text-white"
                                 : "border-[#d8cec0] bg-white text-[#2b2a28]",
                             ].join(" ")}
                           >
-                            <span className="text-xl font-bold sm:text-2xl">{percent}%</span>
+                            <span className="text-xl font-bold sm:text-2xl">
+                              {percent}%
+                            </span>
                             <span className="mt-1 text-xs font-semibold uppercase tracking-[0.08em]">
                               Tip
                             </span>
@@ -4523,12 +4888,15 @@ export default function NewBookingWizard({
                             onClick={() => applyTipAmount(Number(amount || 0))}
                             className={[
                               "flex min-h-[62px] flex-col items-center justify-center rounded-2xl border px-3 py-2 text-center transition sm:min-h-[86px] sm:px-4 sm:py-3",
-                              Number(amount) === Number(tipAmount) && !tipAmountEdited
+                              Number(amount) === Number(tipAmount) &&
+                              !tipAmountEdited
                                 ? "border-[#23313f] bg-[#23313f] text-white"
                                 : "border-[#d8cec0] bg-white text-[#2b2a28]",
                             ].join(" ")}
                           >
-                            <span className="text-xl font-bold sm:text-2xl">{money(Number(amount || 0))}</span>
+                            <span className="text-xl font-bold sm:text-2xl">
+                              {money(Number(amount || 0))}
+                            </span>
                             <span className="mt-1 text-xs font-semibold uppercase tracking-[0.08em]">
                               Tip
                             </span>
@@ -4537,7 +4905,13 @@ export default function NewBookingWizard({
                   </div>
 
                   <div className="grid gap-2 sm:gap-3 md:grid-cols-2">
-                    <Field label={tipMode === "percent" ? "Custom tip %" : "Custom tip amount"}>
+                    <Field
+                      label={
+                        tipMode === "percent"
+                          ? "Custom tip %"
+                          : "Custom tip amount"
+                      }
+                    >
                       <Input
                         type="number"
                         step="0.01"
@@ -4555,7 +4929,9 @@ export default function NewBookingWizard({
 
                             if (paymentAmount > 0) {
                               setTipPercent(
-                                Number(((next / paymentAmount) * 100).toFixed(2))
+                                Number(
+                                  ((next / paymentAmount) * 100).toFixed(2),
+                                ),
                               );
                             }
                           }
@@ -4564,7 +4940,9 @@ export default function NewBookingWizard({
                       />
                     </Field>
 
-                    <Field label={tipMode === "percent" ? "Tip amount" : "Tip %"}>
+                    <Field
+                      label={tipMode === "percent" ? "Tip amount" : "Tip %"}
+                    >
                       <Input
                         type="number"
                         step="0.01"
@@ -4584,48 +4962,70 @@ export default function NewBookingWizard({
                 <div className="mt-3 space-y-2">
                   <div className="flex items-center justify-between gap-3">
                     <span>Products</span>
-                    <span className="font-semibold text-[#1f1e1b]">{money(productSubtotal)}</span>
+                    <span className="font-semibold text-[#1f1e1b]">
+                      {money(productSubtotal)}
+                    </span>
                   </div>
 
                   <div className="flex items-center justify-between gap-3">
                     <span>Options</span>
-                    <span className="font-semibold text-[#1f1e1b]">{money(modifiersSubtotal)}</span>
+                    <span className="font-semibold text-[#1f1e1b]">
+                      {money(modifiersSubtotal)}
+                    </span>
                   </div>
 
                   <div className="flex items-center justify-between gap-3">
                     <span>Discount</span>
-                    <span className="font-semibold text-[#1f1e1b]">-{money(safeDiscountAmount)}</span>
+                    <span className="font-semibold text-[#1f1e1b]">
+                      -{money(safeDiscountAmount)}
+                    </span>
                   </div>
 
                   <div className="flex items-center justify-between gap-3">
                     <span>Subtotal</span>
-                    <span className="font-semibold text-[#1f1e1b]">{money(taxableSubtotal)}</span>
+                    <span className="font-semibold text-[#1f1e1b]">
+                      {money(taxableSubtotal)}
+                    </span>
                   </div>
 
                   <div className="flex items-center justify-between gap-3">
                     <span>Delivery</span>
-                    <span className="font-semibold text-[#1f1e1b]">{money(deliveryFee)}</span>
+                    <span className="font-semibold text-[#1f1e1b]">
+                      {money(deliveryFee)}
+                    </span>
                   </div>
 
                   <div className="flex items-center justify-between gap-3">
                     <span>Tax</span>
-                    <span className="font-semibold text-[#1f1e1b]">{money(taxAmount)}</span>
+                    <span className="font-semibold text-[#1f1e1b]">
+                      {money(taxAmount)}
+                    </span>
                   </div>
 
                   <div className="flex items-center justify-between gap-3">
                     <span>Deposit</span>
-                    <span className="font-semibold text-[#1f1e1b]">-{money(depositAmount)}</span>
+                    <span className="font-semibold text-[#1f1e1b]">
+                      -{money(depositAmount)}
+                    </span>
                   </div>
 
                   <div className="border-t border-[#e5dbce] pt-2">
                     <div className="flex items-center justify-between gap-3">
-                      <span className="font-semibold text-[#1f1e1b]">Total</span>
-                      <span className="text-lg font-semibold text-[#1f1e1b]">{money(totalAmount)}</span>
+                      <span className="font-semibold text-[#1f1e1b]">
+                        Total
+                      </span>
+                      <span className="text-lg font-semibold text-[#1f1e1b]">
+                        {money(totalAmount)}
+                      </span>
                     </div>
 
                     <div className="mt-1 flex items-center justify-between gap-3">
-                      <span className="font-semibold text-[#1f1e1b]">Balance due</span>
-                      <span className="font-semibold text-red-700">{money(balanceDue)}</span>
+                      <span className="font-semibold text-[#1f1e1b]">
+                        Balance due
+                      </span>
+                      <span className="font-semibold text-red-700">
+                        {money(balanceDue)}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -4635,7 +5035,9 @@ export default function NewBookingWizard({
                 <Field label="Reference / transaction id">
                   <Input
                     value={paymentReference}
-                    onChange={(event) => setPaymentReference(event.target.value)}
+                    onChange={(event) =>
+                      setPaymentReference(event.target.value)
+                    }
                     placeholder="Optional"
                   />
                 </Field>
@@ -4645,7 +5047,7 @@ export default function NewBookingWizard({
                 <div className="rounded-[16px] bg-[#fcfaf7] p-3 text-xs leading-5 text-[#6c6258] ring-1 ring-[#eee5d9] sm:rounded-2xl sm:p-4 sm:text-sm">
                   {paymentMethods.find((item) => item.method === paymentMethod)
                     ?.accountLabel || "Payment details"}
-                  : {" "}
+                  :{" "}
                   {paymentMethods.find((item) => item.method === paymentMethod)
                     ?.accountValue || "Not configured in settings."}
                 </div>
@@ -4689,13 +5091,68 @@ export default function NewBookingWizard({
         </div>
       )}
 
+      {approvalModalOpen && (
+        <div className="fixed inset-0 z-[55] flex items-center justify-center bg-black/45 px-4 py-6 backdrop-blur-[2px]">
+          <div className="w-full max-w-md overflow-hidden rounded-[28px] bg-white shadow-[0_18px_50px_rgba(0,0,0,0.24)]">
+            <div className="px-5 pb-4 pt-6 sm:px-6">
+              <div className="text-xl font-semibold text-[#23313f]">
+                Confirmation required before payment
+              </div>
+              <p className="mt-2 text-sm leading-6 text-[#6f675e]">
+                We need to confirm this booking before you make a payment. No
+                payment will be taken now.
+              </p>
+              {approvalReasons.includes("last_minute") && (
+                <div className="mt-4 rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-amber-100">
+                  Your event is within our last-minute review window.
+                </div>
+              )}
+              {approvalReasons.includes("park_venue_capacity") && (
+                <div className="mt-2 rounded-2xl bg-blue-50 px-4 py-3 text-sm text-blue-900 ring-1 ring-blue-100">
+                  Park / Venue bookings for this date require staff
+                  confirmation.
+                </div>
+              )}
+              <p className="mt-4 text-sm leading-6 text-[#6f675e]">
+                Send your request and we will notify you once it is approved.
+                You can then continue to payment.
+              </p>
+            </div>
+            <div className="border-t border-[#eee5d9] bg-white px-4 pt-3 sm:flex sm:items-center sm:justify-end sm:gap-3 sm:px-6 sm:py-5">
+              <button
+                type="button"
+                onClick={() => setApprovalModalOpen(false)}
+                disabled={bookingSubmitStarted}
+                className="hidden rounded-full border border-[#d8cec0] bg-white px-5 py-2.5 text-sm font-semibold text-[#2b2a28] disabled:opacity-60 sm:inline-flex"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmApprovalRequest}
+                disabled={bookingSubmitStarted}
+                className="flex h-12 w-full items-center justify-center rounded-full bg-[#23313f] px-5 text-sm font-semibold text-white active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 sm:h-auto sm:w-auto sm:py-2.5"
+              >
+                {bookingSubmitStarted
+                  ? "Sending request…"
+                  : "Request confirmation"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {bookingSubmitStarted && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 px-4 py-6 backdrop-blur-[2px]">
           <div className="flex w-full max-w-sm flex-col items-center rounded-[28px] border border-white/10 bg-[#23313f] px-6 py-7 text-center text-white shadow-[0_18px_50px_rgba(0,0,0,0.28)]">
             <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/20 border-t-white" />
-            <div className="mt-4 text-lg font-semibold">Processing payment</div>
+            <div className="mt-4 text-lg font-semibold">
+              {approvalSubmission ? "Sending request" : "Processing payment"}
+            </div>
             <p className="mt-2 text-sm leading-6 text-white/75">
-              Redirecting to Stripe. Please do not close this window.
+              {approvalSubmission
+                ? "Submitting your booking for confirmation. Please do not close this window."
+                : "Redirecting to Stripe. Please do not close this window."}
             </p>
           </div>
         </div>

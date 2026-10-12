@@ -136,6 +136,97 @@ function isValidPasswordHash(stored: string | null | undefined, candidate: strin
   }
 }
 
+async function bookingNeedsApprovalReset(params: {
+  supabase: any;
+  bookingId: string;
+}) {
+  const result = await params.supabase
+    .from("bookings")
+    .select("booking_source, status, payment_status, amount_paid")
+    .eq("id", params.bookingId)
+    .maybeSingle();
+
+  if (result.error || !result.data) {
+    return false;
+  }
+
+  const source = String((result.data as any).booking_source || "").toLowerCase();
+  const status = String((result.data as any).status || "").toLowerCase();
+  const paymentStatus = String((result.data as any).payment_status || "").toLowerCase();
+  const amountPaid = Number((result.data as any).amount_paid || 0);
+
+  if (source !== "customer_self_service") {
+    return false;
+  }
+
+  if (["booked", "closed", "cancelled", "refunded"].includes(status)) {
+    return false;
+  }
+
+  if (["paid", "partial"].includes(paymentStatus) || amountPaid > 0) {
+    return false;
+  }
+
+  return status === "pending_deposit";
+}
+
+async function releaseActiveCheckoutAttemptsForBooking(params: {
+  supabase: any;
+  bookingId: string;
+  reason: string;
+}) {
+  const attemptsResult = await params.supabase
+    .from("booking_checkout_attempts")
+    .select("id, stripe_checkout_session_id")
+    .eq("booking_id", params.bookingId)
+    .in("state", ["holding", "stripe_bound"]);
+
+  if (attemptsResult.error) {
+    throw new Error(attemptsResult.error.message);
+  }
+
+  for (const attempt of attemptsResult.data || []) {
+    await params.supabase.rpc("release_booking_checkout_attempt_hold", {
+      p_booking_id: params.bookingId,
+      p_attempt_id: String((attempt as any).id || ""),
+      p_stripe_checkout_session_id: (attempt as any).stripe_checkout_session_id || null,
+      p_reason: params.reason,
+    });
+  }
+}
+
+async function resetApprovalForAdminWithFallback(params: {
+  supabase: any;
+  bookingId: string;
+  reason: string;
+  snapshot?: Record<string, unknown>;
+}) {
+  const resetResult = await params.supabase.rpc("reset_customer_booking_approval_for_admin", {
+    p_booking_id: params.bookingId,
+    p_reason: params.reason,
+    p_snapshot: params.snapshot || {},
+    p_invalidate_attempts: true,
+  });
+
+  if (resetResult.error) {
+    throw new Error(resetResult.error.message);
+  }
+
+  const payload = (Array.isArray(resetResult.data)
+    ? resetResult.data[0]
+    : resetResult.data) as
+    | { success?: boolean; status?: string; applied?: boolean }
+    | null;
+
+  if (!payload?.success) {
+    throw new Error(`reset_customer_booking_approval_for_admin failed: ${payload?.status || "unknown"}`);
+  }
+
+  if (payload.applied === false && payload.status !== "not_self_service") {
+    throw new Error(`reset_customer_booking_approval_for_admin not applied: ${payload.status || "unknown"}`);
+  }
+}
+
 async function getDiscountSecuritySettings() {
   const supabase = await createClient();
 
@@ -1511,6 +1602,10 @@ export async function updateBookingItemsAction(formData: FormData) {
   let operationalReconciliationWarning = false;
   let inventoryRebuildComplete = false;
   let inventoryRebuildWarningsCount = 0;
+  const shouldResetApproval = await bookingNeedsApprovalReset({
+    supabase,
+    bookingId,
+  });
 
   try {
     const inventoryRebuildResult = await rebuildInventoryReservationsForBookingEdit({
@@ -1643,6 +1738,20 @@ export async function updateBookingItemsAction(formData: FormData) {
     throw new Error(updateError.message);
   }
 
+  if (shouldResetApproval) {
+    await resetApprovalForAdminWithFallback({
+      supabase,
+      bookingId,
+      reason: "booking_updated_requires_new_approval",
+      snapshot: {
+        source: "updateBookingItemsAction",
+        event_date: eventDate || null,
+        event_start_time: eventStartTime || null,
+        event_end_time: eventEndTime || null,
+      },
+    });
+  }
+
   const { error: routeStopSyncError } = await supabase
     .from("route_stops")
     .update({
@@ -1740,6 +1849,11 @@ export async function updateBookingScheduleQuickAction(formData: FormData) {
     throw new Error("Date, start time and end time are required.");
   }
 
+  const shouldResetApproval = await bookingNeedsApprovalReset({
+    supabase,
+    bookingId,
+  });
+
   const updateResult = await supabase
     .from("bookings")
     .update({
@@ -1751,6 +1865,20 @@ export async function updateBookingScheduleQuickAction(formData: FormData) {
 
   if (updateResult.error) {
     throw new Error(updateResult.error.message);
+  }
+
+  if (shouldResetApproval) {
+    await resetApprovalForAdminWithFallback({
+      supabase,
+      bookingId,
+      reason: "schedule_updated_requires_new_approval",
+      snapshot: {
+        source: "updateBookingScheduleQuickAction",
+        event_date: eventDate,
+        event_start_time: eventStartTime,
+        event_end_time: eventEndTime,
+      },
+    });
   }
 
   const { error: routeStopQuickSyncError } = await supabase
@@ -1798,9 +1926,14 @@ export async function updateBookingCustomerAction(formData: FormData) {
     throw new Error("Booking ID is required.");
   }
 
+  const shouldResetApproval = await bookingNeedsApprovalReset({
+    supabase,
+    bookingId,
+  });
+
   const bookingResult = await supabase
     .from("bookings")
-    .select("id, customer_id")
+    .select("id, customer_id, booking_source")
     .eq("id", bookingId)
     .maybeSingle();
 
@@ -1813,11 +1946,12 @@ export async function updateBookingCustomerAction(formData: FormData) {
   }
 
   const booking = bookingResult.data as any;
+  const bookingSource = String((booking as any).booking_source || "").toLowerCase();
 
   if (selectedCustomerId) {
     const selectedCustomerResult = await supabase
       .from("customers")
-      .select("id")
+      .select("id, auth_user_id")
       .eq("id", selectedCustomerId)
       .maybeSingle();
 
@@ -1829,13 +1963,33 @@ export async function updateBookingCustomerAction(formData: FormData) {
       throw new Error("Selected customer was not found.");
     }
 
+    const selectedAuthUserId = String((selectedCustomerResult.data as any).auth_user_id || "").trim();
+
+    if (bookingSource === "customer_self_service" && !selectedAuthUserId) {
+      throw new Error("Self-service bookings can only be linked to a customer with a login account.");
+    }
+
     const relinkResult = await supabase
       .from("bookings")
-      .update({ customer_id: selectedCustomerId })
+      .update({
+        customer_id: selectedCustomerId,
+      })
       .eq("id", bookingId);
 
     if (relinkResult.error) {
       throw new Error(relinkResult.error.message);
+    }
+
+    if (shouldResetApproval) {
+      await resetApprovalForAdminWithFallback({
+        supabase,
+        bookingId,
+        reason: "customer_relinked_requires_new_approval",
+        snapshot: {
+          source: "updateBookingCustomerAction",
+          selected_customer_id: selectedCustomerId,
+        },
+      });
     }
 
     revalidatePath(`/admin/bookings/${bookingId}`);
@@ -1851,6 +2005,10 @@ export async function updateBookingCustomerAction(formData: FormData) {
   let customerId = String(booking.customer_id || "");
 
   if (!customerId) {
+    if (bookingSource === "customer_self_service") {
+      throw new Error("Self-service bookings can only be linked to an existing customer login account.");
+    }
+
     const createCustomerResult = await supabase
       .from("customers")
       .insert({
@@ -1869,11 +2027,25 @@ export async function updateBookingCustomerAction(formData: FormData) {
 
     const updateBookingResult = await supabase
       .from("bookings")
-      .update({ customer_id: customerId })
+      .update({
+        customer_id: customerId,
+      })
       .eq("id", bookingId);
 
     if (updateBookingResult.error) {
       throw new Error(updateBookingResult.error.message);
+    }
+
+    if (shouldResetApproval) {
+      await resetApprovalForAdminWithFallback({
+        supabase,
+        bookingId,
+        reason: "customer_relinked_requires_new_approval",
+        snapshot: {
+          source: "updateBookingCustomerAction",
+          created_customer_id: customerId,
+        },
+      });
     }
   } else {
     const updateCustomerResult = await supabase

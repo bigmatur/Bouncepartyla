@@ -2,7 +2,10 @@ import type {
   BookingPayment,
   BookingRecord,
 } from "../booking-types";
-import { payCustomerBookingBalanceByCardAction } from "../actions";
+import {
+  payApprovedCustomerBookingDepositAction,
+  payCustomerBookingBalanceByCardAction,
+} from "../actions";
 
 type BookingPaymentsProps = {
   booking?: BookingRecord | null;
@@ -156,6 +159,8 @@ export default function BookingPayments({
   const isSelfServiceCheckoutPending =
     normalizeText(booking.booking_source).toLowerCase() === "customer_self_service" &&
     normalizeText(booking.status).toLowerCase() === "pending_deposit";
+  const approvalState = normalizeText((booking as any).customer_approval_state).toLowerCase();
+  const approvalExpiresAt = formatDateTime((booking as any).customer_approval_expires_at);
 
   return (
     <section className="overflow-hidden rounded-[26px] border border-black/10 bg-white">
@@ -229,14 +234,49 @@ export default function BookingPayments({
         </div>
 
         {isSelfServiceCheckoutPending ? (
-          <div className="mt-5 rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-4">
-            <p className="text-sm font-semibold text-amber-900">
-              Card checkout is being confirmed
-            </p>
-            <p className="mt-1 text-sm leading-6 text-amber-800/75">
-              Do not submit another payment from this page. If you already completed Stripe Checkout, refresh in a moment while the payment confirmation is recorded.
-            </p>
-          </div>
+          approvalState === "approved" ? (
+            <div className="mt-4 rounded-[16px] border border-blue-200 bg-blue-50 px-3 py-3 sm:mt-5 sm:rounded-[18px] sm:px-4 sm:py-4">
+              <p className="text-sm font-semibold text-blue-900">
+                Your booking request has been approved
+              </p>
+              <p className="mt-1 text-sm leading-6 text-blue-800/75">
+                Complete your deposit payment{approvalExpiresAt ? ` by ${approvalExpiresAt}` : ""} to secure your reservation.
+              </p>
+              <form action={payApprovedCustomerBookingDepositAction}>
+                <input type="hidden" name="bookingId" value={booking.id} />
+                <button className="mt-3 w-full rounded-full bg-[#23313f] px-4 py-3 text-sm font-semibold text-white sm:mt-4">
+                  Continue to payment
+                </button>
+              </form>
+            </div>
+          ) : approvalState === "rejected" ? (
+            <div className="mt-5 rounded-[18px] border border-red-200 bg-red-50 px-4 py-4">
+              <p className="text-sm font-semibold text-red-900">
+                Delivery confirmation was not approved
+              </p>
+              <p className="mt-1 text-sm leading-6 text-red-800/75">
+                Unfortunately, we are unable to accommodate delivery for your requested date and time. Please contact us to explore alternatives.
+              </p>
+            </div>
+          ) : approvalState === "expired" ? (
+            <div className="mt-5 rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-4">
+              <p className="text-sm font-semibold text-amber-900">
+                Your payment window has expired
+              </p>
+              <p className="mt-1 text-sm leading-6 text-amber-800/75">
+                Your booking details are saved. Please request confirmation again so we can recheck availability.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-5 rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-4">
+              <p className="text-sm font-semibold text-amber-900">
+                Your request is awaiting review
+              </p>
+              <p className="mt-1 text-sm leading-6 text-amber-800/75">
+                No payment has been taken. We will notify you once delivery availability is confirmed.
+              </p>
+            </div>
+          )
         ) : balanceDue > 0 ? (
           <div className="mt-4 rounded-[16px] border border-blue-200 bg-blue-50 px-3 py-3 sm:mt-5 sm:rounded-[18px] sm:px-4 sm:py-4">
             <p className="text-sm font-semibold text-blue-900">

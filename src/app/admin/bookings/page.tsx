@@ -76,6 +76,10 @@ function prettyStatus(status: string | null | undefined) {
 function statusClass(status: string | null | undefined) {
   const value = String(status || "");
 
+  if (value === "awaiting_approval") {
+    return "bg-[#eaf2f9] text-[#355879] ring-1 ring-[#cfe0ef]";
+  }
+
   if (["booked", "scheduled", "inventory_reserved", "installed", "closed", "completed", "paid"].includes(value)) {
     return "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200";
   }
@@ -216,6 +220,10 @@ export default async function AdminBookingsPage({
       booking_number,
       status,
       booking_source,
+      customer_approval_state,
+      customer_approval_revision,
+      customer_approval_expires_at,
+      customer_approval_reasons,
       event_date,
       event_start_time,
       event_end_time,
@@ -313,7 +321,23 @@ export default async function AdminBookingsPage({
   const timeFormat: TimeFormat =
     settingsResult.data?.time_format === "24h" ? "24h" : "12h";
 
-  const scopedBookings = allBookings.filter((booking: any) => {
+  const normalizedBookings = allBookings.map((booking: any) => {
+    const isAwaitingApproval =
+      String(booking.booking_source || "").toLowerCase() === "customer_self_service" &&
+      String(booking.status || "").toLowerCase() === "pending_deposit" &&
+      String(booking.customer_approval_state || "").toLowerCase() === "pending";
+
+    if (isAwaitingApproval) {
+      return {
+        ...booking,
+        status: "awaiting_approval",
+      };
+    }
+
+    return booking;
+  });
+
+  const scopedBookings = normalizedBookings.filter((booking: any) => {
     const archived = Boolean(booking.archived_at);
     const isUnpaidCustomerCheckoutHold =
       String(booking.booking_source || "").toLowerCase() === "customer_self_service" &&
@@ -436,6 +460,7 @@ export default async function AdminBookingsPage({
   const totalBalance = filteredBookings.reduce((sum: number, booking: any) => sum + Number(booking.balance_due || 0), 0);
 
   const statusOptions = [
+    "awaiting_approval",
     "draft",
     "quote",
     "pending_deposit",

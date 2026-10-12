@@ -403,6 +403,7 @@ export default async function AccountBookNowPage({
           initialSetupCity={firstValue(resolvedSearchParams.setupCity || resolvedSearchParams.bn_setupCity)}
           initialSetupZip={firstValue(resolvedSearchParams.setupZip || resolvedSearchParams.bn_setupZip)}
           initialBookingError={firstValue(resolvedSearchParams.bookingError)}
+          initialBookingErrorCode={firstValue(resolvedSearchParams.bookingErrorCode)}
           initialBookingFocus={firstValue(resolvedSearchParams.bookingFocus)}
           bookingAttemptId={firstValue(resolvedSearchParams.bookingAttemptId) || randomUUID()}
           forceBookingActor="customer"

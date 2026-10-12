@@ -9,6 +9,10 @@ import {
   updateBookingPrivateNotesAction,
   updateBookingScheduleQuickAction,
 } from "./actions";
+import {
+  approveCustomerBookingApprovalAction,
+  rejectCustomerBookingApprovalAction,
+} from "./booking-admin-actions";
 import CustomerTypeahead from "./CustomerTypeahead";
 import PaymentPosPanel from "./PaymentPosPanel";
 import BookingDiscountEditor from "./BookingDiscountEditor";
@@ -24,6 +28,7 @@ type PageProps = {
     saved?: string;
     resign?: string;
     inventory?: string;
+    approvalWarning?: string;
     pos?: string;
     completionUrl?: string;
     completionEmail?: string;
@@ -232,6 +237,7 @@ export default async function BookingDetailsPage(props: PageProps) {
     paymentMethodsResult,
     paymentPosSettingsResult,
     discountSecurityResult,
+    customerApprovalResult,
   ] = await Promise.all([
     supabase
       .from("bookings")
@@ -403,6 +409,12 @@ export default async function BookingDetailsPage(props: PageProps) {
     supabase
       .rpc("get_discount_security_settings")
       .maybeSingle(),
+
+    supabase
+      .from("customer_booking_approvals")
+      .select("booking_id, revision, state, reasons, requested_at, reviewed_at, customer_comment, active_hold_expires_at")
+      .eq("booking_id", bookingId)
+      .maybeSingle(),
   ]);
 
   if (bookingResult.error) {
@@ -453,6 +465,10 @@ export default async function BookingDetailsPage(props: PageProps) {
     throw new Error(discountSecurityResult.error.message);
   }
 
+  if (customerApprovalResult.error && !isMissingTableError(customerApprovalResult.error)) {
+    throw new Error(customerApprovalResult.error.message);
+  }
+
   const booking = bookingResult.data as any;
   const customer = getOne(booking.customers);
   const bookingItems = booking.booking_items || [];
@@ -466,6 +482,18 @@ export default async function BookingDetailsPage(props: PageProps) {
   const latestHandover = handoversResult.error ? null : (handoversResult.data || [])[0] || null;
   const customersList = customersListResult.data || [];
   const paymentMethods = (paymentMethodsResult.data || []) as any[];
+  const customerApproval = customerApprovalResult.data as
+    | {
+        booking_id: string;
+        revision: number;
+        state: string;
+        reasons: string[];
+        requested_at: string | null;
+        reviewed_at: string | null;
+        customer_comment: string | null;
+        active_hold_expires_at: string | null;
+      }
+    | null;
   const discountSecurityRow = discountSecurityResult.data as
     | { discount_password_enabled: boolean; discount_password_hint: string | null }
     | null;
@@ -792,6 +820,7 @@ export default async function BookingDetailsPage(props: PageProps) {
   const showSavedBanner = Boolean(savedValue);
   const showResignBanner = String(searchParams?.resign || "") === "1";
   const showInventoryWarning = String(searchParams?.inventory || "") === "warning";
+  const showApprovalWarning = String(searchParams?.approvalWarning || "") === "park-capacity";
   const autoOpenPos = String(searchParams?.pos || "") === "1";
   const completionUrl = String(searchParams?.completionUrl || "");
   const completionEmailStatus = String(searchParams?.completionEmail || "");
@@ -839,6 +868,12 @@ export default async function BookingDetailsPage(props: PageProps) {
         </section>
       )}
 
+      {showApprovalWarning && (
+        <section className="rounded-2xl border border-[#efd582] bg-[#fff4d8] px-5 py-3 text-sm text-[#8a6b20]">
+          Approved with capacity warning: Park/Venue daily limit is already full. Please monitor routing and delivery feasibility.
+        </section>
+      )}
+
       <section className="grid grid-cols-2 gap-2.5 sm:gap-4 md:grid-cols-3 xl:grid-cols-6">
         <DetailCard label="Event date" value={formatDate(booking.event_date)} />
         <DetailCard
@@ -850,6 +885,77 @@ export default async function BookingDetailsPage(props: PageProps) {
         <DetailCard label="City" value={booking.setup_city || "—"} />
         <DetailCard label="ZIP" value={booking.setup_zip || "—"} />
       </section>
+
+      {String(booking.booking_source || "").toLowerCase() === "customer_self_service" ? (
+        <section className="rounded-[20px] border border-black/5 bg-white p-3.5 shadow-[0_8px_26px_rgba(0,0,0,0.035)] sm:rounded-[30px] sm:p-5 sm:shadow-[0_12px_40px_rgba(0,0,0,0.04)]">
+          <h3 className="text-base font-bold tracking-tight text-[#1f1e1b] sm:text-lg sm:font-semibold">
+            Customer delivery approval
+          </h3>
+
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <div className="rounded-2xl border border-[#e9dfd3] bg-[#fcfaf7] p-3">
+              <div className="text-xs uppercase tracking-[0.1em] text-[#9a7a49]">State</div>
+              <div className="mt-1 text-sm font-semibold text-[#2f2924]">
+                {String(customerApproval?.state || booking.customer_approval_state || "none").replace(/_/g, " ")}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-[#e9dfd3] bg-[#fcfaf7] p-3">
+              <div className="text-xs uppercase tracking-[0.1em] text-[#9a7a49]">Reasons</div>
+              <div className="mt-1 text-sm font-semibold text-[#2f2924]">
+                {Array.isArray(customerApproval?.reasons) && customerApproval?.reasons.length > 0
+                  ? customerApproval.reasons.join(", ").replace(/_/g, " ")
+                  : Array.isArray(booking.customer_approval_reasons) && booking.customer_approval_reasons.length > 0
+                    ? booking.customer_approval_reasons.join(", ").replace(/_/g, " ")
+                    : "—"}
+              </div>
+            </div>
+          </div>
+
+          {String(customerApproval?.state || booking.customer_approval_state || "").toLowerCase() === "pending" ? (
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <form action={approveCustomerBookingApprovalAction} className="rounded-2xl border border-[#d9e7f6] bg-[#f4f8fd] p-4">
+                <input type="hidden" name="bookingId" value={booking.id} />
+                <input type="hidden" name="approvalRevision" value={String(customerApproval?.revision || booking.customer_approval_revision || 0)} />
+                <label className="block text-xs font-semibold uppercase tracking-[0.1em] text-[#355879]">
+                  Comment to customer (optional)
+                  <textarea
+                    name="customerComment"
+                    rows={3}
+                    className="mt-2 w-full rounded-xl border border-[#b8d2ef] bg-white px-3 py-2 text-sm text-[#1f1e1b]"
+                    placeholder="Approved. Please complete payment in the next window."
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="mt-3 w-full rounded-full bg-[#2f6bb3] px-4 py-2.5 text-sm font-semibold text-white"
+                >
+                  Approve and open payment window
+                </button>
+              </form>
+
+              <form action={rejectCustomerBookingApprovalAction} className="rounded-2xl border border-red-200 bg-red-50 p-4">
+                <input type="hidden" name="bookingId" value={booking.id} />
+                <input type="hidden" name="approvalRevision" value={String(customerApproval?.revision || booking.customer_approval_revision || 0)} />
+                <label className="block text-xs font-semibold uppercase tracking-[0.1em] text-red-700">
+                  Rejection message
+                  <textarea
+                    name="customerComment"
+                    rows={3}
+                    className="mt-2 w-full rounded-xl border border-red-200 bg-white px-3 py-2 text-sm text-[#1f1e1b]"
+                    placeholder="We are unable to accommodate this delivery slot."
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="mt-3 w-full rounded-full bg-red-600 px-4 py-2.5 text-sm font-semibold text-white"
+                >
+                  Reject request
+                </button>
+              </form>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="min-w-0 rounded-[20px] border border-black/5 bg-white p-3.5 shadow-[0_8px_26px_rgba(0,0,0,0.035)] sm:rounded-[30px] sm:p-5 sm:shadow-[0_12px_40px_rgba(0,0,0,0.04)]">
         <h3 className="text-base font-bold tracking-tight text-[#1f1e1b] sm:text-lg sm:font-semibold">Quick edit date and time</h3>

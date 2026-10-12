@@ -31,15 +31,21 @@ export default function BookingDetailsLayout({
   const { booking } = details;
   const bookingSource = String((booking as any).booking_source || "").toLowerCase();
   const bookingStatus = String(booking.status || "").toLowerCase();
+  const approvalState = String((booking as any).customer_approval_state || "").toLowerCase();
   const balanceDue = Math.max(0, Number(booking.balance_due || 0));
-  const isSelfServiceCheckoutPending =
+  const isSelfServiceApprovalAwaiting =
     bookingSource === "customer_self_service" &&
-    bookingStatus === "pending_deposit";
+    bookingStatus === "pending_deposit" &&
+    approvalState !== "approved";
+  const isSelfServiceApprovalFlow =
+    bookingSource === "customer_self_service" &&
+    bookingStatus === "pending_deposit" &&
+    approvalState === "approved";
   const showMobileBalancePaymentBar =
     !adminPreview &&
     !completionMode &&
     balanceDue > 0 &&
-    !isSelfServiceCheckoutPending;
+    !isSelfServiceApprovalAwaiting;
 
   return (
     <main
@@ -111,6 +117,7 @@ export default function BookingDetailsLayout({
         <MobileBalancePaymentBar
           bookingId={booking.id}
           balanceDue={balanceDue}
+          isApprovalFlow={isSelfServiceApprovalFlow}
         />
       ) : null}
     </main>
