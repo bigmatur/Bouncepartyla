@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   createBooking as createLegacyBooking,
   type CreateBookingInput,
+  type SaveDeferredInventoryRequirements,
 } from "@/lib/booking/createBooking";
 import type {
   BookingEngineResult,
@@ -25,6 +26,10 @@ function assertSupportedCompletionStrategy(command: CreateBookingCommand) {
 }
 
 function toLegacyInput(command: CreateBookingCommand): CreateBookingInput {
+  const deferInventoryReservation =
+    command.actor === "customer" &&
+    command.deferInventoryReservation === true;
+
   return {
     customerId: command.customer.customerId,
     customerAuthUserId: command.customer.authUserId,
@@ -44,18 +49,21 @@ function toLegacyInput(command: CreateBookingCommand): CreateBookingInput {
     provisionalCustomerCheckout:
       command.actor === "customer" &&
       command.completionStrategy === "customer_contract_and_payment",
+    deferInventoryReservation,
   };
 }
 
 export async function executeCreateBooking(params: {
   supabase: SupabaseClient;
   command: CreateBookingCommand;
+  saveDeferredInventoryRequirements?: SaveDeferredInventoryRequirements;
 }): Promise<BookingEngineResult> {
   assertSupportedCompletionStrategy(params.command);
 
   const result = await createLegacyBooking({
     supabase: params.supabase,
     input: toLegacyInput(params.command),
+    saveDeferredInventoryRequirements: params.saveDeferredInventoryRequirements,
   });
 
   return {

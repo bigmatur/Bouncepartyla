@@ -16,7 +16,7 @@ type PageProps = {
   params: Promise<{
     bookingId: string;
   }>;
-  searchParams?: Promise<{ preview?: string; complete?: string; status?: string; error?: string; confirmed?: string; signed?: string; stripe?: string; session_id?: string }>;
+  searchParams?: Promise<{ preview?: string; complete?: string; status?: string; error?: string; confirmed?: string; signed?: string; stripe?: string; session_id?: string; approval?: string }>;
 };
 
 export async function generateMetadata({
@@ -115,6 +115,7 @@ export default async function CustomerBookingDetailsPage({
   // RPC versions may not expose booking_source yet.
   let bookingSource = String((details.booking as any).booking_source || "").trim();
   let customerApprovalState = String((details.booking as any).customer_approval_state || "").trim();
+  const approvalQueryState = String(query.approval || "").toLowerCase().trim();
 
   if ((!bookingSource || !customerApprovalState) && !isAdminPreview) {
     const sourceLookup = await supabase
@@ -131,6 +132,21 @@ export default async function CustomerBookingDetailsPage({
       (details.booking as any).customer_approval_expires_at = sourceLookup.data?.customer_approval_expires_at || null;
       (details.booking as any).customer_approval_revision = sourceLookup.data?.customer_approval_revision ?? null;
       (details.booking as any).customer_approval_reasons = sourceLookup.data?.customer_approval_reasons || [];
+    }
+  }
+
+  if (!isAdminPreview) {
+    if (
+      approvalQueryState === "expired" ||
+      approvalQueryState === "recheck-error" ||
+      approvalQueryState === "recheck-not-required"
+    ) {
+      customerApprovalState = "expired";
+      (details.booking as any).customer_approval_state = "expired";
+    }
+
+    if (approvalQueryState === "recheck-error" || approvalQueryState === "recheck-not-required") {
+      (details.booking as any).__approval_rerequest_state = approvalQueryState;
     }
   }
 

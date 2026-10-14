@@ -3,6 +3,11 @@ import { redirect } from "next/navigation";
 
 import CustomerShell from "@/components/account/CustomerShell";
 import { getUnifiedAccess } from "@/lib/auth/access";
+import {
+  customerDisplayStatusLabel,
+  resolveCustomerDisplayStatus,
+  type CustomerDisplayStatusCode,
+} from "@/lib/booking/customer-display-status";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -26,6 +31,8 @@ type CustomerBooking = {
   status: string;
   booking_source?: string | null;
   customer_approval_state?: string | null;
+  customer_approval_revision?: number | null;
+  customer_approval_expires_at?: string | null;
 
   event_date: string;
   event_start_time: string | null;
@@ -100,36 +107,8 @@ function formatDateTime(value: string) {
   }).format(new Date(value));
 }
 
-function bookingStatusLabel(value: string) {
-  const labels: Record<string, string> = {
-    awaiting_approval: "Awaiting review",
-    draft: "Booking started",
-    quote: "Quote prepared",
-    pending_deposit: "Waiting for deposit",
-    booked: "Booked",
-    scheduled: "Scheduled",
-    inventory_reserved: "Equipment reserved",
-    picking: "Preparing equipment",
-    loaded: "Equipment loaded",
-    out_for_delivery: "Out for delivery",
-    installed: "Installed",
-    pickup_scheduled: "Pickup scheduled",
-    picked_up: "Picked up",
-    returned: "Returned",
-    cleaning: "Equipment cleaning",
-    closed: "Completed",
-    cancelled: "Cancelled",
-    refunded: "Refunded",
-  };
-
-  return (
-    labels[value] ||
-    value
-      .replaceAll("_", " ")
-      .replace(/\b\w/g, (character) =>
-        character.toUpperCase(),
-      )
-  );
+function bookingStatusLabel(value: CustomerDisplayStatusCode) {
+  return customerDisplayStatusLabel(value);
 }
 
 function paymentStatusLabel(value: string) {
@@ -157,10 +136,19 @@ function contractStatusLabel(value: string) {
   return labels[value] || value;
 }
 
-function getStatusClass(status: string) {
+function getStatusClass(status: CustomerDisplayStatusCode) {
   switch (status) {
     case "awaiting_approval":
       return "bg-sky-50 text-sky-700";
+
+    case "approval_approved":
+      return "bg-blue-50 text-blue-700";
+
+    case "approval_rejected":
+      return "bg-red-50 text-red-700";
+
+    case "approval_expired":
+      return "bg-amber-50 text-amber-700";
 
     case "cancelled":
     case "refunded":
@@ -266,6 +254,8 @@ export default async function AccountPage({
           status,
           booking_source,
           customer_approval_state,
+          customer_approval_revision,
+          customer_approval_expires_at,
           event_date,
           event_start_time,
           event_end_time,
@@ -440,6 +430,14 @@ export default async function AccountPage({
                   booking.event_start_time,
                 );
 
+                const displayStatus = resolveCustomerDisplayStatus({
+                  bookingStatus: booking.status,
+                  bookingSource: booking.booking_source,
+                  customerApprovalState: booking.customer_approval_state,
+                  customerApprovalExpiresAt: booking.customer_approval_expires_at,
+                  paymentStatus: booking.payment_status,
+                });
+
                 const endTime = formatTime(
                   booking.event_end_time,
                 );
@@ -472,11 +470,11 @@ export default async function AccountPage({
 
                           <span
                             className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(
-                              booking.status,
+                              displayStatus,
                             )}`}
                           >
                             {bookingStatusLabel(
-                              booking.status,
+                              displayStatus,
                             )}
                           </span>
                         </div>
@@ -612,6 +610,8 @@ export default async function AccountPage({
       status,
       booking_source,
       customer_approval_state,
+      customer_approval_revision,
+      customer_approval_expires_at,
       event_date,
       event_start_time,
       event_end_time,
@@ -678,7 +678,7 @@ export default async function AccountPage({
   if (pendingBookingIds.length > 0) {
     const sourceRows = await supabase
       .from("bookings")
-      .select("id, booking_source, customer_approval_state, amount_paid, payment_status")
+      .select("id, booking_source, customer_approval_state, customer_approval_revision, customer_approval_expires_at, amount_paid, payment_status")
       .in("id", pendingBookingIds);
 
     if (!sourceRows.error) {
@@ -688,6 +688,8 @@ export default async function AccountPage({
           {
             booking_source: String(row.booking_source || ""),
             customer_approval_state: row.customer_approval_state ? String(row.customer_approval_state) : null,
+            customer_approval_revision: Number(row.customer_approval_revision || 0),
+            customer_approval_expires_at: row.customer_approval_expires_at ? String(row.customer_approval_expires_at) : null,
             amount_paid: Number(row.amount_paid || 0),
             payment_status: String(row.payment_status || ""),
           },
@@ -700,6 +702,12 @@ export default async function AccountPage({
           ...booking,
           booking_source: booking.booking_source || state?.booking_source || null,
           customer_approval_state: booking.customer_approval_state || state?.customer_approval_state || null,
+          customer_approval_revision:
+            Number(booking.customer_approval_revision || 0) > 0
+              ? Number(booking.customer_approval_revision || 0)
+              : Number(state?.customer_approval_revision || 0),
+          customer_approval_expires_at:
+            booking.customer_approval_expires_at || state?.customer_approval_expires_at || null,
           amount_paid: state ? state.amount_paid : booking.amount_paid,
           payment_status: state?.payment_status || booking.payment_status,
         };
@@ -712,30 +720,27 @@ export default async function AccountPage({
       !(
         String(booking.status || "").toLowerCase() === "pending_deposit" &&
         String(booking.booking_source || "").toLowerCase() === "customer_self_service" &&
-        !["pending", "approved", "rejected", "expired"].includes(
-          String(booking.customer_approval_state || "").toLowerCase(),
-        ) &&
+        !["pending", "approved", "rejected", "expired"].includes(String(booking.customer_approval_state || "").toLowerCase()) &&
+        Number(booking.customer_approval_revision || 0) <= 0 &&
         Number(booking.amount_paid || 0) <= 0 &&
         ["", "unpaid"].includes(String(booking.payment_status || "").toLowerCase())
       ),
   );
 
-  const bookingsWithDisplayStatus = bookings.map((booking) => {
-    const source = String(booking.booking_source || "").toLowerCase();
-    const status = String(booking.status || "").toLowerCase();
-    const approval = String(booking.customer_approval_state || "").toLowerCase();
+  const bookingsWithDisplayStatus = bookings.map((booking) => ({
+    booking,
+    displayStatus: resolveCustomerDisplayStatus({
+      bookingStatus: booking.status,
+      bookingSource: booking.booking_source,
+      customerApprovalState: booking.customer_approval_state,
+      customerApprovalExpiresAt: booking.customer_approval_expires_at,
+      paymentStatus: booking.payment_status,
+    }),
+  }));
 
-    if (source === "customer_self_service" && status === "pending_deposit" && approval === "pending") {
-      return {
-        ...booking,
-        status: "awaiting_approval",
-      };
-    }
-
-    return booking;
-  });
-
-  const actionRequiredBookings = bookingsWithDisplayStatus.filter((booking) => {
+  const actionRequiredBookings = bookingsWithDisplayStatus
+    .map((item) => item.booking)
+    .filter((booking) => {
     return (
       String(booking.booking_source || "").toLowerCase() === "admin" &&
       String(booking.status || "").toLowerCase() === "pending_deposit"
@@ -772,7 +777,7 @@ export default async function AccountPage({
   }
 
   const ordinaryBookings = bookingsWithDisplayStatus.filter(
-    (booking) => !actionRequiredBookingIds.includes(booking.id),
+    (item) => !actionRequiredBookingIds.includes(item.booking.id),
   );
 
   const customerName =
@@ -783,19 +788,27 @@ export default async function AccountPage({
     "Customer";
 
   const upcomingBookings = bookingsWithDisplayStatus.filter(
-    (booking) =>
-      booking.status !== "cancelled" &&
-      booking.status !== "refunded" &&
-      booking.status !== "closed" &&
-      booking.status !== "returned",
+    (item) => {
+      const status = String(item.booking.status || "").toLowerCase();
+      return (
+        status !== "cancelled" &&
+        status !== "refunded" &&
+        status !== "closed" &&
+        status !== "returned"
+      );
+    },
   );
 
   const completedBookings = bookingsWithDisplayStatus.filter(
-    (booking) =>
-      booking.status === "closed" ||
-      booking.status === "returned" ||
-      booking.status === "cancelled" ||
-      booking.status === "refunded",
+    (item) => {
+      const status = String(item.booking.status || "").toLowerCase();
+      return (
+        status === "closed" ||
+        status === "returned" ||
+        status === "cancelled" ||
+        status === "refunded"
+      );
+    },
   );
 
   return (
@@ -926,7 +939,7 @@ export default async function AccountPage({
           </div>
         ) : (
             <div className="mt-5 grid gap-4">
-            {ordinaryBookings.map((booking) => {
+              {ordinaryBookings.map(({ booking, displayStatus }) => {
               const startTime = formatTime(
                 booking.event_start_time,
               );
@@ -963,11 +976,11 @@ export default async function AccountPage({
 
                         <span
                           className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(
-                            booking.status,
+                              displayStatus,
                           )}`}
                         >
                           {bookingStatusLabel(
-                            booking.status,
+                              displayStatus,
                           )}
                         </span>
                       </div>

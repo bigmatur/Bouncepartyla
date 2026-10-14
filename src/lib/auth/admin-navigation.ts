@@ -54,6 +54,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     ],
   },
   { label: "Photos", href: "/admin/photos", icon: "▥", permission: "bookings.view" },
+  { label: "My Notifications", href: "/admin/my-notifications", icon: "✉", permission: "dashboard.view" },
   {
     label: "Staff",
     href: "/admin/staff",
@@ -114,6 +115,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     permission: "settings.view",
     children: [
       { label: "Settings", href: "/admin/settings", icon: "⚙", permission: "settings.view" },
+      { label: "Notification Settings", href: "/admin/notifications", icon: "⚑", permission: "settings.view" },
       { label: "Homepage Content", href: "/admin/settings/homepage", icon: "◇", permission: "settings.view" },
       { label: "System Docs", href: "/admin/system/docs", icon: "◇", permission: "settings.view" },
     ],

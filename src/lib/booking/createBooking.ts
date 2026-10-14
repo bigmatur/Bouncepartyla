@@ -1,7 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkProductAvailability } from "./availability";
 import { getAvailabilityData } from "./getAvailabilityData";
-import { reserveInventoryForBooking } from "./reserveInventory";
+import {
+  type PlannedInventoryReservation,
+  planInventoryReservationsForBooking,
+  reserveInventoryForBooking,
+} from "./reserveInventory";
 import { getBookingMarkerColor } from "./marker-color";
 import { calculateCanonicalBookingPricing } from "@/lib/booking/canonical-pricing";
 
@@ -27,6 +31,7 @@ export type CreateBookingInput = {
    * Insert as pending_deposit/customer_self_service/unpaid from the first write.
    */
   provisionalCustomerCheckout?: boolean;
+  deferInventoryReservation?: boolean;
 
   items?: CreateBookingItemInput[];
   productId?: string;
@@ -42,6 +47,26 @@ export type CreateBookingInput = {
   reservedFrom: string;
   reservedUntil: string;
 };
+
+export type DeferredInventoryRequirementRow = {
+  booking_id: string;
+  booking_item_id: string;
+  inventory_item_id: string;
+  quantity: number;
+  reserved_from: string;
+  reserved_until: string;
+  requirement_key: string;
+  requirement_type: "product" | "modifier";
+  product_id: string | null;
+  modifier_group_id: string | null;
+  modifier_option_id: string | null;
+  inventory_behavior: "reusable" | "consumable";
+};
+
+export type SaveDeferredInventoryRequirements = (params: {
+  bookingId: string;
+  rows: DeferredInventoryRequirementRow[];
+}) => Promise<void>;
 
 function roundMoney(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
@@ -425,8 +450,13 @@ async function getFinalModifierGroupOptions(params: {
 export async function createBooking(params: {
   supabase: SupabaseClient;
   input: CreateBookingInput;
+  saveDeferredInventoryRequirements?: SaveDeferredInventoryRequirements;
 }) {
-  const { supabase, input } = params;
+  const {
+    supabase,
+    input,
+    saveDeferredInventoryRequirements,
+  } = params;
   const bookingAttemptId = String(input.bookingAttemptId || "").trim() || null;
 
   const normalizedItems: CreateBookingItemInput[] = (
@@ -603,7 +633,15 @@ export async function createBooking(params: {
       return sum + getOptionPrice(option) * optionQty * quantity;
     }, 0));
 
-    preparedItems.push({ input: itemInput, product, quantity, selectedOptions, unitPrice, productSubtotal, modifiersTotal });
+    preparedItems.push({
+      input: itemInput,
+      product,
+      quantity,
+      selectedOptions,
+      unitPrice,
+      productSubtotal,
+      modifiersTotal,
+    });
   }
 
   const productsSubtotal = roundMoney(preparedItems.reduce((sum, item) => sum + item.productSubtotal, 0));
@@ -643,6 +681,7 @@ export async function createBooking(params: {
 
   const isCustomerCheckoutProvisional =
     input.provisionalCustomerCheckout === true;
+  const deferInventoryReservation = input.deferInventoryReservation === true;
 
   const persistedBalanceDue =
     isCustomerCheckoutProvisional ? totalAmount : balanceDue;
@@ -709,8 +748,11 @@ export async function createBooking(params: {
 
   try {
     const bookingItems: any[] = [];
+    const deferredRequirementRows: DeferredInventoryRequirementRow[] = [];
+    const deferredPlannedReservations: PlannedInventoryReservation[] = [];
 
-    for (const prepared of preparedItems) {
+    for (let preparedIndex = 0; preparedIndex < preparedItems.length; preparedIndex += 1) {
+      const prepared = preparedItems[preparedIndex];
       const bookingItemResult = await supabase.from("booking_items").insert({
         booking_id: booking.id,
         product_id: prepared.product.id,
@@ -757,17 +799,138 @@ export async function createBooking(params: {
         return map;
       }, {});
 
-      await reserveInventoryForBooking({
-        supabase,
-        bookingId: booking.id,
-        bookingItemId: bookingItem.id,
-        productId: prepared.product.id,
-        modifierIds: modifierIdsForInventory,
-        modifierQuantityMultipliers,
-        quantity: prepared.quantity,
-        reservedFrom: prepared.input.reservedFrom || input.reservedFrom,
-        reservedUntil: prepared.input.reservedUntil || input.reservedUntil,
+      if (deferInventoryReservation) {
+        const plannedReservations = await planInventoryReservationsForBooking({
+          supabase,
+          bookingId: booking.id,
+          bookingItemId: bookingItem.id,
+          productId: prepared.product.id,
+          modifierIds: modifierIdsForInventory,
+          modifierQuantityMultipliers,
+          quantity: prepared.quantity,
+          reservedFrom: prepared.input.reservedFrom || input.reservedFrom,
+          reservedUntil: prepared.input.reservedUntil || input.reservedUntil,
+          plannedReservations: deferredPlannedReservations,
+        });
+
+        deferredPlannedReservations.push(...plannedReservations);
+
+        const modifierOptionsByModifierId = new Map<string, any[]>();
+
+        for (const option of prepared.selectedOptions) {
+          const modifierId = String(option.modifiers?.id || "").trim();
+
+          if (!modifierId || option.modifiers?.affects_inventory !== true) {
+            continue;
+          }
+
+          const existing = modifierOptionsByModifierId.get(modifierId) || [];
+          existing.push(option);
+          modifierOptionsByModifierId.set(modifierId, existing);
+        }
+
+        const groupedRows = new Map<string, DeferredInventoryRequirementRow>();
+
+        for (const reservation of plannedReservations) {
+          const modifierId = String(reservation.modifier_id || "").trim();
+          const modifierOptions = modifierId
+            ? modifierOptionsByModifierId.get(modifierId) || []
+            : [];
+          const modifierOption = modifierOptions.length === 1
+            ? modifierOptions[0]
+            : null;
+
+          const requirementType =
+            reservation.requirement_type === "modifier" ? "modifier" : "product";
+          const productId = reservation.product_id ? String(reservation.product_id) : null;
+          const modifierGroupId = modifierOption
+            ? String(modifierOption.modifier_group_id || "").trim() || null
+            : null;
+          const modifierOptionId = modifierOption
+            ? String(modifierOption.id || "").trim() || null
+            : null;
+
+          const groupKey = [
+            reservation.inventory_item_id,
+            reservation.reserved_from,
+            reservation.reserved_until,
+            reservation.inventory_behavior,
+            requirementType,
+            productId || "",
+            modifierGroupId || "",
+            modifierOptionId || "",
+          ].join("::");
+
+          const existing = groupedRows.get(groupKey);
+
+          if (existing) {
+            existing.quantity += reservation.quantity;
+            continue;
+          }
+
+          groupedRows.set(groupKey, {
+            booking_id: booking.id,
+            booking_item_id: bookingItem.id,
+            inventory_item_id: reservation.inventory_item_id,
+            quantity: reservation.quantity,
+            reserved_from: reservation.reserved_from,
+            reserved_until: reservation.reserved_until,
+            requirement_key: "",
+            requirement_type: requirementType,
+            product_id: productId,
+            modifier_group_id: modifierGroupId,
+            modifier_option_id: modifierOptionId,
+            inventory_behavior: reservation.inventory_behavior,
+          });
+        }
+
+        const requirementRows = Array.from(groupedRows.values()).map((row, rowIndex) => ({
+          ...row,
+          requirement_key: `p:${preparedIndex}:r:${rowIndex}:i:${row.inventory_item_id}`,
+        }));
+
+        deferredRequirementRows.push(...requirementRows);
+      } else {
+        await reserveInventoryForBooking({
+          supabase,
+          bookingId: booking.id,
+          bookingItemId: bookingItem.id,
+          productId: prepared.product.id,
+          modifierIds: modifierIdsForInventory,
+          modifierQuantityMultipliers,
+          quantity: prepared.quantity,
+          reservedFrom: prepared.input.reservedFrom || input.reservedFrom,
+          reservedUntil: prepared.input.reservedUntil || input.reservedUntil,
+        });
+      }
+    }
+
+    if (deferInventoryReservation) {
+      if (deferredRequirementRows.length === 0) {
+        throw new Error("No inventory requirements prepared for deferred booking.");
+      }
+
+      if (!saveDeferredInventoryRequirements) {
+        throw new Error(
+          "Deferred inventory requirement writer is missing for this booking flow.",
+        );
+      }
+
+      await saveDeferredInventoryRequirements({
+        bookingId: String(booking.id),
+        rows: deferredRequirementRows,
       });
+
+      const pendingResult = await supabase
+        .from("bookings")
+        .update({
+          status: "pending_deposit",
+        })
+        .eq("id", booking.id);
+
+      if (pendingResult.error) {
+        throw new Error(pendingResult.error.message);
+      }
     }
 
     const deliveryCalculationResult = await supabase.from("delivery_calculations").insert({

@@ -2,6 +2,7 @@ import {
   payApprovedCustomerBookingDepositAction,
   payCustomerBookingBalanceByCardAction,
 } from "../actions";
+import ActionButton from "@/components/ui/ActionButton";
 
 function money(value: number | string | null | undefined) {
   const parsed = Number(value ?? 0);
@@ -38,9 +39,12 @@ export default function MobileBalancePaymentBar({
 
         <form action={isApprovalFlow ? payApprovedCustomerBookingDepositAction : payCustomerBookingBalanceByCardAction}>
           <input type="hidden" name="bookingId" value={bookingId} />
-          <button className="inline-flex min-h-11 items-center justify-center rounded-full bg-[#23313f] px-4 text-sm font-semibold text-white">
+          <ActionButton
+            pendingText={isApprovalFlow ? "Opening payment..." : "Opening payment..."}
+            className="min-h-11 px-4"
+          >
             {isApprovalFlow ? "Continue to payment" : "Pay balance"}
-          </button>
+          </ActionButton>
         </form>
       </div>
     </div>

@@ -1,7 +1,16 @@
+import {
+  customerDisplayStatusLabel,
+  resolveCustomerDisplayStatus,
+  type CustomerDisplayStatusCode,
+} from "@/lib/booking/customer-display-status";
+
 type BookingHeroProps = {
   booking: {
     booking_number: string | null;
     status: string;
+    booking_source?: string | null;
+    customer_approval_state?: string | null;
+    payment_status?: string | null;
     balance_due: number | string;
     amount_paid: number | string;
     total_amount: number | string;
@@ -35,42 +44,35 @@ function formatDate(value: string) {
   }).format(date);
 }
 
-function statusLabel(value: string) {
-  return value
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (character) =>
-      character.toUpperCase(),
-    );
+function bookingStatusLabel(value: CustomerDisplayStatusCode) {
+  if (value === "booked" || value === "scheduled") {
+    return "Everything is on schedule";
+  }
+
+  if (value === "loaded") {
+    return "Ready for delivery";
+  }
+
+  if (value === "installed") {
+    return "Setup is complete";
+  }
+
+  if (value === "picked_up") {
+    return "Equipment picked up";
+  }
+
+  if (value === "returned" || value === "cleaning" || value === "closed") {
+    return "Completed";
+  }
+
+  return customerDisplayStatusLabel(value);
 }
 
-function bookingStatusLabel(value: string) {
-  const labels: Record<string, string> = {
-    draft: "Booking started",
-    quote: "Quote prepared",
-    pending_deposit: "Waiting for deposit",
-    booked: "Everything is on schedule",
-    scheduled: "Everything is on schedule",
-    inventory_reserved: "Equipment reserved",
-    picking: "Preparing your equipment",
-    loaded: "Ready for delivery",
-    out_for_delivery: "Out for delivery",
-    installed: "Setup is complete",
-    pickup_scheduled: "Pickup scheduled",
-    picked_up: "Equipment picked up",
-    returned: "Completed",
-    cleaning: "Completed",
-    closed: "Completed",
-    cancelled: "Cancelled",
-    refunded: "Refunded",
-  };
-
-  return labels[value] || statusLabel(value);
-}
-
-function getStatusStyles(status: string) {
+function getStatusStyles(status: CustomerDisplayStatusCode) {
   if (
     status === "cancelled" ||
-    status === "refunded"
+    status === "refunded" ||
+    status === "approval_rejected"
   ) {
     return {
       wrapper: "bg-red-50 text-red-700",
@@ -81,11 +83,22 @@ function getStatusStyles(status: string) {
   if (
     status === "draft" ||
     status === "quote" ||
-    status === "pending_deposit"
+    status === "pending_deposit" ||
+    status === "approval_expired"
   ) {
     return {
       wrapper: "bg-amber-50 text-amber-700",
       dot: "bg-amber-500",
+    };
+  }
+
+  if (
+    status === "awaiting_approval" ||
+    status === "approval_approved"
+  ) {
+    return {
+      wrapper: "bg-blue-50 text-blue-700",
+      dot: "bg-blue-500",
     };
   }
 
@@ -119,7 +132,14 @@ export default function BookingHero({
       : 0;
 
   const isPaid = balanceDue <= 0;
-  const statusStyles = getStatusStyles(booking.status);
+  const displayStatus = resolveCustomerDisplayStatus({
+    bookingStatus: booking.status,
+    bookingSource: booking.booking_source,
+    customerApprovalState: booking.customer_approval_state,
+    customerApprovalExpiresAt: (booking as any).customer_approval_expires_at,
+    paymentStatus: booking.payment_status,
+  });
+  const statusStyles = getStatusStyles(displayStatus);
 
   return (
     <section className="mt-4 overflow-hidden rounded-[22px] border border-black/10 bg-white shadow-[0_20px_60px_rgba(0,0,0,0.05)] sm:mt-5 sm:rounded-[30px]">
@@ -133,7 +153,7 @@ export default function BookingHero({
               aria-hidden="true"
             />
 
-            {bookingStatusLabel(booking.status)}
+            {bookingStatusLabel(displayStatus)}
           </div>
 
           <h1 className="mt-4 max-w-3xl text-2xl font-semibold tracking-[-0.04em] sm:mt-6 sm:text-4xl lg:text-5xl">

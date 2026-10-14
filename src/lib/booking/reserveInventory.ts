@@ -360,7 +360,23 @@ async function getRecipes(params: {
   return recipesWithModifiers;
 }
 
-export async function reserveInventoryForBooking(params: {
+export type PlannedInventoryReservation = {
+  booking_id: string;
+  booking_item_id: string;
+  inventory_item_id: string;
+  inventory_unit_id: string | null;
+  quantity: number;
+  reserved_from: string;
+  reserved_until: string;
+  status: "reserved";
+  inventory_behavior: "reusable" | "consumable";
+  requirement_type: "product" | "modifier";
+  product_id: string | null;
+  modifier_id: string | null;
+  notes?: string;
+};
+
+export async function planInventoryReservationsForBooking(params: {
   supabase: SupabaseClient;
   bookingId: string;
   bookingItemId: string;
@@ -370,6 +386,7 @@ export async function reserveInventoryForBooking(params: {
   quantity: number;
   reservedFrom: string;
   reservedUntil: string;
+  plannedReservations?: PlannedInventoryReservation[];
 }) {
   const {
     supabase,
@@ -381,6 +398,7 @@ export async function reserveInventoryForBooking(params: {
     quantity,
     reservedFrom,
     reservedUntil,
+    plannedReservations = [],
   } = params;
 
   const recipes = await getRecipes({
@@ -428,6 +446,23 @@ export async function reserveInventoryForBooking(params: {
   const reservations =
     (reservationsResult.data || []) as InventoryReservationForAvailability[];
 
+  if (plannedReservations.length > 0) {
+    const syntheticReservations = plannedReservations.map((reservation, index) => ({
+      id: `planned-${index}`,
+      booking_id: reservation.booking_id,
+      booking_item_id: reservation.booking_item_id,
+      inventory_item_id: reservation.inventory_item_id,
+      inventory_unit_id: reservation.inventory_unit_id,
+      quantity: reservation.quantity,
+      reserved_from: reservation.reserved_from,
+      reserved_until: reservation.reserved_until,
+      status: reservation.status,
+      inventory_behavior: reservation.inventory_behavior,
+    }));
+
+    reservations.push(...syntheticReservations);
+  }
+
   const normalRecipes = recipes.filter((recipe) => !recipe.alternative_group);
   const strictNormalRecipes = normalRecipes.filter(
     (recipe) => getRequirementType(recipe) !== "alternative"
@@ -455,18 +490,7 @@ export async function reserveInventoryForBooking(params: {
     alternativeGroups.set(groupKey, group);
   }
 
-  const reservationsToInsert: {
-    booking_id: string;
-    booking_item_id: string;
-    inventory_item_id: string;
-    inventory_unit_id: string | null;
-    quantity: number;
-    reserved_from: string;
-    reserved_until: string;
-    status: "reserved";
-    inventory_behavior: "reusable" | "consumable";
-    notes?: string;
-  }[] = [];
+  const reservationsToInsert: PlannedInventoryReservation[] = [];
 
   function addReservationForRecipe(recipe: InventoryRecipeForAvailability) {
     const item = recipe.inventory_items;
@@ -493,6 +517,7 @@ export async function reserveInventoryForBooking(params: {
     const quantityRequired =
       Number(recipe.quantity_required || 0) * quantity * modifierMultiplier;
     const inventoryBehavior = recipe.inventory_behavior === "consumable" ? "consumable" : "reusable";
+    const requirementType = recipe.modifier_id ? "modifier" : "product";
 
     if (quantityRequired <= 0) {
       return;
@@ -519,6 +544,9 @@ export async function reserveInventoryForBooking(params: {
           reserved_until: reservedUntil,
           status: "reserved",
           inventory_behavior: "reusable",
+          requirement_type: requirementType,
+          product_id: recipe.product_id || null,
+          modifier_id: recipe.modifier_id || null,
           notes: recipe.modifier_id
             ? `Reserved for modifier ${recipe.modifier_id}`
             : "Reserved for product",
@@ -567,6 +595,9 @@ export async function reserveInventoryForBooking(params: {
       reserved_until: reservedUntil,
       status: "reserved",
       inventory_behavior: inventoryBehavior,
+      requirement_type: requirementType,
+      product_id: recipe.product_id || null,
+      modifier_id: recipe.modifier_id || null,
       notes: recipe.modifier_id
         ? `Reserved for modifier ${recipe.modifier_id}`
         : "Reserved for product",
@@ -618,7 +649,33 @@ export async function reserveInventoryForBooking(params: {
     throw new Error("No inventory reservations were created.");
   }
 
-  const insertResult = await supabase
+  return reservationsToInsert;
+}
+
+export async function reserveInventoryForBooking(params: {
+  supabase: SupabaseClient;
+  bookingId: string;
+  bookingItemId: string;
+  productId: string;
+  modifierIds?: string[];
+  modifierQuantityMultipliers?: Record<string, number>;
+  quantity: number;
+  reservedFrom: string;
+  reservedUntil: string;
+}) {
+  const reservationsToInsert = await planInventoryReservationsForBooking({
+    supabase: params.supabase,
+    bookingId: params.bookingId,
+    bookingItemId: params.bookingItemId,
+    productId: params.productId,
+    modifierIds: params.modifierIds,
+    modifierQuantityMultipliers: params.modifierQuantityMultipliers,
+    quantity: params.quantity,
+    reservedFrom: params.reservedFrom,
+    reservedUntil: params.reservedUntil,
+  });
+
+  const insertResult = await params.supabase
     .from("inventory_reservations")
     .insert(reservationsToInsert)
     .select();
@@ -627,12 +684,12 @@ export async function reserveInventoryForBooking(params: {
     throw new Error(insertResult.error.message);
   }
 
-  await supabase
+  await params.supabase
     .from("bookings")
     .update({
       status: "inventory_reserved",
     })
-    .eq("id", bookingId);
+    .eq("id", params.bookingId);
 
   return insertResult.data;
 }

@@ -33,6 +33,7 @@ export type CreateBookingCommand = {
   actor: BookingActor;
   completionStrategy: BookingCompletionStrategy;
   attemptId?: string;
+  deferInventoryReservation?: boolean;
   customer: BookingCustomerCommand;
   event: BookingEventCommand;
   items: CreateBookingItemInput[];

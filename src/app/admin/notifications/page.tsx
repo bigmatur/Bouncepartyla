@@ -62,8 +62,8 @@ export default async function NotificationsAdminPage({
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#9a7a49]">Notifications & Messaging</p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-[#1f1e1b] sm:text-4xl">Notification center</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-black/55">One place for customer/staff rules, Email, SMS, in-app delivery, preferences and audit history.</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-[#1f1e1b] sm:text-4xl">Notification settings</h1>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-black/55">Configuration and operations console for rules, templates, channels, scheduler and delivery diagnostics. Personal staff alerts are shown in My Notifications.</p>
         </div>
         <form action={processNotificationQueueAction}>
           <button className="rounded-full border border-black/10 bg-white px-5 py-2.5 text-sm font-semibold shadow-sm">Process queued notifications</button>

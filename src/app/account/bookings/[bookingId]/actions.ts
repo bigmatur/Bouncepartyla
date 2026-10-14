@@ -4,8 +4,19 @@ import { redirect } from "next/navigation";
 import { requireCustomerAccess } from "@/lib/auth/require-customer";
 import {
   createStripeCheckoutSession,
+  getApplicationOrigin,
   retrieveStripeCheckoutSession,
 } from "@/lib/payments/stripe";
+import {
+  type CustomerApprovalReason,
+  evaluateCustomerBookingApproval,
+  requestCustomerBookingApproval,
+} from "@/lib/booking/customer-approval";
+import {
+  enqueueBookingNotification,
+  enqueueStaffBookingNotification,
+  processNotificationQueueBestEffort,
+} from "@/lib/notifications/engine";
 import {
   getTemporaryCheckoutHoldBufferMinutes,
   getTemporaryCheckoutSessionMinutes,
@@ -36,6 +47,75 @@ function isMissingFunctionError(error: any, functionName?: string) {
     message.includes("does not exist") &&
     (!target || message.includes(target))
   );
+}
+
+async function expireCustomerApprovalAndRedirect(params: {
+  supabase: any;
+  bookingId: string;
+  approvalRevision: number;
+  reason: string;
+}): Promise<never> {
+  let shouldNotifyExpired = false;
+
+  try {
+    const expireResult = await params.supabase.rpc(
+      "expire_customer_booking_approval_if_needed",
+      {
+        p_booking_id: params.bookingId,
+        p_reason: params.reason,
+      },
+    );
+
+    if (expireResult.error) {
+      console.error("Failed to expire customer approval before redirect", {
+        bookingId: params.bookingId,
+        reason: params.reason,
+        message: expireResult.error.message,
+        code: expireResult.error.code,
+      });
+    } else {
+      const payload =
+        expireResult.data && typeof expireResult.data === "object" && !Array.isArray(expireResult.data)
+          ? (expireResult.data as { success?: boolean; status?: string })
+          : null;
+
+      shouldNotifyExpired = payload?.success === true && payload.status === "expired";
+    }
+  } catch (error) {
+    console.error("Unexpected approval expiry normalization error", {
+      bookingId: params.bookingId,
+      reason: params.reason,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  if (shouldNotifyExpired) {
+    try {
+      const dedupeSuffix =
+        params.approvalRevision > 0
+          ? `revision-${params.approvalRevision}`
+          : "approval-expired";
+
+      await enqueueBookingNotification({
+        eventCode: "customer_booking_approval_expired",
+        bookingId: params.bookingId,
+        dedupeSuffix,
+        payload: {},
+      });
+
+      await processNotificationQueueBestEffort({
+        bookingId: params.bookingId,
+        limit: 10,
+      });
+    } catch (notifyError) {
+      console.error("Failed to enqueue approval-expired notification", {
+        bookingId: params.bookingId,
+        error: notifyError instanceof Error ? notifyError.message : String(notifyError),
+      });
+    }
+  }
+
+  redirect(`/account/bookings/${params.bookingId}?approval=expired`);
 }
 
 export async function payCustomerBookingBalanceByCardAction(formData: FormData) {
@@ -110,6 +190,7 @@ export async function payApprovedCustomerBookingDepositAction(formData: FormData
   const source = String(booking.booking_source || "").toLowerCase();
   const status = String(booking.status || "").toLowerCase();
   const approvalState = String(booking.customer_approval_state || "").toLowerCase();
+  const approvalRevision = Math.max(0, Number(booking.customer_approval_revision || 0));
 
   if (source !== "customer_self_service" || status !== "pending_deposit") {
     redirect(`/account/bookings/${bookingId}`);
@@ -134,7 +215,12 @@ export async function payApprovedCustomerBookingDepositAction(formData: FormData
     : null;
 
   if (!holdRow?.has_active_hold) {
-    redirect(`/account/bookings/${bookingId}?approval=expired`);
+    await expireCustomerApprovalAndRedirect({
+      supabase,
+      bookingId,
+      approvalRevision,
+      reason: "customer_checkout_no_active_hold",
+    });
   }
 
   const checkoutSessionMinutes = getTemporaryCheckoutSessionMinutes();
@@ -143,7 +229,12 @@ export async function payApprovedCustomerBookingDepositAction(formData: FormData
   const approvalExpiresAtMs = Date.parse(String(booking.customer_approval_expires_at || ""));
 
   if (!Number.isFinite(approvalExpiresAtMs)) {
-    redirect(`/account/bookings/${bookingId}?approval=expired`);
+    await expireCustomerApprovalAndRedirect({
+      supabase,
+      bookingId,
+      approvalRevision,
+      reason: "customer_checkout_invalid_approval_expiry",
+    });
   }
 
   const depositAmountCents = toCents(booking.deposit_amount);
@@ -199,6 +290,7 @@ export async function payApprovedCustomerBookingDepositAction(formData: FormData
       ? (acquireResult.data as {
           status?: string;
           attempt_id?: string;
+          hold_expires_at?: string | null;
           stripe_checkout_session_id?: string | null;
         })
       : null;
@@ -231,7 +323,12 @@ export async function payApprovedCustomerBookingDepositAction(formData: FormData
         p_reason: "stripe_checkout_session_not_open",
       });
 
-      redirect(`/account/bookings/${bookingId}?approval=expired`);
+      await expireCustomerApprovalAndRedirect({
+        supabase,
+        bookingId,
+        approvalRevision,
+        reason: "stripe_checkout_session_expired",
+      });
     }
 
     redirect(`/account/bookings/${bookingId}?approval=reconciliation-required`);
@@ -249,24 +346,7 @@ export async function payApprovedCustomerBookingDepositAction(formData: FormData
     redirect(`/account/bookings/${bookingId}?approval=inventory-unavailable`);
   }
 
-  const persistedAttemptResult = await supabase
-    .from("booking_checkout_attempts")
-    .select("id, hold_expires_at")
-    .eq("id", checkoutAttemptId)
-    .eq("booking_id", bookingId)
-    .maybeSingle();
-
-  if (persistedAttemptResult.error || !persistedAttemptResult.data) {
-    await supabase.rpc("release_booking_checkout_attempt_hold", {
-      p_booking_id: bookingId,
-      p_attempt_id: checkoutAttemptId,
-      p_reason: "attempt_lookup_failed_after_acquire",
-    });
-
-    redirect(`/account/bookings/${bookingId}?approval=inventory-unavailable`);
-  }
-
-  const attemptHoldExpiresAtMs = Date.parse(String((persistedAttemptResult.data as any).hold_expires_at || ""));
+  const attemptHoldExpiresAtMs = Date.parse(String(acquirePayload?.hold_expires_at || ""));
 
   if (!Number.isFinite(attemptHoldExpiresAtMs)) {
     await supabase.rpc("release_booking_checkout_attempt_hold", {
@@ -275,7 +355,12 @@ export async function payApprovedCustomerBookingDepositAction(formData: FormData
       p_reason: "attempt_hold_expiry_invalid",
     });
 
-    redirect(`/account/bookings/${bookingId}?approval=expired`);
+    await expireCustomerApprovalAndRedirect({
+      supabase,
+      bookingId,
+      approvalRevision,
+      reason: "customer_checkout_attempt_hold_invalid",
+    });
   }
 
   const effectiveWindowEndMs = Math.min(approvalExpiresAtMs, attemptHoldExpiresAtMs);
@@ -363,4 +448,185 @@ export async function payApprovedCustomerBookingDepositAction(formData: FormData
   }
 
   redirect(session.url);
+}
+
+export async function requestCustomerBookingApprovalAgainAction(formData: FormData) {
+  const bookingId = String(formData.get("bookingId") || "").trim();
+
+  if (!bookingId) {
+    throw new Error("Booking ID is required.");
+  }
+
+  const { supabase } = await requireCustomerAccess();
+
+  const bookingResult = await supabase
+    .from("bookings")
+    .select(
+      "id, booking_number, status, booking_source, customer_approval_state, customer_approval_revision, customer_approval_reasons, customer_approval_expires_at, event_date, event_start_time, event_end_time, setup_address, setup_city, setup_zip, amount_paid, payment_status",
+    )
+    .eq("id", bookingId)
+    .maybeSingle();
+
+  if (bookingResult.error || !bookingResult.data) {
+    throw new Error("Booking not found or not available for this customer.");
+  }
+
+  const booking = bookingResult.data as any;
+  const bookingSource = String(booking.booking_source || "").toLowerCase();
+  const bookingStatus = String(booking.status || "").toLowerCase();
+  const approvalState = String(booking.customer_approval_state || "").toLowerCase();
+  const paymentStatus = String(booking.payment_status || "").toLowerCase();
+  const amountPaid = Math.max(0, Number(booking.amount_paid || 0));
+  const approvalExpiresAtMs = Date.parse(String(booking.customer_approval_expires_at || ""));
+  const approvalRevision = Math.max(0, Number(booking.customer_approval_revision || 0));
+
+  if (bookingSource !== "customer_self_service" || bookingStatus !== "pending_deposit") {
+    redirect(`/account/bookings/${bookingId}`);
+  }
+
+  if (paymentStatus === "paid" || paymentStatus === "partial" || amountPaid > 0) {
+    redirect(`/account/bookings/${bookingId}`);
+  }
+
+  const isExpiredByTime =
+    approvalState === "approved" &&
+    Number.isFinite(approvalExpiresAtMs) &&
+    approvalExpiresAtMs <= Date.now();
+  const isExpiredLike = approvalState === "expired" || isExpiredByTime;
+
+  if (!isExpiredLike) {
+    redirect(`/account/bookings/${bookingId}?approval=${encodeURIComponent(approvalState || "pending")}`);
+  }
+
+  const modifierRows = await supabase
+    .from("booking_modifiers")
+    .select("modifier_group_option_id")
+    .eq("booking_id", bookingId);
+
+  if (modifierRows.error) {
+    console.error("Approval re-request modifier lookup failed", {
+      bookingId,
+      message: modifierRows.error.message,
+      code: modifierRows.error.code,
+    });
+    redirect(`/account/bookings/${bookingId}?approval=recheck-error`);
+  }
+
+  const selectedModifierOptionIds = modifierRows.error
+    ? []
+    : Array.from(
+        new Set(
+          (modifierRows.data || [])
+            .map((row: any) => String(row.modifier_group_option_id || "").trim())
+            .filter(Boolean),
+        ),
+      );
+
+  let evaluation: Awaited<ReturnType<typeof evaluateCustomerBookingApproval>>;
+  try {
+    evaluation = await evaluateCustomerBookingApproval({
+      supabase,
+      eventDate: String(booking.event_date || ""),
+      eventStartTime: String(booking.event_start_time || "") || undefined,
+      selectedModifierOptionIds,
+      bookingId,
+    });
+  } catch (evaluationError) {
+    console.error("Approval re-request evaluation failed", {
+      bookingId,
+      error: evaluationError instanceof Error ? evaluationError.message : String(evaluationError),
+    });
+    redirect(`/account/bookings/${bookingId}?approval=recheck-error`);
+  }
+
+  if (!evaluation.ok || evaluation.configErrors.length > 0) {
+    console.error("Approval re-request blocked by invalid approval configuration", {
+      bookingId,
+      configErrors: evaluation.configErrors,
+    });
+    redirect(`/account/bookings/${bookingId}?approval=recheck-error`);
+  }
+
+  if (!evaluation.requiresApproval) {
+    redirect(`/account/bookings/${bookingId}?approval=recheck-not-required`);
+  }
+
+  if (evaluation.reasons.length === 0) {
+    console.error("Approval re-request returned requiresApproval without reasons", {
+      bookingId,
+    });
+    redirect(`/account/bookings/${bookingId}?approval=recheck-error`);
+  }
+
+  const effectiveReasons = evaluation.reasons;
+
+  const snapshot = {
+    event_date: String(booking.event_date || ""),
+    event_start_time: booking.event_start_time || null,
+    event_end_time: booking.event_end_time || null,
+    setup_address: booking.setup_address || null,
+    setup_city: booking.setup_city || null,
+    setup_zip: booking.setup_zip || null,
+    reasons: effectiveReasons,
+    selected_modifier_option_ids: selectedModifierOptionIds,
+    source: "customer_re_request_after_expiry",
+  };
+
+  const approvalRequest = await requestCustomerBookingApproval({
+    supabase,
+    bookingId,
+    reasons: effectiveReasons,
+    snapshot,
+  });
+
+  const nextRevision = Math.max(approvalRevision + 1, Number(approvalRequest.revision || 0));
+  const dedupeSuffix = nextRevision > 0 ? `revision-${nextRevision}` : "revision-current";
+  const applicationOrigin = await getApplicationOrigin();
+  const adminBookingUrl = `${applicationOrigin}/admin/bookings/${bookingId}`;
+
+  try {
+    await Promise.all([
+      enqueueBookingNotification({
+        eventCode: "customer_booking_approval_requested",
+        bookingId,
+        dedupeSuffix,
+        payload: {
+          action_url: `${applicationOrigin}/account/bookings/${bookingId}`,
+          approval_revision: nextRevision > 0 ? nextRevision : null,
+        },
+      }),
+      enqueueStaffBookingNotification({
+        eventCode: "customer_booking_approval_requested",
+        bookingId,
+        recipientRole: "admin",
+        dedupeSuffix,
+        payload: {
+          action_url: adminBookingUrl,
+          approval_revision: nextRevision > 0 ? nextRevision : null,
+        },
+      }),
+      enqueueStaffBookingNotification({
+        eventCode: "customer_booking_approval_requested",
+        bookingId,
+        recipientRole: "manager",
+        dedupeSuffix,
+        payload: {
+          action_url: adminBookingUrl,
+          approval_revision: nextRevision > 0 ? nextRevision : null,
+        },
+      }),
+    ]);
+
+    await processNotificationQueueBestEffort({
+      bookingId,
+      limit: 20,
+    });
+  } catch (notifyError) {
+    console.error("Failed to enqueue re-request approval notifications", {
+      bookingId,
+      error: notifyError instanceof Error ? notifyError.message : String(notifyError),
+    });
+  }
+
+  redirect(`/account/bookings/${bookingId}?approval=pending`);
 }

@@ -11,12 +11,24 @@ export async function payCustomerBookingBalanceByCardAction(formData: FormData) 
   const { supabase, access } = await requireCustomerAccess();
   const result = await supabase
     .from("bookings")
-    .select("id, booking_number, balance_due")
+    .select("id, booking_number, balance_due, status, booking_source, customer_approval_state")
     .eq("id", bookingId)
     .maybeSingle();
 
   if (result.error || !result.data) {
     throw new Error("Booking not found or not available for this customer.");
+  }
+
+  const bookingStatus = String((result.data as any).status || "").toLowerCase();
+  const bookingSource = String((result.data as any).booking_source || "").toLowerCase();
+  const approvalState = String((result.data as any).customer_approval_state || "").toLowerCase();
+
+  if (
+    bookingSource === "customer_self_service" &&
+    bookingStatus === "pending_deposit" &&
+    approvalState !== "approved"
+  ) {
+    redirect(`/account/bookings/${bookingId}?approval=${encodeURIComponent(approvalState || "pending")}`);
   }
 
   const balanceDue = Math.max(0, Number((result.data as any).balance_due || 0));

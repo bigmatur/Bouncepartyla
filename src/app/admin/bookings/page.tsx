@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getBookingMarkerColor } from "@/lib/booking/marker-color";
+import { resolveCustomerDisplayStatus } from "@/lib/booking/customer-display-status";
 import { getUnifiedAccess } from "@/lib/auth/access";
 import { redirect } from "next/navigation";
 import { archiveSelectedBookingsAction } from "./actions";
@@ -70,6 +71,19 @@ function formatMoney(value: number | string | null | undefined) {
 
 function prettyStatus(status: string | null | undefined) {
   if (!status) return "Unknown";
+
+  if (status === "approval_approved") {
+    return "Approved - continue to payment";
+  }
+
+  if (status === "approval_rejected") {
+    return "Request declined";
+  }
+
+  if (status === "approval_expired") {
+    return "Request expired";
+  }
+
   return status.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
@@ -78,6 +92,18 @@ function statusClass(status: string | null | undefined) {
 
   if (value === "awaiting_approval") {
     return "bg-[#eaf2f9] text-[#355879] ring-1 ring-[#cfe0ef]";
+  }
+
+  if (value === "approval_approved") {
+    return "bg-blue-50 text-blue-700 ring-1 ring-blue-200";
+  }
+
+  if (value === "approval_rejected") {
+    return "bg-red-50 text-red-700 ring-1 ring-red-200";
+  }
+
+  if (value === "approval_expired") {
+    return "bg-[#fff4d8] text-[#8a6b20] ring-1 ring-[#efd582]";
   }
 
   if (["booked", "scheduled", "inventory_reserved", "installed", "closed", "completed", "paid"].includes(value)) {
@@ -322,15 +348,18 @@ export default async function AdminBookingsPage({
     settingsResult.data?.time_format === "24h" ? "24h" : "12h";
 
   const normalizedBookings = allBookings.map((booking: any) => {
-    const isAwaitingApproval =
-      String(booking.booking_source || "").toLowerCase() === "customer_self_service" &&
-      String(booking.status || "").toLowerCase() === "pending_deposit" &&
-      String(booking.customer_approval_state || "").toLowerCase() === "pending";
+    const displayStatus = resolveCustomerDisplayStatus({
+      bookingStatus: booking.status,
+      bookingSource: booking.booking_source,
+      customerApprovalState: booking.customer_approval_state,
+      customerApprovalExpiresAt: booking.customer_approval_expires_at,
+      paymentStatus: booking.payment_status,
+    });
 
-    if (isAwaitingApproval) {
+    if (displayStatus !== "unknown" && displayStatus !== booking.status) {
       return {
         ...booking,
-        status: "awaiting_approval",
+        status: displayStatus,
       };
     }
 
@@ -339,9 +368,15 @@ export default async function AdminBookingsPage({
 
   const scopedBookings = normalizedBookings.filter((booking: any) => {
     const archived = Boolean(booking.archived_at);
+    const approvalState = String(booking.customer_approval_state || "").toLowerCase();
+    const approvalRevision = Number(booking.customer_approval_revision || 0);
+    const keepVisibleForApproval =
+      ["pending", "approved", "rejected", "expired"].includes(approvalState) ||
+      approvalRevision > 0;
     const isUnpaidCustomerCheckoutHold =
       String(booking.booking_source || "").toLowerCase() === "customer_self_service" &&
       String(booking.status || "").toLowerCase() === "pending_deposit" &&
+      !keepVisibleForApproval &&
       Number(booking.amount_paid || 0) <= 0 &&
       ["", "unpaid"].includes(String(booking.payment_status || "").toLowerCase());
 

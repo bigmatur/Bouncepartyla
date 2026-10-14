@@ -11,9 +11,13 @@ import { revalidatePath } from "next/cache";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getUnifiedAccess } from "@/lib/auth/access";
-import { createStripeCheckoutSession } from "@/lib/payments/stripe";
+import {
+  createStripeCheckoutSession,
+  getApplicationOrigin,
+} from "@/lib/payments/stripe";
 import {
   enqueueBookingNotification,
+  enqueueStaffBookingNotification,
   processNotificationQueueBestEffort,
 } from "@/lib/notifications/engine";
 import { validateBookingItemsAvailability } from "@/features/booking/server/validate-booking-items-availability";
@@ -3737,6 +3741,44 @@ async function createBookingActionInternal(
       `/admin/bookings/${bookingId}`,
     );
   }
+
+  try {
+    const applicationOrigin = await getApplicationOrigin();
+    const adminBookingUrl = `${applicationOrigin}/admin/bookings/${bookingId}`;
+
+    await Promise.all([
+      enqueueStaffBookingNotification({
+        eventCode: "booking_created",
+        bookingId,
+        recipientRole: "admin",
+        dedupeSuffix: "created",
+        payload: {
+          action_url: adminBookingUrl,
+          booking_source: "admin",
+        },
+      }),
+      enqueueStaffBookingNotification({
+        eventCode: "booking_created",
+        bookingId,
+        recipientRole: "manager",
+        dedupeSuffix: "created",
+        payload: {
+          action_url: adminBookingUrl,
+          booking_source: "admin",
+        },
+      }),
+    ]);
+  } catch (notificationError) {
+    console.error(
+      "Booking created staff notification enqueue failed",
+      notificationError,
+    );
+  }
+
+  await processNotificationQueueBestEffort({
+    bookingId,
+    limit: 20,
+  });
 
   if (
     !isStaffSendToCustomer &&

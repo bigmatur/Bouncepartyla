@@ -9,15 +9,21 @@ import { executeCreateBooking } from "@/features/booking/engine/create-booking";
 import { buildCustomerCreateBookingCommand } from "@/features/booking/adapters/customer-create-booking-command";
 import { validateBookingItemsAvailability } from "@/features/booking/server/validate-booking-items-availability";
 import {
+  enqueueBookingNotification,
   enqueueStaffBookingNotification,
   processNotificationQueueBestEffort,
 } from "@/lib/notifications/engine";
-import { createStripeCheckoutSession } from "@/lib/payments/stripe";
+import {
+  createStripeCheckoutSession,
+  getApplicationOrigin,
+} from "@/lib/payments/stripe";
 import {
   type CustomerApprovalReason,
   evaluateCustomerBookingApproval,
   requestCustomerBookingApproval,
 } from "@/lib/booking/customer-approval";
+import type { DeferredInventoryRequirementRow } from "@/lib/booking/createBooking";
+import { createServiceClient } from "@/lib/supabase/service";
 import {
   attachAvailabilityToBookingItems,
   getCombinedReservationWindow,
@@ -263,6 +269,118 @@ function buildBookNowRedirectUrl(params: {
   }
 
   return `/account/book-now?${query.toString()}`;
+}
+
+async function enqueueBookingCreatedForStaff(params: {
+  bookingId: string;
+  source: "customer_self_service" | "admin";
+}) {
+  const bookingId = String(params.bookingId || "").trim();
+
+  if (!bookingId) {
+    return;
+  }
+
+  const applicationOrigin = await getApplicationOrigin();
+  const adminBookingUrl = `${applicationOrigin}/admin/bookings/${bookingId}`;
+
+  await Promise.all([
+    enqueueStaffBookingNotification({
+      eventCode: "booking_created",
+      bookingId,
+      recipientRole: "admin",
+      dedupeSuffix: "created",
+      payload: {
+        action_url: adminBookingUrl,
+        booking_source: params.source,
+      },
+    }),
+    enqueueStaffBookingNotification({
+      eventCode: "booking_created",
+      bookingId,
+      recipientRole: "manager",
+      dedupeSuffix: "created",
+      payload: {
+        action_url: adminBookingUrl,
+        booking_source: params.source,
+      },
+    }),
+  ]);
+}
+
+async function saveDeferredInventoryRequirementsWithService(params: {
+  bookingId: string;
+  rows: DeferredInventoryRequirementRow[];
+  customerAuthUserId: string;
+}) {
+  const bookingId = String(params.bookingId || "").trim();
+  const customerAuthUserId = String(params.customerAuthUserId || "").trim();
+
+  if (!bookingId) {
+    throw new Error("Deferred inventory writer received empty booking id.");
+  }
+
+  if (!customerAuthUserId) {
+    throw new Error("Deferred inventory writer requires customer identity.");
+  }
+
+  if (!Array.isArray(params.rows) || params.rows.length === 0) {
+    throw new Error("Deferred inventory rows are required.");
+  }
+
+  if (!params.rows.every((row) => String(row.booking_id || "") === bookingId)) {
+    throw new Error("Deferred inventory rows contain mismatched booking ids.");
+  }
+
+  const service = createServiceClient();
+
+  const bookingOwnerResult = await service
+    .from("bookings")
+    .select("id, booking_source, status, payment_status, amount_paid, customers!inner(auth_user_id)")
+    .eq("id", bookingId)
+    .eq("customers.auth_user_id", customerAuthUserId)
+    .limit(1)
+    .maybeSingle();
+
+  if (bookingOwnerResult.error) {
+    throw new Error(bookingOwnerResult.error.message);
+  }
+
+  const bookingOwnerRow = bookingOwnerResult.data as {
+    id: string;
+    booking_source?: string | null;
+    status?: string | null;
+    payment_status?: string | null;
+    amount_paid?: number | null;
+  } | null;
+
+  if (!bookingOwnerRow?.id) {
+    throw new Error("Deferred inventory write rejected: booking ownership check failed.");
+  }
+
+  if (
+    String(bookingOwnerRow.booking_source || "") !== "customer_self_service" ||
+    String(bookingOwnerRow.status || "") !== "pending_deposit"
+  ) {
+    throw new Error("Deferred inventory write rejected: booking is not pending self-service.");
+  }
+
+  const paymentStatus = String(bookingOwnerRow.payment_status || "").toLowerCase();
+  if (
+    paymentStatus === "paid" ||
+    paymentStatus === "partial" ||
+    Number(bookingOwnerRow.amount_paid || 0) > 0
+  ) {
+    throw new Error("Deferred inventory write rejected: booking already has payment.");
+  }
+
+  const insertResult = await service
+    .from("booking_inventory_requirements")
+    .insert(params.rows);
+
+  if (insertResult.error) {
+    throw new Error(insertResult.error.message);
+  }
 }
 
 export async function preflightCustomerBookingApprovalAction(
@@ -572,13 +690,45 @@ export async function createCustomerBookingAction(formData: FormData) {
     }
 
     if (approvalEvaluation.requiresApproval) {
-      (command as any).deferInventoryReservation = true;
+      command.deferInventoryReservation = true;
     }
 
     const result = await executeCreateBooking({
       supabase,
       command,
+      saveDeferredInventoryRequirements:
+        approvalEvaluation.requiresApproval
+          ? async ({ bookingId, rows }) => {
+              await saveDeferredInventoryRequirementsWithService({
+                bookingId,
+                rows,
+                customerAuthUserId: String(access.user?.id || ""),
+              });
+            }
+          : undefined,
     });
+
+    if (!result.reusedExistingBooking) {
+      try {
+        await enqueueBookingCreatedForStaff({
+          bookingId: result.booking.id,
+          source: "customer_self_service",
+        });
+      } catch (notifyError) {
+        console.error("Booking created staff notification enqueue failed", {
+          bookingId: result.booking.id,
+          error:
+            notifyError instanceof Error
+              ? notifyError.message
+              : String(notifyError),
+        });
+      }
+
+      await processNotificationQueueBestEffort({
+        bookingId: result.booking.id,
+        limit: 20,
+      });
+    }
 
     provisionalBookingId = String(result.booking?.id || "").trim() || null;
 
@@ -682,7 +832,7 @@ export async function createCustomerBookingAction(formData: FormData) {
         selected_modifier_option_ids: allSelectedOptionIds,
       };
 
-      await requestCustomerBookingApproval({
+      const approvalRequest = await requestCustomerBookingApproval({
         supabase,
         bookingId: result.booking.id,
         reasons: effectiveApprovalReasons,
@@ -692,15 +842,33 @@ export async function createCustomerBookingAction(formData: FormData) {
       skipCleanupOnError = true;
 
       try {
-        const dedupeSuffix = `revision-${Date.now()}`;
+        const approvalRevision = Number(approvalRequest?.revision || 0);
+        const dedupeSuffix =
+          approvalRevision > 0
+            ? `revision-${approvalRevision}`
+            : "revision-current";
+        const applicationOrigin = await getApplicationOrigin();
+        const adminBookingUrl = `${applicationOrigin}/admin/bookings/${result.booking.id}`;
+        const customerBookingUrl = `${applicationOrigin}/account/bookings/${result.booking.id}`;
+
         await Promise.all([
+          enqueueBookingNotification({
+            eventCode: "customer_booking_approval_requested",
+            bookingId: result.booking.id,
+            dedupeSuffix,
+            payload: {
+              action_url: customerBookingUrl,
+              approval_revision: approvalRevision > 0 ? approvalRevision : null,
+            },
+          }),
           enqueueStaffBookingNotification({
             eventCode: "customer_booking_approval_requested",
             bookingId: result.booking.id,
             recipientRole: "admin",
             dedupeSuffix,
             payload: {
-              action_url: `/admin/bookings/${result.booking.id}`,
+              action_url: adminBookingUrl,
+              approval_revision: approvalRevision > 0 ? approvalRevision : null,
             },
           }),
           enqueueStaffBookingNotification({
@@ -709,7 +877,8 @@ export async function createCustomerBookingAction(formData: FormData) {
             recipientRole: "manager",
             dedupeSuffix,
             payload: {
-              action_url: `/admin/bookings/${result.booking.id}`,
+              action_url: adminBookingUrl,
+              approval_revision: approvalRevision > 0 ? approvalRevision : null,
             },
           }),
         ]);

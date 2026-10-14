@@ -10,6 +10,7 @@ import BookingHero from "./BookingHero";
 import BookingStatusNotice from "./BookingStatusNotice";
 import BookingCompletionPanel from "../complete/BookingCompletionPanel";
 import MobileBalancePaymentBar from "./MobileBalancePaymentBar";
+import { resolveCustomerDisplayStatus } from "@/lib/booking/customer-display-status";
 
 type BookingDetailsLayoutProps = {
   details: BookingDetails;
@@ -31,16 +32,30 @@ export default function BookingDetailsLayout({
   const { booking } = details;
   const bookingSource = String((booking as any).booking_source || "").toLowerCase();
   const bookingStatus = String(booking.status || "").toLowerCase();
-  const approvalState = String((booking as any).customer_approval_state || "").toLowerCase();
+  const displayStatus = resolveCustomerDisplayStatus({
+    bookingStatus: booking.status,
+    bookingSource: booking.booking_source,
+    customerApprovalState: (booking as any).customer_approval_state,
+    customerApprovalExpiresAt: (booking as any).customer_approval_expires_at,
+    paymentStatus: booking.payment_status,
+  });
+  const effectiveApprovalState =
+    displayStatus === "approval_approved"
+      ? "approved"
+      : displayStatus === "approval_rejected"
+        ? "rejected"
+        : displayStatus === "approval_expired"
+          ? "expired"
+          : String((booking as any).customer_approval_state || "").toLowerCase();
   const balanceDue = Math.max(0, Number(booking.balance_due || 0));
   const isSelfServiceApprovalAwaiting =
     bookingSource === "customer_self_service" &&
     bookingStatus === "pending_deposit" &&
-    approvalState !== "approved";
+    effectiveApprovalState !== "approved";
   const isSelfServiceApprovalFlow =
     bookingSource === "customer_self_service" &&
     bookingStatus === "pending_deposit" &&
-    approvalState === "approved";
+    effectiveApprovalState === "approved";
   const showMobileBalancePaymentBar =
     !adminPreview &&
     !completionMode &&

@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { getApplicationOrigin } from "@/lib/payments/stripe";
 import { getUnifiedAccess, isStaffRole, type AppPermission } from "@/lib/auth/access";
 import { cancelBookingWithSupabase } from "@/lib/booking/cancel-booking";
 import {
@@ -594,13 +595,14 @@ export async function approveCustomerBookingApprovalAction(formData: FormData) {
     throw new Error(String(reviewPayload?.status || "approval_review_failed"));
   }
 
+  const applicationOrigin = await getApplicationOrigin();
   try {
     await enqueueBookingNotification({
       eventCode: "customer_booking_approval_approved",
       bookingId,
       dedupeSuffix: `revision-${revision || Date.now()}`,
       payload: {
-        action_url: `/account/bookings/${bookingId}`,
+        action_url: `${applicationOrigin}/account/bookings/${bookingId}`,
         expires_at: String(reviewPayload.hold_expires_at || ""),
       },
     });
@@ -676,9 +678,7 @@ export async function rejectCustomerBookingApprovalAction(formData: FormData) {
       eventCode: "customer_booking_approval_rejected",
       bookingId,
       dedupeSuffix: `revision-${revision || Date.now()}`,
-      payload: {
-        action_url: `/account/bookings/${bookingId}`,
-      },
+      payload: {},
     });
   } catch (error) {
     console.error("Failed to enqueue approval-rejected notification", {

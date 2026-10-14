@@ -5,7 +5,10 @@ import type {
 import {
   payApprovedCustomerBookingDepositAction,
   payCustomerBookingBalanceByCardAction,
+  requestCustomerBookingApprovalAgainAction,
 } from "../actions";
+import ActionButton from "@/components/ui/ActionButton";
+import { resolveCustomerDisplayStatus } from "@/lib/booking/customer-display-status";
 
 type BookingPaymentsProps = {
   booking?: BookingRecord | null;
@@ -160,7 +163,24 @@ export default function BookingPayments({
     normalizeText(booking.booking_source).toLowerCase() === "customer_self_service" &&
     normalizeText(booking.status).toLowerCase() === "pending_deposit";
   const approvalState = normalizeText((booking as any).customer_approval_state).toLowerCase();
-  const approvalExpiresAt = formatDateTime((booking as any).customer_approval_expires_at);
+  const approvalExpiresAtRaw = String((booking as any).customer_approval_expires_at || "").trim();
+  const approvalExpiresAt = formatDateTime(approvalExpiresAtRaw);
+  const displayStatus = resolveCustomerDisplayStatus({
+    bookingStatus: booking.status,
+    bookingSource: booking.booking_source,
+    customerApprovalState: approvalState,
+    customerApprovalExpiresAt: approvalExpiresAtRaw || null,
+    paymentStatus: booking.payment_status,
+  });
+  const effectiveApprovalState =
+    displayStatus === "approval_approved"
+      ? "approved"
+      : displayStatus === "approval_rejected"
+        ? "rejected"
+        : displayStatus === "approval_expired"
+          ? "expired"
+          : approvalState;
+  const reRequestState = String((booking as any).__approval_rerequest_state || "").toLowerCase();
 
   return (
     <section className="overflow-hidden rounded-[26px] border border-black/10 bg-white">
@@ -234,7 +254,7 @@ export default function BookingPayments({
         </div>
 
         {isSelfServiceCheckoutPending ? (
-          approvalState === "approved" ? (
+          effectiveApprovalState === "approved" ? (
             <div className="mt-4 rounded-[16px] border border-blue-200 bg-blue-50 px-3 py-3 sm:mt-5 sm:rounded-[18px] sm:px-4 sm:py-4">
               <p className="text-sm font-semibold text-blue-900">
                 Your booking request has been approved
@@ -244,12 +264,15 @@ export default function BookingPayments({
               </p>
               <form action={payApprovedCustomerBookingDepositAction}>
                 <input type="hidden" name="bookingId" value={booking.id} />
-                <button className="mt-3 w-full rounded-full bg-[#23313f] px-4 py-3 text-sm font-semibold text-white sm:mt-4">
+                <ActionButton
+                  pendingText="Opening payment..."
+                  className="mt-3 w-full px-4 py-3 sm:mt-4"
+                >
                   Continue to payment
-                </button>
+                </ActionButton>
               </form>
             </div>
-          ) : approvalState === "rejected" ? (
+          ) : effectiveApprovalState === "rejected" ? (
             <div className="mt-5 rounded-[18px] border border-red-200 bg-red-50 px-4 py-4">
               <p className="text-sm font-semibold text-red-900">
                 Delivery confirmation was not approved
@@ -258,14 +281,34 @@ export default function BookingPayments({
                 Unfortunately, we are unable to accommodate delivery for your requested date and time. Please contact us to explore alternatives.
               </p>
             </div>
-          ) : approvalState === "expired" ? (
+          ) : effectiveApprovalState === "expired" ? (
             <div className="mt-5 rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-4">
               <p className="text-sm font-semibold text-amber-900">
-                Your payment window has expired
+                Payment window expired
               </p>
               <p className="mt-1 text-sm leading-6 text-amber-800/75">
-                Your booking details are saved. Please request confirmation again so we can recheck availability.
+                Your payment window has expired. No payment was taken. Request a new confirmation to continue with this booking.
               </p>
+              {reRequestState === "recheck-error" ? (
+                <p className="mt-2 text-sm leading-6 text-amber-900">
+                  We could not send a new confirmation request right now. Please try again shortly.
+                </p>
+              ) : null}
+              {reRequestState === "recheck-not-required" ? (
+                <p className="mt-2 text-sm leading-6 text-amber-900">
+                  Current approval rules no longer require manual confirmation for this booking. For safety, this expired approval cannot be reopened automatically. Please contact support to continue.
+                </p>
+              ) : (
+                <form action={requestCustomerBookingApprovalAgainAction}>
+                  <input type="hidden" name="bookingId" value={booking.id} />
+                  <ActionButton
+                    pendingText="Sending request..."
+                    className="mt-3 w-full px-4 py-3 sm:mt-4"
+                  >
+                    Request confirmation again
+                  </ActionButton>
+                </form>
+              )}
             </div>
           ) : (
             <div className="mt-5 rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-4">
