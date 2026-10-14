@@ -13,6 +13,7 @@ import {
   approveCustomerBookingApprovalAction,
   rejectCustomerBookingApprovalAction,
 } from "./booking-admin-actions";
+import CustomerCancellationRequestSection from "./components/CustomerCancellationRequestSection";
 import CustomerTypeahead from "./CustomerTypeahead";
 import PaymentPosPanel from "./PaymentPosPanel";
 import BookingDiscountEditor from "./BookingDiscountEditor";
@@ -238,6 +239,7 @@ export default async function BookingDetailsPage(props: PageProps) {
     paymentPosSettingsResult,
     discountSecurityResult,
     customerApprovalResult,
+    cancellationRequestResult,
   ] = await Promise.all([
     supabase
       .from("bookings")
@@ -420,6 +422,12 @@ export default async function BookingDetailsPage(props: PageProps) {
       .select("booking_id, revision, state, reasons, requested_at, reviewed_at, customer_comment, active_hold_expires_at")
       .eq("booking_id", bookingId)
       .maybeSingle(),
+
+    supabase
+      .from("customer_booking_cancellation_requests")
+      .select("booking_id, revision, state, reason, customer_comment, requested_at, reviewed_at, admin_comment, financial_decision")
+      .eq("booking_id", bookingId)
+      .maybeSingle(),
   ]);
 
   if (bookingResult.error) {
@@ -474,6 +482,10 @@ export default async function BookingDetailsPage(props: PageProps) {
     throw new Error(customerApprovalResult.error.message);
   }
 
+  if (cancellationRequestResult.error && !isMissingTableError(cancellationRequestResult.error)) {
+    throw new Error(cancellationRequestResult.error.message);
+  }
+
   const booking = bookingResult.data as any;
   const customer = getOne(booking.customers);
   const bookingItems = booking.booking_items || [];
@@ -499,6 +511,21 @@ export default async function BookingDetailsPage(props: PageProps) {
         active_hold_expires_at: string | null;
       }
     | null;
+  const customerCancellationRequest = cancellationRequestResult.error
+    ? null
+    : (cancellationRequestResult.data as
+        | {
+            booking_id: string;
+            revision: number;
+            state: "pending" | "approved" | "declined";
+            reason: string | null;
+            customer_comment: string | null;
+            requested_at: string | null;
+            reviewed_at: string | null;
+            admin_comment: string | null;
+            financial_decision: "keep_deposit" | "refund_deposit" | "no_payment" | null;
+          }
+        | null);
   const discountSecurityRow = discountSecurityResult.data as
     | { discount_password_enabled: boolean; discount_password_hint: string | null }
     | null;
@@ -857,6 +884,14 @@ export default async function BookingDetailsPage(props: PageProps) {
             ? "Payment saved successfully."
             : savedValue === "contract-resend"
               ? "Contract was sent for re-signature manually."
+              : savedValue === "cancellation-request-approved"
+                ? "Customer cancellation request was approved and operational cancellation was applied."
+                : savedValue === "cancellation-request-already-approved"
+                  ? "Cancellation request was already approved."
+                  : savedValue === "cancellation-request-declined"
+                    ? "Customer cancellation request was declined."
+                    : savedValue === "cancellation-request-already-declined"
+                      ? "Cancellation request was already declined."
               : "Changes saved successfully."}
         </section>
       )}
@@ -960,6 +995,13 @@ export default async function BookingDetailsPage(props: PageProps) {
             </div>
           ) : null}
         </section>
+      ) : null}
+
+      {customerCancellationRequest ? (
+        <CustomerCancellationRequestSection
+          bookingId={booking.id}
+          request={customerCancellationRequest}
+        />
       ) : null}
 
       <section className="min-w-0 rounded-[20px] border border-black/5 bg-white p-3.5 shadow-[0_8px_26px_rgba(0,0,0,0.035)] sm:rounded-[30px] sm:p-5 sm:shadow-[0_12px_40px_rgba(0,0,0,0.04)]">

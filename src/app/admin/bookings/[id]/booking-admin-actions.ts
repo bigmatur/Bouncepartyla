@@ -20,6 +20,46 @@ function normalizeStatus(value: unknown) {
   return String(value || "").trim().toLowerCase();
 }
 
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    String(value || "")
+  );
+}
+
+function parsePositiveInteger(value: string) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function parseRpcPayload(data: unknown) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return null;
+  }
+
+  const payload = data as {
+    success?: boolean;
+    status?: string;
+    revision?: number;
+    financial_decision?: string | null;
+    idempotent?: boolean;
+  };
+
+  return {
+    success: payload.success === true,
+    status: String(payload.status || "").trim().toLowerCase(),
+    revision: Number.isInteger(payload.revision) ? payload.revision : null,
+    financialDecision:
+      typeof payload.financial_decision === "string" && payload.financial_decision.trim()
+        ? payload.financial_decision.trim()
+        : null,
+    idempotent: payload.idempotent === true,
+  };
+}
+
 function isMissingTableError(error: any) {
   const code = String(error?.code || "").toLowerCase();
   const message = String(error?.message || "").toLowerCase();
@@ -691,4 +731,157 @@ export async function rejectCustomerBookingApprovalAction(formData: FormData) {
   await revalidateBookingPages(bookingId);
 
   redirect(`/admin/bookings/${bookingId}?saved=approval-rejected`);
+}
+
+export async function approveCustomerCancellationRequestAction(formData: FormData) {
+  const supabase = await createClient();
+  await assertBookingPermission(supabase, "bookings.cancel");
+
+  const bookingId = getString(formData, "bookingId");
+  const revision = parsePositiveInteger(getString(formData, "requestRevision"));
+  const adminComment = getString(formData, "adminComment") || null;
+  const financialDecision = getString(formData, "financialDecision");
+
+  if (!bookingId || !isUuid(bookingId)) {
+    throw new Error("Booking ID is invalid.");
+  }
+
+  if (revision === null) {
+    throw new Error("Cancellation request revision is required.");
+  }
+
+  if (![
+    "keep_deposit",
+    "refund_deposit",
+    "no_payment",
+  ].includes(financialDecision)) {
+    throw new Error("Financial decision is required.");
+  }
+
+  const approval = await supabase.rpc("approve_customer_booking_cancellation_request", {
+    p_booking_id: bookingId,
+    p_expected_revision: revision,
+    p_admin_comment: adminComment,
+    p_financial_decision: financialDecision,
+  });
+
+  if (approval.error) {
+    throw new Error(approval.error.message);
+  }
+
+  const payload = parseRpcPayload(approval.data);
+
+  if (!payload?.success || !["approved", "already_approved"].includes(payload.status)) {
+    throw new Error(payload?.status || "cancellation_approval_failed");
+  }
+
+  if (payload.status === "approved") {
+    const dedupeRevision = payload.revision && payload.revision > 0 ? payload.revision : revision;
+    const dedupeSuffix = dedupeRevision > 0 ? `revision-${dedupeRevision}` : "revision-current";
+    const applicationOrigin = await getApplicationOrigin();
+    const customerBookingUrl = `${applicationOrigin}/account/bookings/${bookingId}`;
+
+    try {
+      await enqueueBookingNotification({
+        eventCode: "customer_booking_cancellation_approved",
+        bookingId,
+        dedupeSuffix,
+        payload: {
+          action_url: customerBookingUrl,
+          cancellation_revision: dedupeRevision > 0 ? dedupeRevision : null,
+          financial_decision: financialDecision,
+        },
+      });
+
+      await processNotificationQueueBestEffort({ bookingId, limit: 20 });
+    } catch (error) {
+      console.error("Failed to enqueue cancellation-approved notification", {
+        bookingId,
+        revision: dedupeRevision,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  await revalidateBookingPages(bookingId);
+
+  redirect(
+    `/admin/bookings/${bookingId}?saved=${
+      payload.status === "already_approved"
+        ? "cancellation-request-already-approved"
+        : "cancellation-request-approved"
+    }`
+  );
+}
+
+export async function declineCustomerCancellationRequestAction(formData: FormData) {
+  const supabase = await createClient();
+  await assertBookingPermission(supabase, "bookings.cancel");
+
+  const bookingId = getString(formData, "bookingId");
+  const revision = parsePositiveInteger(getString(formData, "requestRevision"));
+  const adminComment = getString(formData, "adminComment") || null;
+
+  if (!bookingId || !isUuid(bookingId)) {
+    throw new Error("Booking ID is invalid.");
+  }
+
+  if (revision === null) {
+    throw new Error("Cancellation request revision is required.");
+  }
+
+  const decline = await supabase.rpc("review_customer_booking_cancellation_request", {
+    p_booking_id: bookingId,
+    p_revision: revision,
+    p_decision: "decline",
+    p_admin_comment: adminComment,
+    p_financial_decision: null,
+  });
+
+  if (decline.error) {
+    throw new Error(decline.error.message);
+  }
+
+  const payload = parseRpcPayload(decline.data);
+
+  if (!payload?.success || !["declined", "already_declined"].includes(payload.status)) {
+    throw new Error(payload?.status || "cancellation_decline_failed");
+  }
+
+  if (payload.status === "declined") {
+    const dedupeRevision = payload.revision && payload.revision > 0 ? payload.revision : revision;
+    const dedupeSuffix = dedupeRevision > 0 ? `revision-${dedupeRevision}` : "revision-current";
+    const applicationOrigin = await getApplicationOrigin();
+    const customerBookingUrl = `${applicationOrigin}/account/bookings/${bookingId}`;
+
+    try {
+      await enqueueBookingNotification({
+        eventCode: "customer_booking_cancellation_declined",
+        bookingId,
+        dedupeSuffix,
+        payload: {
+          action_url: customerBookingUrl,
+          cancellation_revision: dedupeRevision > 0 ? dedupeRevision : null,
+        },
+      });
+
+      await processNotificationQueueBestEffort({ bookingId, limit: 20 });
+    } catch (error) {
+      console.error("Failed to enqueue cancellation-declined notification", {
+        bookingId,
+        revision: dedupeRevision,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  await revalidateBookingPages(bookingId);
+
+  redirect(
+    `/admin/bookings/${bookingId}?saved=${
+      payload.status === "already_declined"
+        ? "cancellation-request-already-declined"
+        : "cancellation-request-declined"
+    }`
+  );
 }

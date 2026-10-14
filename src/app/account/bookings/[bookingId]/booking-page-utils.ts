@@ -153,5 +153,11 @@ export function normalizeBookingDetails(
     route_stops: Array.isArray(details.route_stops)
       ? details.route_stops
       : [],
+    cancellation_request:
+      details.cancellation_request &&
+      typeof details.cancellation_request === "object" &&
+      !Array.isArray(details.cancellation_request)
+        ? details.cancellation_request
+        : null,
   };
 }

@@ -9,7 +9,10 @@ import {
 
 import { createClient } from "@/lib/supabase/server";
 
-import type { BookingDetails } from "./booking-types";
+import type {
+  BookingCancellationRequest,
+  BookingDetails,
+} from "./booking-types";
 import { normalizeBookingDetails } from "./booking-page-utils";
 
 function isOptionalReadError(error: any) {
@@ -23,6 +26,87 @@ function isOptionalReadError(error: any) {
     message.includes("schema cache") ||
     message.includes("permission denied")
   );
+}
+
+function isCancellationRequestTableUnavailable(error: any) {
+  const code = String(error?.code || "").toLowerCase();
+  const message = String(error?.message || "").toLowerCase();
+
+  if (code === "42p01" || code === "42703") {
+    return true;
+  }
+
+  return (
+    message.includes("customer_booking_cancellation_requests") &&
+    (
+      message.includes("does not exist") ||
+      message.includes("schema cache")
+    )
+  );
+}
+
+type CancellationRequestRow = {
+  booking_id: string;
+  revision: number;
+  state: string;
+  reason: string | null;
+  customer_comment: string | null;
+  requested_at: string;
+  reviewed_at: string | null;
+  admin_comment: string | null;
+  financial_decision: string | null;
+};
+
+async function getCustomerCancellationRequest(params: {
+  supabase: Awaited<ReturnType<typeof createClient>>;
+  bookingId: string;
+}): Promise<BookingCancellationRequest | null> {
+  const cancellationResult = await params.supabase
+    .from("customer_booking_cancellation_requests")
+    .select(
+      "booking_id,revision,state,reason,customer_comment,requested_at,reviewed_at,admin_comment,financial_decision",
+    )
+    .eq("booking_id", params.bookingId)
+    .maybeSingle();
+
+  if (cancellationResult.error) {
+    if (isCancellationRequestTableUnavailable(cancellationResult.error)) {
+      return null;
+    }
+
+    throw new Error(cancellationResult.error.message);
+  }
+
+  const row = cancellationResult.data as CancellationRequestRow | null;
+
+  if (!row) {
+    return null;
+  }
+
+  const state = String(row.state || "").toLowerCase();
+  if (state !== "pending" && state !== "approved" && state !== "declined") {
+    return null;
+  }
+
+  const financialDecisionRaw = String(row.financial_decision || "").toLowerCase();
+  const financialDecision =
+    financialDecisionRaw === "keep_deposit" ||
+    financialDecisionRaw === "refund_deposit" ||
+    financialDecisionRaw === "no_payment"
+      ? financialDecisionRaw
+      : null;
+
+  return {
+    booking_id: String(row.booking_id),
+    revision: Math.max(1, Number(row.revision || 1)),
+    state,
+    reason: row.reason ? String(row.reason) : null,
+    customer_comment: row.customer_comment ? String(row.customer_comment) : null,
+    requested_at: String(row.requested_at || ""),
+    reviewed_at: row.reviewed_at ? String(row.reviewed_at) : null,
+    admin_comment: row.admin_comment ? String(row.admin_comment) : null,
+    financial_decision: financialDecision,
+  };
 }
 
 async function getCustomerBookingRouteStops(
@@ -949,6 +1033,11 @@ async function getCustomerBookingDetailsFromTables(params: {
       bookingId,
     );
 
+  const cancellationRequest = await getCustomerCancellationRequest({
+    supabase,
+    bookingId,
+  });
+
   return normalizeBookingDetails({
     booking:
       booking as any,
@@ -970,6 +1059,9 @@ async function getCustomerBookingDetailsFromTables(params: {
 
     route_stops:
       routeStops as any,
+
+    cancellation_request:
+      cancellationRequest,
   });
 }
 
@@ -1067,6 +1159,11 @@ export const getCustomerBookingDetails =
           bookingId,
         );
 
+      const cancellationRequest = await getCustomerCancellationRequest({
+        supabase,
+        bookingId,
+      });
+
       const details =
         normalizeBookingDetails({
           ...(
@@ -1075,6 +1172,9 @@ export const getCustomerBookingDetails =
 
           route_stops:
             routeStops as any,
+
+          cancellation_request:
+            cancellationRequest,
         });
 
       if (

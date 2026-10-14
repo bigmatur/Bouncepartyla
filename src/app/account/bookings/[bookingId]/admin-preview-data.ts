@@ -163,6 +163,7 @@ for (const row of categoriesResult.data ?? []) {
       caption: photo.caption ?? null,
       created_at: photo.created_at ?? "",
     })).filter((photo: any) => photo.photo_url),
+    cancellation_request: null,
   });
 
   return details;

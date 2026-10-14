@@ -16,7 +16,7 @@ type PageProps = {
   params: Promise<{
     bookingId: string;
   }>;
-  searchParams?: Promise<{ preview?: string; complete?: string; status?: string; error?: string; confirmed?: string; signed?: string; stripe?: string; session_id?: string; approval?: string }>;
+  searchParams?: Promise<{ preview?: string; complete?: string; status?: string; error?: string; confirmed?: string; signed?: string; stripe?: string; session_id?: string; approval?: string; cancellation?: string }>;
 };
 
 export async function generateMetadata({
@@ -174,6 +174,7 @@ export default async function CustomerBookingDetailsPage({
         completionMode={needsAdminCreatedCompletion}
         completionStatus={query.status}
         completionError={query.error}
+        cancellationState={query.cancellation}
       />
     </CustomerShell>
   );

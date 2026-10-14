@@ -19,6 +19,7 @@ type BookingDetailsLayoutProps = {
   completionMode?: boolean;
   completionStatus?: string;
   completionError?: string;
+  cancellationState?: string;
 };
 
 export default function BookingDetailsLayout({
@@ -28,6 +29,7 @@ export default function BookingDetailsLayout({
   completionMode = false,
   completionStatus,
   completionError,
+  cancellationState,
 }: BookingDetailsLayoutProps) {
   const { booking } = details;
   const bookingSource = String((booking as any).booking_source || "").toLowerCase();
@@ -125,6 +127,7 @@ export default function BookingDetailsLayout({
           details={details}
           model={model}
           adminPreview={adminPreview}
+          cancellationState={cancellationState}
         />
       </div>
 

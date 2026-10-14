@@ -630,3 +630,110 @@ export async function requestCustomerBookingApprovalAgainAction(formData: FormDa
 
   redirect(`/account/bookings/${bookingId}?approval=pending`);
 }
+
+export async function requestCustomerBookingCancellationAction(formData: FormData) {
+  const bookingId = String(formData.get("bookingId") || "").trim();
+  const reason = String(formData.get("reason") || "").trim();
+  const customerComment = String(formData.get("customerComment") || "").trim();
+
+  if (!bookingId) {
+    redirect("/account?cancellation=error");
+  }
+
+  if (!reason) {
+    redirect(`/account/bookings/${bookingId}?cancellation=error`);
+  }
+
+  const { supabase } = await requireCustomerAccess();
+
+  const requestResult = await supabase.rpc("request_my_booking_cancellation", {
+    p_booking_id: bookingId,
+    p_reason: reason,
+    p_customer_comment: customerComment || null,
+  });
+
+  if (requestResult.error) {
+    if (isMissingFunctionError(requestResult.error, "request_my_booking_cancellation")) {
+      redirect(`/account/bookings/${bookingId}?cancellation=not-available`);
+    }
+
+    console.error("Customer cancellation request RPC failed", {
+      bookingId,
+      message: requestResult.error.message,
+      code: requestResult.error.code,
+    });
+
+    redirect(`/account/bookings/${bookingId}?cancellation=error`);
+  }
+
+  const payload =
+    requestResult.data && typeof requestResult.data === "object" && !Array.isArray(requestResult.data)
+      ? (requestResult.data as {
+          success?: boolean;
+          status?: string;
+          revision?: number;
+          idempotent?: boolean;
+        })
+      : null;
+
+  const status = String(payload?.status || "").toLowerCase();
+  const revision = Number(payload?.revision || 0);
+  const isIdempotentPending = payload?.idempotent === true;
+
+  if (payload?.success === true && status === "pending") {
+    if (!isIdempotentPending) {
+      const dedupeSuffix = revision > 0 ? `revision-${revision}` : "revision-current";
+      const applicationOrigin = await getApplicationOrigin();
+      const adminBookingUrl = `${applicationOrigin}/admin/bookings/${bookingId}`;
+
+      try {
+        await Promise.all([
+          enqueueStaffBookingNotification({
+            eventCode: "customer_booking_cancellation_requested",
+            bookingId,
+            recipientRole: "admin",
+            dedupeSuffix,
+            payload: {
+              action_url: adminBookingUrl,
+              cancellation_revision: revision > 0 ? revision : null,
+            },
+          }),
+          enqueueStaffBookingNotification({
+            eventCode: "customer_booking_cancellation_requested",
+            bookingId,
+            recipientRole: "manager",
+            dedupeSuffix,
+            payload: {
+              action_url: adminBookingUrl,
+              cancellation_revision: revision > 0 ? revision : null,
+            },
+          }),
+        ]);
+
+        await processNotificationQueueBestEffort({
+          bookingId,
+          limit: 20,
+        });
+      } catch (notifyError) {
+        console.error("Failed to enqueue cancellation-requested staff notifications", {
+          bookingId,
+          revision,
+          error: notifyError instanceof Error ? notifyError.message : String(notifyError),
+        });
+      }
+    }
+
+    redirect(`/account/bookings/${bookingId}?cancellation=pending`);
+  }
+
+  if (
+    status === "already_approved" ||
+    status === "booking_not_cancellable_requestable" ||
+    status === "booking_not_found" ||
+    status === "forbidden"
+  ) {
+    redirect(`/account/bookings/${bookingId}?cancellation=not-available`);
+  }
+
+  redirect(`/account/bookings/${bookingId}?cancellation=error`);
+}

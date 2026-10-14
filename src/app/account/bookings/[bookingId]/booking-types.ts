@@ -177,6 +177,18 @@ export type BookingRouteStop = {
   created_at: string | null;
 };
 
+export type BookingCancellationRequest = {
+  booking_id: string;
+  revision: number;
+  state: "pending" | "approved" | "declined";
+  reason: string | null;
+  customer_comment: string | null;
+  requested_at: string;
+  reviewed_at: string | null;
+  admin_comment: string | null;
+  financial_decision: "keep_deposit" | "refund_deposit" | "no_payment" | null;
+};
+
 export type BookingDetails = {
   booking: BookingRecord;
   items: BookingItem[];
@@ -185,4 +197,5 @@ export type BookingDetails = {
   payments: BookingPayment[];
   photos: BookingPhoto[];
   route_stops: BookingRouteStop[];
+  cancellation_request: BookingCancellationRequest | null;
 };

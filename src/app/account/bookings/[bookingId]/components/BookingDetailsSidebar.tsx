@@ -2,6 +2,7 @@ import type { BookingDetails } from "../booking-types";
 import type { BookingPageModel } from "../booking-view-model";
 
 import BookingContractCard from "./BookingContractCard";
+import BookingCancellationCard from "./BookingCancellationCard";
 import BookingCountdown from "./BookingCountdown";
 import BookingHelpCard from "./BookingHelpCard";
 import BookingPayments from "./BookingPayments";
@@ -12,14 +13,16 @@ type BookingDetailsSidebarProps = {
   details: BookingDetails;
   model: BookingPageModel;
   adminPreview?: boolean;
+  cancellationState?: string | null;
 };
 
 export default function BookingDetailsSidebar({
   details,
   model,
   adminPreview = false,
+  cancellationState = null,
 }: BookingDetailsSidebarProps) {
-  const { booking, payments } = details;
+  const { booking, payments, cancellation_request } = details;
 
   return (
     <aside className="order-1 flex flex-col gap-4 sm:gap-6 lg:order-2 lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:self-start lg:overflow-y-auto lg:overscroll-contain lg:pr-1 print:static print:max-h-none print:overflow-visible print:pr-0">
@@ -60,6 +63,15 @@ export default function BookingDetailsSidebar({
 
       <div className="order-6">
         <BookingHelpCard bookingNumber={booking.booking_number} />
+      </div>
+
+      <div className="order-7">
+        <BookingCancellationCard
+          booking={booking}
+          cancellationRequest={cancellation_request}
+          adminPreview={adminPreview}
+          cancellationState={cancellationState}
+        />
       </div>
     </aside>
   );
