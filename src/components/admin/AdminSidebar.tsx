@@ -123,6 +123,7 @@ export default function AdminSidebar({
   defaultInterface,
   availableInterfaces,
   grantedPermissions,
+  myNotificationsUnreadCount = 0,
   mobile = false,
 }: {
   displayName: string;
@@ -131,6 +132,7 @@ export default function AdminSidebar({
   defaultInterface: InterfaceKey;
   availableInterfaces: InterfaceKey[];
   grantedPermissions: AppPermission[];
+  myNotificationsUnreadCount?: number;
   mobile?: boolean;
 }) {
   const pathname = usePathname();
@@ -140,6 +142,10 @@ export default function AdminSidebar({
     ? filterDriverNavItems(grantedPermissions)
     : filterAdminNavItems(grantedPermissions);
   const initials = getInitials(displayName || userEmail || "Bounce Party");
+  const myNotificationsBadgeLabel =
+    myNotificationsUnreadCount > 9
+      ? "9+"
+      : String(Math.max(0, myNotificationsUnreadCount));
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [accountPanelOpen, setAccountPanelOpen] = useState(false);
   const [expandedNavHrefs, setExpandedNavHrefs] = useState<string[]>([]);
@@ -304,7 +310,14 @@ export default function AdminSidebar({
                         <span className="flex h-5 w-5 items-center justify-center text-base">
                           {item.icon}
                         </span>
-                        {item.label}
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span>{item.label}</span>
+                          {item.href === "/admin/my-notifications" && myNotificationsUnreadCount > 0 ? (
+                            <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#c9964f] px-1.5 text-[11px] font-bold text-white">
+                              {myNotificationsBadgeLabel}
+                            </span>
+                          ) : null}
+                        </span>
                       </Link>
                     )}
 

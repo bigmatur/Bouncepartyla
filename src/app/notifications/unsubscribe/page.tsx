@@ -264,7 +264,7 @@ export default async function UnsubscribePage({
             </p>
 
             <a
-              href="/account/notifications"
+              href="/account/notifications/settings"
               className="mt-5 block text-center text-sm font-semibold underline underline-offset-4"
             >
               Open full
@@ -371,7 +371,7 @@ export default async function UnsubscribePage({
             </form>
 
             <a
-              href="/account/notifications"
+              href="/account/notifications/settings"
               className="mt-5 block text-center text-sm font-semibold underline underline-offset-4"
             >
               Open full

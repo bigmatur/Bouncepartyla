@@ -38,6 +38,7 @@ export default function AdminShell({
   defaultInterface,
   availableInterfaces,
   grantedPermissions,
+  myNotificationsUnreadCount,
 }: {
   children: ReactNode;
   displayName: string;
@@ -46,6 +47,7 @@ export default function AdminShell({
   defaultInterface: InterfaceKey;
   availableInterfaces: InterfaceKey[];
   grantedPermissions: AppPermission[];
+  myNotificationsUnreadCount?: number;
 }) {
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -119,6 +121,7 @@ export default function AdminShell({
           defaultInterface={defaultInterface}
           availableInterfaces={availableInterfaces}
           grantedPermissions={grantedPermissions}
+          myNotificationsUnreadCount={myNotificationsUnreadCount}
         />
       )}
 
@@ -181,6 +184,7 @@ export default function AdminShell({
                 defaultInterface={defaultInterface}
                 availableInterfaces={availableInterfaces}
                 grantedPermissions={grantedPermissions}
+                myNotificationsUnreadCount={myNotificationsUnreadCount}
                 mobile
               />
             </div>

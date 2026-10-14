@@ -93,6 +93,7 @@ export default function CustomerShell({
 }) {
   const [pathname, setPathname] = useState("/account");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -112,6 +113,39 @@ export default function CustomerShell({
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadUnreadCount() {
+      try {
+        const response = await fetch("/api/account/notifications/unread-count", {
+          method: "GET",
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const payload = await response.json();
+        const nextCount = Math.max(0, Number(payload?.unreadCount || 0));
+
+        if (!cancelled) {
+          setUnreadCount(nextCount);
+        }
+      } catch {
+        // Keep the current badge value on fetch failures.
+      }
+    }
+
+    loadUnreadCount();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname]);
+
   const navItems = useMemo(
     () => filterCustomerNavItems(grantedPermissions),
     [grantedPermissions],
@@ -126,6 +160,8 @@ export default function CustomerShell({
   }, [availableInterfaces, role]);
 
   const initials = getInitials(displayName || userEmail || "Customer");
+
+  const notificationsBadgeLabel = unreadCount > 9 ? "9+" : String(unreadCount);
 
   return (
     <div className="min-h-screen bg-[#f5efe6] text-[#1d1d1b]">
@@ -158,7 +194,14 @@ export default function CustomerShell({
                           : "text-[#3a342d] hover:bg-black/[0.04]",
                       ].join(" ")}
                     >
-                      <span>{item.label}</span>
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span>{item.label}</span>
+                        {item.href === "/account/notifications" && unreadCount > 0 ? (
+                          <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#c9964f] px-1.5 text-[11px] font-bold text-white">
+                            {notificationsBadgeLabel}
+                          </span>
+                        ) : null}
+                      </span>
                       <span className={active ? "text-white/70" : "text-black/35"}>
                         →
                       </span>
@@ -270,7 +313,14 @@ export default function CustomerShell({
                             : "text-[#3a342d] hover:bg-black/[0.04]",
                         ].join(" ")}
                       >
-                        <span>{item.label}</span>
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span>{item.label}</span>
+                          {item.href === "/account/notifications" && unreadCount > 0 ? (
+                            <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#c9964f] px-1.5 text-[11px] font-bold text-white">
+                              {notificationsBadgeLabel}
+                            </span>
+                          ) : null}
+                        </span>
                         <span className={active ? "text-white/65" : "text-black/30"}>
                           →
                         </span>

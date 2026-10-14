@@ -1,6 +1,8 @@
-import Link from "next/link";
-
 import { requireAdminUser } from "@/lib/auth/require-admin";
+import {
+  markAllOwnAdminNotificationsReadAction,
+  openOwnAdminNotificationAction,
+} from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +15,12 @@ type DeliveryRow = {
   status: string;
   created_at: string;
   delivered_at: string | null;
+  read_at: string | null;
+};
+
+type NotificationEventRow = {
+  code: string;
+  label: string | null;
 };
 
 function formatDateTime(value: string | null | undefined) {
@@ -41,14 +49,19 @@ function prettyEventCode(value: string | null | undefined) {
     .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
-export default async function AdminMyNotificationsPage() {
+export default async function AdminMyNotificationsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ read?: string }>;
+}) {
+  const params = searchParams ? await searchParams : {};
   const { supabase, access } = await requireAdminUser();
   const authUserId = String(access.user?.id || "").trim();
 
   const [deliveriesResult, eventsResult] = await Promise.all([
     supabase
       .from("notification_deliveries")
-      .select("id,event_code,subject,rendered_body,booking_id,status,created_at,delivered_at")
+      .select("id,event_code,subject,rendered_body,booking_id,status,created_at,delivered_at,read_at")
       .eq("auth_user_id", authUserId)
       .eq("channel", "in_app")
       .in("status", ["sent", "delivered"])
@@ -69,8 +82,9 @@ export default async function AdminMyNotificationsPage() {
   }
 
   const deliveries = (deliveriesResult.data || []) as DeliveryRow[];
+  const unreadCount = deliveries.filter((item) => !item.read_at).length;
   const eventLabelByCode = new Map(
-    (eventsResult.data || []).map((item: any) => [String(item.code), String(item.label || "")]),
+    ((eventsResult.data || []) as NotificationEventRow[]).map((item) => [String(item.code), String(item.label || "")]),
   );
 
   return (
@@ -84,34 +98,61 @@ export default async function AdminMyNotificationsPage() {
           Personal in-app alerts assigned to your staff account.
         </p>
 
+        {params.read === "all" ? <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">All notifications marked as read.</div> : null}
+
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[18px] border border-black/8 bg-[#fbf9f6] px-4 py-3 sm:rounded-2xl sm:px-5">
+          <div>
+            <div className="text-sm font-semibold text-black/80">Unread</div>
+            <div className="text-2xl font-semibold tracking-tight">{unreadCount}</div>
+          </div>
+          <form action={markAllOwnAdminNotificationsReadAction}>
+            <button
+              type="submit"
+              disabled={unreadCount === 0}
+              className="inline-flex min-h-10 items-center justify-center rounded-full bg-[#1d1d1b] px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              Mark all as read
+            </button>
+          </form>
+        </div>
+
         <div className="mt-6 space-y-3 sm:mt-8">
           {deliveries.map((item) => {
             const eventLabel =
               eventLabelByCode.get(String(item.event_code || "")) ||
               prettyEventCode(item.event_code);
             const title = String(item.subject || "").trim() || eventLabel;
-            const destination = item.booking_id
-              ? `/admin/bookings/${item.booking_id}`
-              : "/admin";
             const sentAt = formatDateTime(item.delivered_at || item.created_at);
+            const isUnread = !item.read_at;
 
             return (
-              <Link
-                key={item.id}
-                href={destination}
-                className="block rounded-[16px] border border-black/8 bg-[#fbf9f6] p-3 transition hover:bg-[#f7f3ed] sm:rounded-2xl sm:p-4"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-semibold">{title}</div>
-                    <div className="mt-1 text-xs uppercase tracking-[0.08em] text-black/40">{eventLabel}</div>
+              <form key={item.id} action={openOwnAdminNotificationAction}>
+                <input type="hidden" name="deliveryId" value={item.id} />
+                <button
+                  type="submit"
+                  className={[
+                    "block w-full rounded-[16px] border p-3 text-left transition sm:rounded-2xl sm:p-4",
+                    isUnread
+                      ? "border-[#d8c39b] bg-[#fff8eb] hover:bg-[#fff3dc]"
+                      : "border-black/8 bg-[#fbf9f6] hover:bg-[#f7f3ed]",
+                  ].join(" ")}
+                  aria-label={`Open notification: ${title}`}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className={isUnread ? "h-2 w-2 shrink-0 rounded-full bg-[#c9964f]" : "h-2 w-2 shrink-0 rounded-full bg-black/15"} />
+                        <div className={isUnread ? "truncate font-semibold" : "truncate font-medium text-black/75"}>{title}</div>
+                      </div>
+                      <div className="mt-1 text-xs uppercase tracking-[0.08em] text-black/40">{eventLabel}</div>
+                    </div>
+                    <div className="text-xs text-black/40">{sentAt}</div>
                   </div>
-                  <div className="text-xs text-black/40">{sentAt}</div>
-                </div>
-                {item.rendered_body ? (
-                  <div className="mt-1 text-sm text-black/55">{item.rendered_body}</div>
-                ) : null}
-              </Link>
+                  {item.rendered_body ? (
+                    <div className={isUnread ? "mt-1 text-sm text-black/75" : "mt-1 text-sm text-black/55"}>{item.rendered_body}</div>
+                  ) : null}
+                </button>
+              </form>
             );
           })}
 

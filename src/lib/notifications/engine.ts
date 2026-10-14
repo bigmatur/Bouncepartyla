@@ -194,7 +194,7 @@ async function processOneDelivery(delivery: any) {
   const bookingNumber = String(booking?.booking_number || bookingId.slice(0, 8));
   const fullName = String(customer?.full_name || "Customer").trim();
   const firstName = fullName.split(/\s+/)[0] || "Customer";
-  const preferencesUrl = `${origin}/account/notifications`;
+  const preferencesUrl = `${origin}/account/notifications/settings`;
 
   let unsubscribeCategoryUrl = preferencesUrl;
   let unsubscribeAllUrl = preferencesUrl;
