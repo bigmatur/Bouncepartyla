@@ -65,6 +65,7 @@ type TemporaryInventoryRequirementRow = {
 type BookingExecutionContext = {
   supabase?: any;
   returnResult?: boolean;
+  isMobileApiRequest?: boolean;
   requestOrigin?: string | null;
   trustedPricing?: {
     subtotal: number;
@@ -3240,6 +3241,18 @@ async function createBookingActionInternal(
       "contractAccepted",
     );
 
+  const contractNoFacePaintAck =
+    getString(
+      formData,
+      "contractNoFacePaintAck",
+    ).toLowerCase() === "true";
+
+  const contractAdultSupervisionAck =
+    getString(
+      formData,
+      "contractAdultSupervisionAck",
+    ).toLowerCase() === "true";
+
   const contractSignerName =
     getString(
       formData,
@@ -3459,6 +3472,23 @@ async function createBookingActionInternal(
         "Invalid discount password.",
       );
     }
+  }
+
+  if (
+    !isStaffSendToCustomer &&
+    !executionContext?.isMobileApiRequest &&
+    (
+      contractSettings
+        .require_contract_before_payment !==
+        false ||
+      contractAccepted
+    ) &&
+    (!contractNoFacePaintAck ||
+      !contractAdultSupervisionAck)
+  ) {
+    throw new Error(
+      "Acknowledge all safety rules and contract terms before payment.",
+    );
   }
 
   if (
@@ -3931,6 +3961,16 @@ async function createBookingActionInternal(
         signature_metadata: {
           accepted:
             contractAccepted,
+          ...(!executionContext?.isMobileApiRequest
+            ? {
+                safetyAcknowledgments: {
+                  noFacePaintGlitterOrSillyString:
+                    contractNoFacePaintAck,
+                  adultSupervisionRequired:
+                    contractAdultSupervisionAck,
+                },
+              }
+            : {}),
           requireTypedSignature:
             true,
           manualSignature:
@@ -4974,6 +5014,7 @@ export async function createMobileBookingAction(
     {
       supabase,
       returnResult: true,
+      isMobileApiRequest: true,
       requestOrigin:
         String(requestOriginInput || "").trim() || null,
       trustedPricing: {

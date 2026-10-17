@@ -83,6 +83,8 @@ async function signCustomerBookingContractIfAccepted(params: {
   totalAmount: number;
   depositAmount: number;
   contractAccepted: boolean;
+  contractNoFacePaintAck: boolean;
+  contractAdultSupervisionAck: boolean;
   contractSignerName: string;
   contractSignatureDataUrl: string;
   contractRenderedHtml: string;
@@ -112,13 +114,15 @@ async function signCustomerBookingContractIfAccepted(params: {
   const documentHashSha256 = toSha256(renderedContract);
 
   const { data: signResult, error: signError } = await params.supabase.rpc(
-    "sign_customer_booking_contract",
+    "sign_customer_booking_contract_with_safety_ack",
     {
       p_booking_id: params.bookingId,
       p_signer_name: params.contractSignerName || params.customerName,
       p_rendered_html: renderedContract,
       p_document_hash: documentHashSha256,
       p_signature_image_data_url: signatureImageDataUrl,
+      p_no_face_paint_ack: params.contractNoFacePaintAck,
+      p_adult_supervision_ack: params.contractAdultSupervisionAck,
     },
   );
 
@@ -130,11 +134,11 @@ async function signCustomerBookingContractIfAccepted(params: {
   const signFunctionMissing =
     signErrorMessage.includes("could not find the function") ||
     signErrorMessage.includes("schema cache") ||
-    signErrorMessage.includes("sign_customer_booking_contract");
+    signErrorMessage.includes("sign_customer_booking_contract_with_safety_ack");
 
   if (signError && signFunctionMissing) {
     throw new Error(
-      "Customer contract signing RPC is not installed. Apply migration 063 before accepting Stripe bookings.",
+      "Customer contract signing RPC with safety acknowledgments is not installed. Apply migration 129 before accepting Stripe bookings.",
     );
   }
 
@@ -477,6 +481,11 @@ export async function createCustomerBookingAction(formData: FormData) {
   const contractAccepted = ["yes", "true", "1", "on"].includes(
     contractAcceptedRaw,
   );
+  const contractNoFacePaintAck =
+    getString(formData, "contractNoFacePaintAck").toLowerCase() === "true";
+  const contractAdultSupervisionAck =
+    getString(formData, "contractAdultSupervisionAck").toLowerCase() ===
+    "true";
   const contractSignerName = getString(formData, "contractSignerName");
   const contractManualSignature = getString(
     formData,
@@ -565,6 +574,15 @@ export async function createCustomerBookingAction(formData: FormData) {
   }
 
   const contractSettings = contractSettingsResult.data;
+
+  if (
+    contractAccepted &&
+    (!contractNoFacePaintAck || !contractAdultSupervisionAck)
+  ) {
+    throw new Error(
+      "Acknowledge all safety rules and contract terms before booking.",
+    );
+  }
 
   if (contractSettings?.require_contract_before_payment !== false) {
     if (!contractAccepted) {
@@ -787,6 +805,8 @@ export async function createCustomerBookingAction(formData: FormData) {
       totalAmount: Number(result.booking?.total_amount || 0),
       depositAmount: Number(result.booking?.deposit_amount || 0),
       contractAccepted,
+      contractNoFacePaintAck,
+      contractAdultSupervisionAck,
       contractSignerName,
       contractSignatureDataUrl,
       contractRenderedHtml,

@@ -545,6 +545,8 @@ export default function NewBookingWizard({
   const [discountAuthLoading, setDiscountAuthLoading] = useState(false);
   const [discountAuthMessage, setDiscountAuthMessage] = useState<string | null>(null);
   const [discountEditorOpen, setDiscountEditorOpen] = useState(false);
+  const [contractNoFacePaintAck, setContractNoFacePaintAck] = useState(false);
+  const [contractAdultSupervisionAck, setContractAdultSupervisionAck] = useState(false);
   const [contractAccepted, setContractAccepted] = useState(false);
   const [contractSignerName, setContractSignerName] = useState("");
   const [contractManualSignature, setContractManualSignature] = useState("");
@@ -558,6 +560,8 @@ export default function NewBookingWizard({
   const formRef = useRef<HTMLFormElement | null>(null);
   const pricingRequestIdRef = useRef(0);
   const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const contractPreviewRef = useRef<HTMLDivElement | null>(null);
+  const contractAutoScrolledRef = useRef(false);
   const signatureDrawingRef = useRef(false);
   const discountEditorRef = useRef<HTMLDivElement | null>(null);
 
@@ -936,10 +940,13 @@ export default function NewBookingWizard({
 
   useEffect(() => {
     if (!contractModalOpen) {
+      contractAutoScrolledRef.current = false;
       return;
     }
 
     setPaymentError(null);
+    setContractNoFacePaintAck(false);
+    setContractAdultSupervisionAck(false);
     setContractAccepted(false);
 
     if (!contractSignerName) {
@@ -953,6 +960,137 @@ export default function NewBookingWizard({
     setContractSignatureDataUrl("");
 
     clearAndPaintSignatureCanvas();
+  }, [contractModalOpen]);
+
+  useEffect(() => {
+    if (!contractModalOpen || contractAutoScrolledRef.current) {
+      return;
+    }
+
+    const preview = contractPreviewRef.current;
+
+    if (!preview) {
+      return;
+    }
+
+    const normalizeForMatch = (value: string | null | undefined) =>
+      String(value || "")
+        .replace(/[\u00A0\u202F\u2007]/g, " ")
+        .replace(/[\u2010-\u2015\u2212]/g, "-")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+
+    const targetHeading = normalizeForMatch(
+      "RENTAL AGREEMENT – IMPORTANT TERMS (PLEASE READ CAREFULLY)"
+    );
+
+    const findNormalizedSubstringRange = (source: string, target: string) => {
+      if (!source || !target) {
+        return null;
+      }
+
+      let normalized = "";
+      const indexMap: number[] = [];
+      let previousWasSpace = false;
+
+      for (let index = 0; index < source.length; index += 1) {
+        const rawChar = source[index];
+        const isSpace = /[\s\u00A0\u202F\u2007]/.test(rawChar);
+
+        if (isSpace) {
+          if (normalized.length === 0 || previousWasSpace) {
+            continue;
+          }
+
+          normalized += " ";
+          indexMap.push(index);
+          previousWasSpace = true;
+          continue;
+        }
+
+        const normalizedChar = /[\u2010-\u2015\u2212]/.test(rawChar)
+          ? "-"
+          : rawChar.toLowerCase();
+
+        normalized += normalizedChar;
+        indexMap.push(index);
+        previousWasSpace = false;
+      }
+
+      while (normalized.startsWith(" ") && indexMap.length > 0) {
+        normalized = normalized.slice(1);
+        indexMap.shift();
+      }
+
+      while (normalized.endsWith(" ") && indexMap.length > 0) {
+        normalized = normalized.slice(0, -1);
+        indexMap.pop();
+      }
+
+      const startInNormalized = normalized.indexOf(target);
+
+      if (startInNormalized < 0) {
+        return null;
+      }
+
+      const endInNormalized = startInNormalized + target.length - 1;
+      const startInSource = indexMap[startInNormalized];
+      const endInSource = indexMap[endInNormalized] + 1;
+
+      if (startInSource == null || endInSource == null) {
+        return null;
+      }
+
+      return {
+        startInSource,
+        endInSource,
+      };
+    };
+
+    const scrollToAgreementHeading = () => {
+      const walker = document.createTreeWalker(preview, NodeFilter.SHOW_TEXT);
+      let current = walker.nextNode();
+      let headingRange: Range | null = null;
+
+      while (current) {
+        const textNode = current as Text;
+        const text = textNode.nodeValue || "";
+        const match = findNormalizedSubstringRange(text, targetHeading);
+
+        if (match) {
+          const range = document.createRange();
+          range.setStart(textNode, match.startInSource);
+          range.setEnd(textNode, match.endInSource);
+          headingRange = range;
+          break;
+        }
+
+        current = walker.nextNode();
+      }
+
+      if (!headingRange) {
+        return;
+      }
+
+      const previewRect = preview.getBoundingClientRect();
+      const headingRect = headingRange.getBoundingClientRect();
+      const nextScrollTop =
+        preview.scrollTop + (headingRect.top - previewRect.top) - 8;
+
+      preview.scrollTop = Math.max(0, nextScrollTop);
+      contractAutoScrolledRef.current = true;
+    };
+
+    let frame = 0;
+    const firstFrame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(scrollToAgreementHeading);
+    });
+
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      cancelAnimationFrame(frame);
+    };
   }, [contractModalOpen]);
 
   useEffect(() => {
@@ -2036,8 +2174,14 @@ export default function NewBookingWizard({
   }
 
   function confirmContractAndOpenPos() {
-    if (!contractAccepted) {
-      setPaymentError("Client must accept contract before payment.");
+    if (
+      !contractNoFacePaintAck ||
+      !contractAdultSupervisionAck ||
+      !contractAccepted
+    ) {
+      setPaymentError(
+        "Acknowledge all safety rules and contract terms before continuing."
+      );
       return;
     }
 
@@ -2308,6 +2452,16 @@ export default function NewBookingWizard({
       <input type="hidden" name="discountAmount" value={safeDiscountAmount} />
       <input type="hidden" name="discountAuthorized" value={discountAuthorized ? "true" : "false"} />
       <input type="hidden" name="discountPassword" value={discountPassword} />
+      <input
+        type="hidden"
+        name="contractNoFacePaintAck"
+        value={contractNoFacePaintAck ? "true" : "false"}
+      />
+      <input
+        type="hidden"
+        name="contractAdultSupervisionAck"
+        value={contractAdultSupervisionAck ? "true" : "false"}
+      />
       <input type="hidden" name="contractAccepted" value={contractAccepted ? "true" : "false"} />
       <input type="hidden" name="contractSignerName" value={contractSignerName} />
       <input type="hidden" name="contractManualSignature" value={contractManualSignature} />
@@ -4168,7 +4322,10 @@ export default function NewBookingWizard({
             </div>
 
             <div className="space-y-4 overflow-y-auto p-4 sm:p-6">
-              <div className="max-h-[320px] overflow-y-auto rounded-2xl bg-white p-4 text-sm leading-6 text-[#4b4339] ring-1 ring-[#eee5d9]">
+              <div
+                ref={contractPreviewRef}
+                className="max-h-[320px] overflow-y-auto rounded-2xl border border-[#e7dccd] bg-white p-4 text-sm leading-6 text-[#4b4339] ring-2 ring-[#e1d0b2]"
+              >
                 <div dangerouslySetInnerHTML={{ __html: renderedContractHtml }} />
               </div>
 
@@ -4193,15 +4350,37 @@ export default function NewBookingWizard({
                       />
                     </Field>
 
-                    <label className="flex items-center gap-3 rounded-2xl border border-[#d8cec0] bg-white px-4 py-3 text-sm font-semibold text-[#1f1e1b]">
-                      <input
-                        type="checkbox"
-                        checked={contractAccepted}
-                        onChange={(event) => setContractAccepted(event.target.checked)}
-                        className="h-5 w-5"
-                      />
-                      I read and agree with the contract terms
-                    </label>
+                    <div className="space-y-2 rounded-2xl border border-[#d8cec0] bg-white px-3 py-2.5">
+                      <label className="flex items-start gap-2 text-[12px] font-semibold leading-4 text-[#1f1e1b] sm:leading-5">
+                        <input
+                          type="checkbox"
+                          checked={contractNoFacePaintAck}
+                          onChange={(event) => setContractNoFacePaintAck(event.target.checked)}
+                          className="mt-0.5 h-5 w-5 shrink-0"
+                        />
+                        <span>No face paint, glitter, or silly string on equipment.</span>
+                      </label>
+
+                      <label className="flex items-start gap-2 text-[12px] font-semibold leading-4 text-[#1f1e1b] sm:leading-5">
+                        <input
+                          type="checkbox"
+                          checked={contractAdultSupervisionAck}
+                          onChange={(event) => setContractAdultSupervisionAck(event.target.checked)}
+                          className="mt-0.5 h-5 w-5 shrink-0"
+                        />
+                        <span>Adult supervision is required at all times.</span>
+                      </label>
+
+                      <label className="flex items-start gap-2 text-[12px] font-semibold leading-4 text-[#1f1e1b] sm:leading-5">
+                        <input
+                          type="checkbox"
+                          checked={contractAccepted}
+                          onChange={(event) => setContractAccepted(event.target.checked)}
+                          className="mt-0.5 h-5 w-5 shrink-0"
+                        />
+                        <span>I read and agree with the contract terms.</span>
+                      </label>
+                    </div>
                   </div>
 
                   <Field label="Draw signature">
