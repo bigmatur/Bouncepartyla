@@ -1759,9 +1759,6 @@ export async function updateBookingItemsAction(formData: FormData) {
       city: setupCity || null,
       state: setupState || null,
       zip: setupZip || null,
-      stop_date: eventDate || null,
-      scheduled_start_time: eventStartTime || null,
-      scheduled_end_time: eventEndTime || null,
       updated_at: new Date().toISOString(),
     })
     .eq("booking_id", bookingId)
@@ -1769,6 +1766,20 @@ export async function updateBookingItemsAction(formData: FormData) {
 
   if (routeStopSyncError && !isMissingTableError(routeStopSyncError)) {
     throw new Error(routeStopSyncError.message);
+  }
+
+  const { error: routeBalanceSyncError } = await supabase
+    .from("route_stops")
+    .update({
+      balance_due: balanceDue,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("booking_id", bookingId)
+    .eq("stop_type", "delivery")
+    .eq("payment_collected", false);
+
+  if (routeBalanceSyncError && !isMissingTableError(routeBalanceSyncError)) {
+    throw new Error(routeBalanceSyncError.message);
   }
 
   try {
@@ -1879,21 +1890,6 @@ export async function updateBookingScheduleQuickAction(formData: FormData) {
         event_end_time: eventEndTime,
       },
     });
-  }
-
-  const { error: routeStopQuickSyncError } = await supabase
-    .from("route_stops")
-    .update({
-      stop_date: eventDate,
-      scheduled_start_time: eventStartTime,
-      scheduled_end_time: eventEndTime,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("booking_id", bookingId)
-    .in("stop_type", ["delivery", "pickup"]);
-
-  if (routeStopQuickSyncError && !isMissingTableError(routeStopQuickSyncError)) {
-    throw new Error(routeStopQuickSyncError.message);
   }
 
   const resignQueued = await queueContractResignIfNeeded({
