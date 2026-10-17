@@ -1,18 +1,21 @@
 import type {
+  CustomerManualPaymentMethod,
   BookingPayment,
   BookingRecord,
 } from "../booking-types";
 import {
   payApprovedCustomerBookingDepositAction,
-  payCustomerBookingBalanceByCardAction,
   requestCustomerBookingApprovalAgainAction,
 } from "../actions";
 import ActionButton from "@/components/ui/ActionButton";
 import { resolveCustomerDisplayStatus } from "@/lib/booking/customer-display-status";
+import CustomerBalancePaymentOptions from "./CustomerBalancePaymentOptions";
 
 type BookingPaymentsProps = {
   booking?: BookingRecord | null;
   payments?: BookingPayment[] | null;
+  manualPaymentMethods?: CustomerManualPaymentMethod[];
+  bookingPaymentReference?: string;
 };
 
 function toNumber(value: number | string | null | undefined) {
@@ -90,6 +93,8 @@ function getStatusClasses(value: unknown) {
 export default function BookingPayments({
   booking,
   payments,
+  manualPaymentMethods = [],
+  bookingPaymentReference,
 }: BookingPaymentsProps) {
   const safePayments = Array.isArray(payments)
     ? payments
@@ -181,6 +186,9 @@ export default function BookingPayments({
           ? "expired"
           : approvalState;
   const reRequestState = String((booking as any).__approval_rerequest_state || "").toLowerCase();
+  const safeBookingReference =
+    String(bookingPaymentReference || booking.booking_number || "").trim() ||
+    `BOOK-${String(booking.id || "").slice(0, 8).toUpperCase()}`;
 
   return (
     <section className="overflow-hidden rounded-[26px] border border-black/10 bg-white">
@@ -323,19 +331,26 @@ export default function BookingPayments({
         ) : balanceDue > 0 ? (
           <div className="mt-4 rounded-[16px] border border-blue-200 bg-blue-50 px-3 py-3 sm:mt-5 sm:rounded-[18px] sm:px-4 sm:py-4">
             <p className="text-sm font-semibold text-blue-900">
-              Pay securely by card
+              Choose payment method
             </p>
 
             <p className="mt-1 text-sm leading-6 text-blue-800/75">
-              Customer payments are processed securely through Stripe.
+              Card payments are processed securely through Stripe. Zelle and Venmo payments are manual and require admin verification.
             </p>
 
-            <form action={payCustomerBookingBalanceByCardAction}>
-              <input type="hidden" name="bookingId" value={booking.id} />
-              <button className="mt-3 w-full rounded-full bg-[#23313f] px-4 py-3 text-sm font-semibold text-white sm:mt-4">
-                Pay {money(balanceDue)} by card
-              </button>
-            </form>
+            <p className="mt-2 text-xs leading-5 text-blue-800/80 lg:hidden">
+              Use the Pay balance button at the bottom of the screen to choose Card, Zelle, or Venmo.
+            </p>
+
+            <div className="hidden lg:block">
+              <CustomerBalancePaymentOptions
+                bookingId={booking.id}
+                balanceDue={balanceDue}
+                bookingPaymentReference={safeBookingReference}
+                manualPaymentMethods={manualPaymentMethods}
+                variant="desktop"
+              />
+            </div>
           </div>
         ) : (
           <div className="mt-5 rounded-[18px] border border-emerald-200 bg-emerald-50 px-4 py-4">

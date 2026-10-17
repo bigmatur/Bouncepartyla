@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import type { BookingDetails } from "../booking-types";
+import type { CustomerManualPaymentMethod } from "../booking-types";
 import type { BookingPageModel } from "../booking-view-model";
 
 import BookingDetailsMainColumn from "./BookingDetailsMainColumn";
@@ -20,6 +21,7 @@ type BookingDetailsLayoutProps = {
   completionStatus?: string;
   completionError?: string;
   cancellationState?: string;
+  manualPaymentMethods?: CustomerManualPaymentMethod[];
 };
 
 export default function BookingDetailsLayout({
@@ -30,6 +32,7 @@ export default function BookingDetailsLayout({
   completionStatus,
   completionError,
   cancellationState,
+  manualPaymentMethods = [],
 }: BookingDetailsLayoutProps) {
   const { booking } = details;
   const bookingSource = String((booking as any).booking_source || "").toLowerCase();
@@ -58,6 +61,7 @@ export default function BookingDetailsLayout({
     bookingSource === "customer_self_service" &&
     bookingStatus === "pending_deposit" &&
     effectiveApprovalState === "approved";
+  const bookingPaymentReference = String(booking.booking_number || "").trim() || `BOOK-${String(booking.id || "").slice(0, 8).toUpperCase()}`;
   const showMobileBalancePaymentBar =
     !adminPreview &&
     !completionMode &&
@@ -128,6 +132,8 @@ export default function BookingDetailsLayout({
           model={model}
           adminPreview={adminPreview}
           cancellationState={cancellationState}
+          manualPaymentMethods={manualPaymentMethods}
+          bookingPaymentReference={bookingPaymentReference}
         />
       </div>
 
@@ -136,6 +142,8 @@ export default function BookingDetailsLayout({
           bookingId={booking.id}
           balanceDue={balanceDue}
           isApprovalFlow={isSelfServiceApprovalFlow}
+          bookingPaymentReference={bookingPaymentReference}
+          manualPaymentMethods={manualPaymentMethods}
         />
       ) : null}
     </main>

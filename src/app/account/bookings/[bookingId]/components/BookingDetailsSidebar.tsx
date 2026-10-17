@@ -1,4 +1,5 @@
 import type { BookingDetails } from "../booking-types";
+import type { CustomerManualPaymentMethod } from "../booking-types";
 import type { BookingPageModel } from "../booking-view-model";
 
 import BookingContractCard from "./BookingContractCard";
@@ -14,6 +15,8 @@ type BookingDetailsSidebarProps = {
   model: BookingPageModel;
   adminPreview?: boolean;
   cancellationState?: string | null;
+  manualPaymentMethods?: CustomerManualPaymentMethod[];
+  bookingPaymentReference?: string;
 };
 
 export default function BookingDetailsSidebar({
@@ -21,6 +24,8 @@ export default function BookingDetailsSidebar({
   model,
   adminPreview = false,
   cancellationState = null,
+  manualPaymentMethods = [],
+  bookingPaymentReference,
 }: BookingDetailsSidebarProps) {
   const { booking, payments, cancellation_request } = details;
 
@@ -31,7 +36,12 @@ export default function BookingDetailsSidebar({
       </div>
 
       <div className="order-3 lg:order-5">
-        <BookingPayments booking={booking} payments={payments} />
+        <BookingPayments
+          booking={booking}
+          payments={payments}
+          manualPaymentMethods={manualPaymentMethods}
+          bookingPaymentReference={bookingPaymentReference}
+        />
       </div>
 
       <div className="order-2 lg:order-4">

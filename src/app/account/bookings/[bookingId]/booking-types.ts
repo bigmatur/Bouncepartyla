@@ -155,6 +155,15 @@ export type BookingPayment = {
   paid_at: string | null;
 };
 
+export type CustomerManualPaymentMethod = {
+  method: "zelle" | "venmo";
+  display_name: string;
+  account_label: string | null;
+  account_value: string;
+  is_enabled: boolean;
+  sort_order: number | null;
+};
+
 export type BookingPhoto = {
   id: string;
   photo_type: string;

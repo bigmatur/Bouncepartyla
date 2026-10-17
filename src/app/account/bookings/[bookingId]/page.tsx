@@ -9,6 +9,7 @@ import { buildBookingPageModel } from "./booking-view-model";
 import { createClient } from "@/lib/supabase/server";
 import { getUnifiedAccess } from "@/lib/auth/access";
 import { syncStripeCheckoutSessionPayment } from "@/lib/payments/stripe";
+import type { CustomerManualPaymentMethod } from "./booking-types";
 
 export const dynamic = "force-dynamic";
 
@@ -102,6 +103,37 @@ export default async function CustomerBookingDetailsPage({
     ? await getAdminBookingPreviewDetails(bookingId)
     : await getCustomerBookingDetails(bookingId);
 
+  let manualPaymentMethods: CustomerManualPaymentMethod[] = [];
+
+  const paymentMethodsResult = await supabase
+    .from("payment_method_settings")
+    .select("method, display_name, account_label, account_value, is_enabled, sort_order")
+    .in("method", ["zelle", "venmo"])
+    .eq("is_enabled", true)
+    .order("sort_order", { ascending: true });
+
+  if (!paymentMethodsResult.error && Array.isArray(paymentMethodsResult.data)) {
+    manualPaymentMethods = paymentMethodsResult.data
+      .map((row: any) => {
+        const method = String(row?.method || "").trim().toLowerCase();
+        const accountValue = String(row?.account_value || "").trim();
+
+        if ((method !== "zelle" && method !== "venmo") || !accountValue) {
+          return null;
+        }
+
+        return {
+          method,
+          display_name: String(row?.display_name || (method === "zelle" ? "Zelle" : "Venmo")),
+          account_label: row?.account_label ? String(row.account_label).trim() || null : null,
+          account_value: accountValue,
+          is_enabled: row?.is_enabled !== false,
+          sort_order: Number.isFinite(Number(row?.sort_order)) ? Number(row.sort_order) : null,
+        } satisfies CustomerManualPaymentMethod;
+      })
+      .filter(Boolean) as CustomerManualPaymentMethod[];
+  }
+
   const model = buildBookingPageModel(details);
 
   // These are two intentionally different customer flows:
@@ -175,6 +207,7 @@ export default async function CustomerBookingDetailsPage({
         completionStatus={query.status}
         completionError={query.error}
         cancellationState={query.cancellation}
+        manualPaymentMethods={manualPaymentMethods}
       />
     </CustomerShell>
   );
