@@ -9,6 +9,7 @@ import {
 import { calculateBookingPricingAction } from "../pricing-actions";
 import { verifyDiscountPasswordAction } from "@/app/admin/settings/actions";
 import GoogleAddressInput from "@/components/admin/GoogleAddressInput";
+import { getProductUnitPrice } from "@/lib/booking/product-pricing";
 
 type BookingActor = "customer" | "cashier";
 
@@ -209,12 +210,6 @@ function money(value: number) {
     style: "currency",
     currency: "USD",
   }).format(value || 0);
-}
-
-function getProductPrice(product: Product) {
-  const value = product.base_price ?? product.price ?? 0;
-  const parsed = Number(value);
-  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function modifierKey(productId: string, groupId: string) {
@@ -438,6 +433,7 @@ export default function NewBookingWizard({
   initialSetupAddress,
   initialSetupCity,
   initialSetupZip,
+  initialSelectedProducts,
 }: {
   bookingAttemptId: string;
   initialErrorMessage?: string;
@@ -459,6 +455,7 @@ export default function NewBookingWizard({
   initialSetupAddress?: string;
   initialSetupCity?: string;
   initialSetupZip?: string;
+  initialSelectedProducts?: SelectedProduct[];
 }) {
   const [step, setStep] = useState(1);
   const [formErrorMessage, setFormErrorMessage] = useState(
@@ -490,7 +487,7 @@ export default function NewBookingWizard({
   const [search, setSearch] = useState("");
 
   const [selectedProducts, setSelectedProducts] = useState<SelectedProduct[]>(
-    []
+    initialSelectedProducts || []
   );
 
   const [selectedModifierOptions, setSelectedModifierOptions] = useState<
@@ -1115,7 +1112,7 @@ export default function NewBookingWizard({
       {
         productId: product.id,
         quantity: 1,
-        unitPrice: getProductPrice(product),
+        unitPrice: getProductUnitPrice(product),
         notes: "",
       },
     ]);
@@ -2823,7 +2820,7 @@ export default function NewBookingWizard({
             <div className="grid gap-4 p-6 md:grid-cols-2 2xl:grid-cols-3">
               {filteredProducts.map((product) => {
                 const selected = selectedProductIds.includes(product.id);
-                const price = getProductPrice(product);
+                const price = getProductUnitPrice(product);
                 const availabilityState = availabilityByProductId[product.id];
                 const stockSnapshot = inventorySnapshotByProductId[product.id];
                 const unavailableBySnapshot = Boolean(stockSnapshot && !stockSnapshot.available);

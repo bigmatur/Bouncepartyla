@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { requireAdminPermission } from "@/lib/auth/require-admin";
 import { resolveIntegrationConnection } from "@/lib/integrations/connections";
+import { getProductUnitPrice } from "@/lib/booking/product-pricing";
 import NewBookingWizard from "./components/NewBookingWizard";
 
 type PageProps = {
@@ -11,9 +12,13 @@ type PageProps = {
     setupAddress?: string;
     setupCity?: string;
     setupZip?: string;
+    productIds?: string;
     error?: string;
   }>;
 };
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function resolveWizardErrorMessage(code: string | undefined) {
   if (code === "add_product") {
@@ -21,6 +26,20 @@ function resolveWizardErrorMessage(code: string | undefined) {
   }
 
   return "";
+}
+
+function parseProductIdsParam(rawValue: string | undefined) {
+  if (!rawValue) {
+    return [] as string[];
+  }
+
+  const parsed = rawValue
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .filter((value) => UUID_PATTERN.test(value));
+
+  return Array.from(new Set(parsed)).slice(0, 50);
 }
 
 function getProductCategoryName(categories: any[], categoryId: string | null) {
@@ -245,6 +264,10 @@ export default async function NewBookingPage(props: PageProps) {
     ...product,
     category_name: getProductCategoryName(categories, product.category_id),
   }));
+  const requestedPrefillProductIds = parseProductIdsParam(searchParams.productIds);
+  const productById = new Map(
+    products.map((product: any) => [String(product.id), product])
+  );
 
   const optionRows = modifierGroupOptionsResult.data || [];
   const paymentMethodsFromDb =
@@ -384,6 +407,28 @@ export default async function NewBookingPage(props: PageProps) {
     .filter((group: any) => group.active)
     .sort((a: any, b: any) => a.sortOrder - b.sortOrder);
 
+  const initialSelectedProducts = requestedPrefillProductIds
+    .map((productId) => {
+      const product = productById.get(productId);
+
+      if (!product) {
+        return null;
+      }
+
+      return {
+        productId,
+        quantity: 1,
+        unitPrice: getProductUnitPrice(product),
+        notes: "",
+      };
+    })
+    .filter(Boolean) as Array<{
+    productId: string;
+    quantity: number;
+    unitPrice: number;
+    notes: string;
+  }>;
+
   return (
     <div className="space-y-6">
       <section className="rounded-[30px] border border-black/5 bg-white p-6 shadow-[0_10px_35px_rgba(0,0,0,0.035)]">
@@ -451,6 +496,7 @@ export default async function NewBookingPage(props: PageProps) {
         tipSettings={tipSettings}
         discountSecurity={discountSecurity}
         contractSettings={contractSettings}
+        initialSelectedProducts={initialSelectedProducts}
       />
     </div>
   );

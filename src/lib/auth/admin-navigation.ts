@@ -39,6 +39,7 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
     permission: "bookings.view",
     children: [
       { label: "Active bookings", href: "/admin/bookings", icon: "▦", permission: "bookings.view" },
+      { label: "Availability", href: "/admin/availability", icon: "◍", permission: "bookings.view" },
       { label: "Archive", href: "/admin/bookings/archive", icon: "🗂", permission: "bookings.view" },
     ],
   },
