@@ -119,11 +119,14 @@ export default function CustomerShell({
 
     async function loadUnreadCount() {
       try {
-        const response = await fetch("/api/account/notifications/unread-count", {
-          method: "GET",
-          cache: "no-store",
-          credentials: "same-origin",
-        });
+        const response = await fetch(
+          "/api/account/notifications/unread-count",
+          {
+            method: "GET",
+            cache: "no-store",
+            credentials: "same-origin",
+          },
+        );
 
         if (!response.ok) {
           return;
@@ -175,8 +178,30 @@ export default function CustomerShell({
 
     loadMessagesUnreadCount();
 
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void loadMessagesUnreadCount();
+      }
+    }, 15000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void loadMessagesUnreadCount();
+      }
+    };
+
+    const handleMessagesRead = () => {
+      void loadMessagesUnreadCount();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("account-messages-read", handleMessagesRead);
+
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("account-messages-read", handleMessagesRead);
     };
   }, [pathname]);
 
@@ -196,7 +221,11 @@ export default function CustomerShell({
   const initials = getInitials(displayName || userEmail || "Customer");
 
   const notificationsBadgeLabel = unreadCount > 9 ? "9+" : String(unreadCount);
-  const messagesBadgeLabel = messagesUnreadCount > 9 ? "9+" : String(messagesUnreadCount);
+  const messagesBadgeLabel =
+    messagesUnreadCount > 9 ? "9+" : String(messagesUnreadCount);
+  const canViewMessages = navItems.some(
+    (item) => item.href === "/account/messages",
+  );
 
   return (
     <div className="min-h-screen bg-[#f5efe6] text-[#1d1d1b]">
@@ -211,6 +240,22 @@ export default function CustomerShell({
               <div className="mt-2 text-2xl font-semibold tracking-tight text-[#1f1e1b]">
                 Account
               </div>
+              {canViewMessages ? (
+                <Link
+                  href="/account/messages"
+                  aria-label={`Messages${messagesUnreadCount > 0 ? `, ${messagesUnreadCount} unread` : ""}`}
+                  className="mt-4 flex items-center justify-between rounded-xl border border-[#ded7cd] bg-[#f8f3eb] px-3 py-2.5 text-sm font-semibold text-[#1f1e1b] transition hover:bg-[#f0e5d5]"
+                >
+                  <span className="flex items-center gap-2">
+                    <span aria-hidden="true">✉</span> Messages
+                  </span>
+                  {messagesUnreadCount > 0 ? (
+                    <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#b42318] px-1.5 text-[11px] font-bold text-white">
+                      {messagesBadgeLabel}
+                    </span>
+                  ) : null}
+                </Link>
+              ) : null}
             </div>
 
             <nav className="flex-1 overflow-y-auto px-4 py-4">
@@ -231,18 +276,22 @@ export default function CustomerShell({
                     >
                       <span className="flex min-w-0 items-center gap-2">
                         <span>{item.label}</span>
-                        {item.href === "/account/notifications" && unreadCount > 0 ? (
+                        {item.href === "/account/notifications" &&
+                        unreadCount > 0 ? (
                           <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#c9964f] px-1.5 text-[11px] font-bold text-white">
                             {notificationsBadgeLabel}
                           </span>
                         ) : null}
-                        {item.href === "/account/messages" && messagesUnreadCount > 0 ? (
+                        {item.href === "/account/messages" &&
+                        messagesUnreadCount > 0 ? (
                           <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#2f6b8a] px-1.5 text-[11px] font-bold text-white">
                             {messagesBadgeLabel}
                           </span>
                         ) : null}
                       </span>
-                      <span className={active ? "text-white/70" : "text-black/35"}>
+                      <span
+                        className={active ? "text-white/70" : "text-black/35"}
+                      >
                         →
                       </span>
                     </Link>
@@ -320,19 +369,34 @@ export default function CustomerShell({
                   Bounce Party LA
                 </div>
 
-                <div className="text-lg font-semibold">
-                  Account
-                </div>
+                <div className="text-lg font-semibold">Account</div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setMobileMenuOpen((value) => !value)}
-                aria-expanded={mobileMenuOpen}
-                className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold"
-              >
-                {mobileMenuOpen ? "Close" : "Menu"}
-              </button>
+              <div className="flex shrink-0 items-center gap-2">
+                {canViewMessages ? (
+                  <Link
+                    href="/account/messages"
+                    onClick={() => setMobileMenuOpen(false)}
+                    aria-label={`Messages${messagesUnreadCount > 0 ? `, ${messagesUnreadCount} unread` : ""}`}
+                    className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-black/10 bg-white text-lg"
+                  >
+                    <span aria-hidden="true">✉</span>
+                    {messagesUnreadCount > 0 ? (
+                      <span className="absolute -right-1.5 -top-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#b42318] px-1 text-[10px] font-bold text-white">
+                        {messagesBadgeLabel}
+                      </span>
+                    ) : null}
+                  </Link>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setMobileMenuOpen((value) => !value)}
+                  aria-expanded={mobileMenuOpen}
+                  className="rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold"
+                >
+                  {mobileMenuOpen ? "Close" : "Menu"}
+                </button>
+              </div>
             </div>
 
             {mobileMenuOpen && (
@@ -355,18 +419,22 @@ export default function CustomerShell({
                       >
                         <span className="flex min-w-0 items-center gap-2">
                           <span>{item.label}</span>
-                          {item.href === "/account/notifications" && unreadCount > 0 ? (
+                          {item.href === "/account/notifications" &&
+                          unreadCount > 0 ? (
                             <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#c9964f] px-1.5 text-[11px] font-bold text-white">
                               {notificationsBadgeLabel}
                             </span>
                           ) : null}
-                          {item.href === "/account/messages" && messagesUnreadCount > 0 ? (
+                          {item.href === "/account/messages" &&
+                          messagesUnreadCount > 0 ? (
                             <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#2f6b8a] px-1.5 text-[11px] font-bold text-white">
                               {messagesBadgeLabel}
                             </span>
                           ) : null}
                         </span>
-                        <span className={active ? "text-white/65" : "text-black/30"}>
+                        <span
+                          className={active ? "text-white/65" : "text-black/30"}
+                        >
                           →
                         </span>
                       </Link>
@@ -424,11 +492,7 @@ export default function CustomerShell({
                     </div>
                   )}
 
-                  <form
-                    action="/auth/signout"
-                    method="post"
-                    className="mt-2"
-                  >
+                  <form action="/auth/signout" method="post" className="mt-2">
                     <button
                       type="submit"
                       className="w-full rounded-xl border border-red-100 bg-white px-3 py-2.5 text-xs font-semibold text-red-700 transition hover:bg-red-50"
@@ -441,9 +505,7 @@ export default function CustomerShell({
             )}
           </header>
 
-          <div className="pb-10 lg:pb-0">
-            {children}
-          </div>
+          <div className="pb-10 lg:pb-0">{children}</div>
         </div>
       </div>
     </div>

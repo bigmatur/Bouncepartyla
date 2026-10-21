@@ -16,7 +16,13 @@ export default function MarkInternalConversationRead({
       return;
     }
 
-    void markMyInternalConversationReadAction(conversationId);
+    void markMyInternalConversationReadAction(conversationId)
+      .then(() => {
+        window.dispatchEvent(new Event("account-messages-read"));
+      })
+      .catch((error: unknown) => {
+        console.error("Failed to mark internal messages as read", error);
+      });
   }, [conversationId, unreadCount]);
 
   return null;
