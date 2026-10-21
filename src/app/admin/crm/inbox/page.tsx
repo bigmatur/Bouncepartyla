@@ -928,7 +928,10 @@ export default async function CrmInboxPage({
     .trim()
     .toLowerCase();
 
-  const replyChannel = selectedConversationScope === "internal"
+  const isInternalConversation =
+    selectedConversationScope === "internal";
+
+  const replyChannel = isInternalConversation
     ? "internal"
     : String(
         latestInbound?.channel ||
@@ -938,12 +941,11 @@ export default async function CrmInboxPage({
         .trim()
         .toLowerCase();
 
-  const canReply = [
+  const canReply = isInternalConversation || [
     "sms",
     "email",
     "instagram",
     "whatsapp",
-    "internal",
   ].includes(
     replyChannel,
   );

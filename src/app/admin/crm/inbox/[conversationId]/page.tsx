@@ -133,7 +133,10 @@ export default async function CrmConversationPage({
     .trim()
     .toLowerCase();
 
-  const replyChannel = conversationScope === "internal"
+  const isInternalConversation =
+    conversationScope === "internal";
+
+  const replyChannel = isInternalConversation
     ? "internal"
     : String(
         latestInbound?.channel || conversation.data.last_channel || "",
@@ -141,7 +144,7 @@ export default async function CrmConversationPage({
         .trim()
         .toLowerCase();
 
-  const canReply = ["sms", "email", "instagram", "whatsapp", "internal"].includes(replyChannel);
+  const canReply = isInternalConversation || ["sms", "email", "instagram", "whatsapp"].includes(replyChannel);
   const isClosed = conversation.data.status === "closed";
 
   return (
