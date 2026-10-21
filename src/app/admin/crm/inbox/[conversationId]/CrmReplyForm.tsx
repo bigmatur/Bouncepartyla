@@ -33,6 +33,10 @@ const ACCEPT =
 function replyPlaceholder(
   channel: string,
 ) {
+  if (channel === "internal") {
+    return "Write an internal reply…";
+  }
+
   if (channel === "sms") {
     return "Write an SMS reply…";
   }
@@ -51,6 +55,10 @@ function replyPlaceholder(
 function replyButtonLabel(
   channel: string,
 ) {
+  if (channel === "internal") {
+    return "Send internal reply";
+  }
+
   if (channel === "sms") {
     return "Send SMS";
   }
@@ -95,9 +103,94 @@ export default function CrmReplyForm({
   const [phase, setPhase] = useState<
     "idle" | "uploading" | "sending"
   >("idle");
+  const pendingClientMessageIdRef = useRef<string | null>(null);
+  const pendingUploadedAttachmentsRef = useRef<CrmAttachment[] | null>(null);
+  const pendingBodyRef = useRef<string | null>(null);
+  const pendingFilesFingerprintRef = useRef<string | null>(null);
+  const isInternalReply = replyChannel === "internal";
 
   const [error, setError] =
     useState("");
+
+  function buildFilesFingerprint(nextFiles: LocalFile[]) {
+    return nextFiles
+      .map((item) => `${item.file.name}:${item.file.size}:${item.file.lastModified}:${item.file.type}`)
+      .sort()
+      .join("|");
+  }
+
+  function resetPendingSendState() {
+    pendingClientMessageIdRef.current = null;
+    pendingUploadedAttachmentsRef.current = null;
+    pendingBodyRef.current = null;
+    pendingFilesFingerprintRef.current = null;
+  }
+
+  async function cleanupPendingInternalAttachments(attachments: CrmAttachment[]) {
+    if (!isInternalReply || attachments.length === 0) {
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        "/api/crm/attachments/cleanup",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            conversationId,
+            replyChannel,
+            attachments,
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        console.error(
+          "Admin internal attachment cleanup request failed while invalidating pending send state.",
+        );
+      }
+    } catch {
+      console.error(
+        "Admin internal attachment cleanup failed while invalidating pending send state.",
+      );
+    }
+  }
+
+  function invalidatePendingIfChanged(nextBody: string, nextFiles: LocalFile[]) {
+    if (!isInternalReply) {
+      resetPendingSendState();
+      return;
+    }
+
+    const pendingBody = pendingBodyRef.current;
+    const pendingAttachments = pendingUploadedAttachmentsRef.current;
+    const pendingFilesFingerprint = pendingFilesFingerprintRef.current;
+
+    if (pendingBody === null && pendingAttachments === null) {
+      return;
+    }
+
+    if (pendingBody !== nextBody) {
+      resetPendingSendState();
+
+      if (pendingAttachments && pendingAttachments.length > 0) {
+        void cleanupPendingInternalAttachments(pendingAttachments);
+      }
+
+      return;
+    }
+
+    if (pendingFilesFingerprint !== buildFilesFingerprint(nextFiles)) {
+      resetPendingSendState();
+
+      if (pendingAttachments && pendingAttachments.length > 0) {
+        void cleanupPendingInternalAttachments(pendingAttachments);
+      }
+    }
+  }
 
   useEffect(() => {
     return () => {
@@ -235,6 +328,10 @@ export default function CrmReplyForm({
         ...accepted,
       ],
     );
+    invalidatePendingIfChanged(
+      String(textareaRef.current?.value || "").trim(),
+      [...files, ...accepted],
+    );
 
     if (inputRef.current) {
       inputRef.current.value =
@@ -245,26 +342,26 @@ export default function CrmReplyForm({
   function removeLocalFile(
     id: string,
   ) {
-    setFiles((current) => {
-      const removed =
-        current.find(
-          (item) =>
-            item.id === id,
-        );
+    const removed = files.find(
+      (item) => item.id === id,
+    );
 
-      if (
-        removed?.previewUrl
-      ) {
-        URL.revokeObjectURL(
-          removed.previewUrl,
-        );
-      }
-
-      return current.filter(
-        (item) =>
-          item.id !== id,
+    if (removed?.previewUrl) {
+      URL.revokeObjectURL(
+        removed.previewUrl,
       );
-    });
+    }
+
+    const next = files.filter(
+      (item) => item.id !== id,
+    );
+
+    setFiles(next);
+
+    invalidatePendingIfChanged(
+      String(textareaRef.current?.value || "").trim(),
+      next,
+    );
   }
 
   async function uploadFiles(): Promise<
@@ -273,49 +370,86 @@ export default function CrmReplyForm({
     const uploaded:
       CrmAttachment[] = [];
 
-    for (const item of files) {
-      const payload =
-        new FormData();
+    try {
+      for (const item of files) {
+        const payload =
+          new FormData();
 
-      payload.set(
-        "conversationId",
-        conversationId,
-      );
-
-      payload.set(
-        "file",
-        item.file,
-      );
-
-      const response =
-        await fetch(
-          "/api/crm/attachments/upload",
-          {
-            method: "POST",
-            body: payload,
-          },
+        payload.set(
+          "conversationId",
+          conversationId,
         );
 
-      const json =
-        await response
-          .json()
-          .catch(() => ({}));
+        payload.set(
+          "file",
+          item.file,
+        );
 
-      if (
-        !response.ok ||
-        !json?.attachment
-      ) {
-        throw new Error(
-          String(
-            json?.error ||
-              `Could not upload ${item.file.name}.`,
-          ),
+        const response =
+          await fetch(
+            "/api/crm/attachments/upload",
+            {
+              method: "POST",
+              body: payload,
+            },
+          );
+
+        const json =
+          await response
+            .json()
+            .catch(() => ({}));
+
+        if (
+          !response.ok ||
+          !json?.attachment
+        ) {
+          throw new Error(
+            String(
+              json?.error ||
+                `Could not upload ${item.file.name}.`,
+            ),
+          );
+        }
+
+        uploaded.push(
+          json.attachment as CrmAttachment,
         );
       }
+    } catch (error) {
+      if (
+        replyChannel === "internal" &&
+        uploaded.length > 0
+      ) {
+        try {
+          const cleanupResponse = await fetch(
+            "/api/crm/attachments/cleanup",
+            {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+              },
+              body: JSON.stringify({
+                conversationId,
+                replyChannel,
+                attachments: uploaded,
+              }),
+            },
+          );
 
-      uploaded.push(
-        json.attachment as CrmAttachment,
-      );
+          if (!cleanupResponse.ok) {
+            console.error(
+              "Admin internal attachment cleanup request failed after upload error.",
+            );
+          }
+        } catch (cleanupError) {
+          console.error(
+            "Admin internal attachment cleanup failed after upload error.",
+            cleanupError,
+          );
+        }
+      }
+
+      throw error;
     }
 
     return uploaded;
@@ -344,6 +478,12 @@ export default function CrmReplyForm({
       ) || "",
     ).trim();
 
+    if (isInternalReply) {
+      invalidatePendingIfChanged(body, files);
+    } else {
+      resetPendingSendState();
+    }
+
     if (
       !body &&
       files.length === 0
@@ -358,16 +498,33 @@ export default function CrmReplyForm({
     }
 
     try {
-      let attachments:
-        CrmAttachment[] = [];
+      const clientMessageId = isInternalReply
+        ? (pendingClientMessageIdRef.current || crypto.randomUUID())
+        : crypto.randomUUID();
 
-      if (files.length > 0) {
+      if (isInternalReply) {
+        pendingClientMessageIdRef.current = clientMessageId;
+        pendingBodyRef.current = body;
+        pendingFilesFingerprintRef.current = buildFilesFingerprint(files);
+      }
+
+      let attachments:
+        CrmAttachment[] =
+          isInternalReply
+            ? (pendingUploadedAttachmentsRef.current || [])
+            : [];
+
+      if (files.length > 0 && attachments.length === 0) {
         setPhase(
           "uploading",
         );
 
         attachments =
           await uploadFiles();
+
+        if (isInternalReply) {
+          pendingUploadedAttachmentsRef.current = attachments;
+        }
       }
 
       setPhase(
@@ -399,9 +556,16 @@ export default function CrmReplyForm({
         ),
       );
 
+      actionData.set(
+        "clientMessageId",
+        clientMessageId,
+      );
+
       await action(
         actionData,
       );
+
+      resetPendingSendState();
 
       formRef.current?.reset();
 
@@ -574,6 +738,12 @@ export default function CrmReplyForm({
             replyChannel,
           )}
           disabled={pending}
+          onChange={(event) => {
+            invalidatePendingIfChanged(
+              event.currentTarget.value.trim(),
+              files,
+            );
+          }}
           onInput={(event) =>
             resizeTextarea(
               event.currentTarget,

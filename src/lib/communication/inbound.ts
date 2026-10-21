@@ -452,7 +452,8 @@ async function resolveConversation(
     supabase
       .from("crm_conversations")
       .select("id")
-      .eq("status", "open");
+      .eq("status", "open")
+      .neq("conversation_scope", "internal");
 
   if (owner.customer_id) {
     query = query.eq(
@@ -524,6 +525,9 @@ async function resolveConversation(
 
         unread_count:
           0,
+
+        conversation_scope:
+          "external",
 
         last_channel:
           params.channel,

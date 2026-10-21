@@ -49,7 +49,7 @@ export async function simulateCrmInstagramInboundAction(
 export async function replyToCrmConversationAction(
   formData: FormData,
 ) {
-  await requireAdminPermission("customers.edit");
+  const { supabase } = await requireAdminPermission("customers.edit");
 
   const conversationId = String(
     formData.get("conversationId") || "",
@@ -59,6 +59,9 @@ export async function replyToCrmConversationAction(
   const attachmentsJson = String(
     formData.get("attachmentsJson") || "[]",
   );
+  const clientMessageId = String(
+    formData.get("clientMessageId") || "",
+  ).trim();
 
   let rawAttachments: unknown = [];
 
@@ -75,18 +78,64 @@ export async function replyToCrmConversationAction(
     throw new Error("Message or attachment is required.");
   }
 
+  const conversationResult = await supabase
+    .from("crm_conversations")
+    .select("id, conversation_scope")
+    .eq("id", conversationId)
+    .maybeSingle();
+
+  if (conversationResult.error) {
+    throw new Error(conversationResult.error.message);
+  }
+
+  if (!conversationResult.data?.id) {
+    throw new Error("Conversation not found.");
+  }
+
+  const conversationScope = String(
+    conversationResult.data.conversation_scope || "external",
+  ).trim().toLowerCase();
+
   try {
-    await sendCrmConversationReply({
-      conversationId,
-      body,
-      attachments,
-    });
+    if (conversationScope === "internal") {
+      if (!clientMessageId) {
+        throw new Error("Missing client message id.");
+      }
+
+      const isValidClientMessageId =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          clientMessageId,
+        );
+
+      if (!isValidClientMessageId) {
+        throw new Error("Client message id must be a valid UUID.");
+      }
+
+      const rpcResult = await supabase.rpc("admin_reply_internal_conversation", {
+        p_conversation_id: conversationId,
+        p_client_message_id: clientMessageId,
+        p_body: body,
+        p_attachments: attachments,
+      });
+
+      if (rpcResult.error) {
+        throw new Error(rpcResult.error.message);
+      }
+    } else {
+      await sendCrmConversationReply({
+        conversationId,
+        body,
+        attachments,
+      });
+    }
   } catch (error) {
     if (attachments.length > 0) {
-      await removeCrmAttachments({
-        conversationId,
-        attachments,
-      }).catch(() => undefined);
+      if (conversationScope !== "internal") {
+        await removeCrmAttachments({
+          conversationId,
+          attachments,
+        }).catch(() => undefined);
+      }
     }
 
     throw error;
@@ -109,6 +158,38 @@ export async function markCrmConversationReadAction(
   }
 
   const now = new Date().toISOString();
+
+  const conversationResult = await supabase
+    .from("crm_conversations")
+    .select("id, conversation_scope")
+    .eq("id", safeConversationId)
+    .maybeSingle();
+
+  if (conversationResult.error) {
+    throw new Error(conversationResult.error.message);
+  }
+
+  if (!conversationResult.data?.id) {
+    throw new Error("Conversation not found.");
+  }
+
+  const conversationScope = String(
+    conversationResult.data.conversation_scope || "external",
+  ).trim().toLowerCase();
+
+  if (conversationScope === "internal") {
+    const rpcResult = await supabase.rpc("admin_mark_internal_conversation_read", {
+      p_conversation_id: safeConversationId,
+    });
+
+    if (rpcResult.error) {
+      throw new Error(rpcResult.error.message);
+    }
+
+    revalidatePath("/admin/crm/inbox");
+    revalidatePath(`/admin/crm/inbox/${safeConversationId}`);
+    return;
+  }
 
   const result = await supabase
     .from("crm_conversations")

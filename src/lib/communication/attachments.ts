@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 import { createServiceClient } from "@/lib/supabase/service";
 import type {
   CrmAttachment,
@@ -234,6 +236,93 @@ export async function removeCrmAttachments(params: {
         (item) => item.storagePath,
       ),
     );
+}
+
+export async function removeInternalCrmAttachmentsSafely(params: {
+  supabase: SupabaseClient;
+  conversationId: string;
+  attachments: CrmAttachment[];
+}) {
+  if (params.attachments.length === 0) {
+    return;
+  }
+
+  for (const attachment of params.attachments) {
+    assertConversationStoragePath(
+      params.conversationId,
+      attachment.storagePath,
+    );
+  }
+
+  const authenticatedSupabase = params.supabase;
+  const serviceSupabase = createServiceClient();
+  const storagePaths = Array.from(
+    new Set(
+      params.attachments
+        .map((item) => String(item.storagePath || "").trim())
+        .filter(Boolean),
+    ),
+  );
+
+  for (const storagePath of storagePaths) {
+    const deletionToken = crypto.randomUUID();
+
+    const markResult = await authenticatedSupabase.rpc(
+      "safe_remove_internal_upload_attachments",
+      {
+        p_conversation_id: params.conversationId,
+        p_storage_paths: [storagePath],
+        p_deletion_token: deletionToken,
+      },
+    );
+
+    if (markResult.error) {
+      throw new Error(markResult.error.message);
+    }
+
+    const payload =
+      markResult.data && typeof markResult.data === "object"
+        ? (markResult.data as {
+            deletion_token?: string;
+            storage_paths?: unknown;
+          })
+        : null;
+
+    const removablePaths = Array.isArray(payload?.storage_paths)
+      ? payload!.storage_paths
+          .map((item) => String(item || "").trim())
+          .filter((item) => item === storagePath)
+      : [];
+
+    const approvedDeletionToken = String(
+      payload?.deletion_token || deletionToken,
+    ).trim();
+
+    if (removablePaths.length === 0) {
+      continue;
+    }
+
+    const removeResult = await serviceSupabase.storage
+      .from(CRM_ATTACHMENT_BUCKET)
+      .remove(removablePaths);
+
+    if (removeResult.error) {
+      throw new Error(removeResult.error.message);
+    }
+
+    const finalizeResult = await authenticatedSupabase.rpc(
+      "finalize_internal_upload_attachments_deletion",
+      {
+        p_conversation_id: params.conversationId,
+        p_storage_paths: removablePaths,
+        p_deletion_token: approvedDeletionToken,
+      },
+    );
+
+    if (finalizeResult.error) {
+      throw new Error(finalizeResult.error.message);
+    }
+  }
 }
 
 export function parseCrmAttachments(

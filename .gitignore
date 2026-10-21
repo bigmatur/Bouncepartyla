@@ -52,3 +52,6 @@ apps/staff-mobile/android/
 
 # Local Netlify folder
 .netlify
+
+# Local Next.js build backups
+.next.backup.*/

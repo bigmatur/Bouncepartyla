@@ -89,6 +89,7 @@ function channelLabel(
   if (normalized === "sms") return "SMS";
   if (normalized === "email") return "EMAIL";
   if (normalized === "whatsapp") return "WHATSAPP";
+  if (normalized === "internal") return "INTERNAL";
 
   return normalized
     ? normalized.toUpperCase()
@@ -239,6 +240,7 @@ export default async function CrmInboxPage({
     .from("crm_conversations")
     .select(`
       id,
+      conversation_scope,
       subject,
       status,
       priority,
@@ -539,6 +541,7 @@ export default async function CrmInboxPage({
         .from("crm_conversations")
         .select(`
           id,
+          conversation_scope,
           subject,
           status,
           priority,
@@ -919,20 +922,28 @@ export default async function CrmInboxPage({
           ),
       );
 
-  const replyChannel =
-    String(
-      latestInbound?.channel ||
-        selectedConversation?.last_channel ||
-        "",
-    )
-      .trim()
-      .toLowerCase();
+  const selectedConversationScope = String(
+    selectedConversation?.conversation_scope || "external",
+  )
+    .trim()
+    .toLowerCase();
+
+  const replyChannel = selectedConversationScope === "internal"
+    ? "internal"
+    : String(
+        latestInbound?.channel ||
+          selectedConversation?.last_channel ||
+          "",
+      )
+        .trim()
+        .toLowerCase();
 
   const canReply = [
     "sms",
     "email",
     "instagram",
     "whatsapp",
+    "internal",
   ].includes(
     replyChannel,
   );
@@ -1749,6 +1760,7 @@ export default async function CrmInboxPage({
     {selectedConversation.status !== "closed" &&
       canReply && (
         <CrmReplyForm
+          key={selectedConversation.id}
           conversationId={
             selectedConversation.id
           }

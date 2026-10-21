@@ -32,6 +32,7 @@ function channelLabel(channel: string) {
   if (normalized === "email") return "Email";
   if (normalized === "instagram") return "Instagram";
   if (normalized === "whatsapp") return "WhatsApp";
+  if (normalized === "internal") return "Internal";
   return normalized || "CRM";
 }
 
@@ -46,7 +47,7 @@ export default async function CrmConversationPage({
   const conversation = await supabase
     .from("crm_conversations")
     .select(`
-      id, subject, status, priority, needs_reply, customer_id, lead_id, booking_id, last_channel,
+      id, subject, status, priority, needs_reply, customer_id, lead_id, booking_id, last_channel, conversation_scope,
       customers (id, full_name, phone, email),
       bookings (id, booking_number, event_date)
     `)
@@ -126,13 +127,21 @@ export default async function CrmConversationPage({
         ),
     );
 
-  const replyChannel = String(
-    latestInbound?.channel || conversation.data.last_channel || "",
+  const conversationScope = String(
+    conversation.data.conversation_scope || "external",
   )
     .trim()
     .toLowerCase();
 
-  const canReply = ["sms", "email", "instagram", "whatsapp"].includes(replyChannel);
+  const replyChannel = conversationScope === "internal"
+    ? "internal"
+    : String(
+        latestInbound?.channel || conversation.data.last_channel || "",
+      )
+        .trim()
+        .toLowerCase();
+
+  const canReply = ["sms", "email", "instagram", "whatsapp", "internal"].includes(replyChannel);
   const isClosed = conversation.data.status === "closed";
 
   return (
@@ -285,6 +294,7 @@ export default async function CrmConversationPage({
 
           {!isClosed && canReply && (
             <CrmReplyForm
+              key={conversationId}
               conversationId={conversationId}
               replyChannel={replyChannel}
               action={replyToCrmConversationAction}

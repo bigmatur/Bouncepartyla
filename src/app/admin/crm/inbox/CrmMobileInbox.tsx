@@ -472,6 +472,7 @@ useEffect(() => {
         {selected.status !== "closed" &&
           props.canReply && (
             <CrmReplyForm
+              key={selected.id}
               conversationId={selected.id}
               replyChannel={props.replyChannel}
               action={props.replyAction}
