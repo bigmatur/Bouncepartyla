@@ -1072,7 +1072,7 @@ export default async function CrmInboxPage({
         </details>
       )}
 
-      <section className="hidden overflow-hidden rounded-[28px] border border-[#ded7cd] bg-white shadow-[0_10px_35px_rgba(0,0,0,0.035)] lg:block">
+      <section className="hidden rounded-[28px] border border-[#ded7cd] bg-white shadow-[0_10px_35px_rgba(0,0,0,0.035)] lg:block">
         <div className="grid h-[clamp(640px,74vh,900px)] min-h-0 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[340px_minmax(0,1fr)_320px]">
           <aside className="flex min-h-0 flex-col border-b border-[#e7dfd4] bg-[#faf8f5] lg:border-b-0 lg:border-r">
             <div className="shrink-0 border-b border-[#e7dfd4] bg-white p-3">
