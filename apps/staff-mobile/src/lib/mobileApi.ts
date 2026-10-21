@@ -852,7 +852,8 @@ export async function loadDriverRouteWeatherFromMobile(date: string) {
 export type MobileDriverManualPaymentMethod =
   | "cash"
   | "zelle"
-  | "venmo";
+  | "venmo"
+  | "card";
 
 export type MobileDriverCollectPaymentResult = {
   stopId: string;

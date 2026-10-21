@@ -1,4 +1,5 @@
 import { supabase } from "../../lib/supabase";
+import * as FileSystem from "expo-file-system/legacy";
 import type { MobileRouteStop } from "./driverRoutes";
 
 export type MobileRouteStopStatus =
@@ -215,6 +216,8 @@ type DeleteMyRouteStopProofPhotoInput = {
   storagePath?: string | null;
 };
 
+const MAX_PROOF_PHOTO_BYTES = 4 * 1024 * 1024;
+
 function safePhotoFileName(value: string) {
   const clean = String(value || "driver-proof.jpg")
     .toLowerCase()
@@ -223,6 +226,56 @@ function safePhotoFileName(value: string) {
     .replace(/^-|-$/g, "");
 
   return clean || "driver-proof.jpg";
+}
+
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const chars =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+
+  const clean = base64.replace(/\s/g, "");
+
+  if (clean.length % 4 !== 0) {
+    throw new Error("Invalid image data.");
+  }
+
+  let outputLength = (clean.length / 4) * 3;
+
+  if (clean.endsWith("==")) {
+    outputLength -= 2;
+  } else if (clean.endsWith("=")) {
+    outputLength -= 1;
+  }
+
+  const output = new Uint8Array(outputLength);
+
+  let outIndex = 0;
+
+  for (let i = 0; i < clean.length; i += 4) {
+    const enc1 = chars.indexOf(clean[i]);
+    const enc2 = chars.indexOf(clean[i + 1]);
+    const enc3 = chars.indexOf(clean[i + 2]);
+    const enc4 = chars.indexOf(clean[i + 3]);
+
+    if (enc1 < 0 || enc2 < 0 || enc3 < 0 || enc4 < 0) {
+      throw new Error("Invalid image data.");
+    }
+
+    const chr1 = (enc1 << 2) | (enc2 >> 4);
+    const chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
+    const chr3 = ((enc3 & 3) << 6) | enc4;
+
+    output[outIndex++] = chr1;
+
+    if (enc3 !== 64 && outIndex < outputLength) {
+      output[outIndex++] = chr2;
+    }
+
+    if (enc4 !== 64 && outIndex < outputLength) {
+      output[outIndex++] = chr3;
+    }
+  }
+
+  return output.buffer;
 }
 
 export async function uploadMyRouteStopProofPhoto({
@@ -243,6 +296,18 @@ export async function uploadMyRouteStopProofPhoto({
 
   if (!uri) {
     throw new Error("Missing photo.");
+  }
+
+  const fileInfo = await FileSystem.getInfoAsync(uri);
+
+  if (
+    fileInfo.exists &&
+    typeof fileInfo.size === "number" &&
+    fileInfo.size > MAX_PROOF_PHOTO_BYTES
+  ) {
+    throw new Error(
+      "Photo is too large. Please choose a smaller image (up to 4 MB).",
+    );
   }
 
   const existingCountResult = await supabase
@@ -287,15 +352,27 @@ export async function uploadMyRouteStopProofPhoto({
       ? "pickup"
       : "delivery_setup";
 
-  const response = await fetch(uri);
+  const base64 =
+    await FileSystem.readAsStringAsync(uri, {
+      encoding:
+        FileSystem.EncodingType
+          .Base64,
+    });
 
-  if (!response.ok) {
+  if (!base64) {
     throw new Error(
       "Could not read the selected photo.",
     );
   }
 
-  const blob = await response.blob();
+  const fileBytes =
+    base64ToArrayBuffer(base64);
+
+  if (fileBytes.byteLength > MAX_PROOF_PHOTO_BYTES) {
+    throw new Error(
+      "Photo is too large. Please choose a smaller image (up to 4 MB).",
+    );
+  }
 
   const normalizedFileName = safePhotoFileName(
     fileName || `driver-proof-${Date.now()}.jpg`,
@@ -310,12 +387,11 @@ export async function uploadMyRouteStopProofPhoto({
 
   const uploadResult = await supabase.storage
     .from("booking-photos")
-    .upload(filePath, blob, {
+    .upload(filePath, fileBytes, {
       cacheControl: "3600",
       upsert: false,
       contentType:
         mimeType ||
-        blob.type ||
         "image/jpeg",
     });
 
@@ -331,25 +407,59 @@ export async function uploadMyRouteStopProofPhoto({
     const photoUrl =
       publicUrlResult.data.publicUrl;
 
-    const registerResult = await supabase.rpc(
-      "register_my_route_stop_proof_photo",
-      {
-        p_stop_id: stopId,
-        p_booking_id: bookingId,
-        p_photo_url: photoUrl,
-        p_storage_path: filePath,
-        p_caption:
-          caption?.trim() ||
-          `${
-            stopType === "pickup"
-              ? "Pickup"
-              : "Delivery"
-          } proof photo`,
-      },
-    );
+    const insertPayload: Record<string, unknown> = {
+      booking_id: bookingId,
+      route_stop_id: stopId,
+      photo_type: photoType,
+      photo_url: photoUrl,
+      storage_path: filePath,
+      caption:
+        caption?.trim() ||
+        `${
+          stopType === "pickup"
+            ? "Pickup"
+            : "Delivery"
+        } proof photo`,
+      taken_by: "Driver",
+      updated_at: new Date().toISOString(),
+    };
 
-    if (registerResult.error) {
-      throw new Error(registerResult.error.message);
+    let insertResult = await supabase
+      .from("booking_photos")
+      .insert(insertPayload);
+
+    if (
+      insertResult.error &&
+      /storage_path/i.test(
+        String(insertResult.error.message || ""),
+      )
+    ) {
+      const fallbackPayload = {
+        ...insertPayload,
+      };
+
+      delete fallbackPayload.storage_path;
+
+      insertResult = await supabase
+        .from("booking_photos")
+        .insert(fallbackPayload);
+    }
+
+    if (insertResult.error) {
+      throw new Error(insertResult.error.message);
+    }
+
+    const proofResult = await supabase
+      .from("route_stops")
+      .update({
+        proof_photo_uploaded: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", stopId)
+      .eq("booking_id", bookingId);
+
+    if (proofResult.error) {
+      throw new Error(proofResult.error.message);
     }
 
     return {

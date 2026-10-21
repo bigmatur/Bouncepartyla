@@ -232,6 +232,7 @@ type PaymentModalMethod =
 
 const ZELLE_QR_ASSET = require("../../assets/payments/zelle-qr.png");
 const VENMO_QR_ASSET = require("../../assets/payments/venmo-qr.png");
+const ZELLE_PHONE_NUMBER = "(747) 272-2603";
 
 function hasOpenShift(dashboard: StaffTimeDashboard | null) {
   return Boolean(
@@ -1260,7 +1261,7 @@ useEffect(() => {
                       .MediaTypeOptions
                       .Images,
                   allowsEditing: false,
-                  quality: 0.75,
+                  quality: 0.5,
                 },
               )
             : await ImagePicker.launchImageLibraryAsync(
@@ -1270,7 +1271,7 @@ useEffect(() => {
                       .MediaTypeOptions
                       .Images,
                   allowsEditing: false,
-                  quality: 0.75,
+                  quality: 0.5,
                   selectionLimit: 1,
                 },
               );
@@ -1490,13 +1491,6 @@ useEffect(() => {
         stopToolPending ||
         paymentModalBusy
       ) {
-        return;
-      }
-
-      if (paymentModalMethod === "card") {
-        setPaymentModalError(
-          "Card payment is coming in the next step.",
-        );
         return;
       }
 
@@ -3221,6 +3215,7 @@ useEffect(() => {
                 <>
                   <Text style={styles.paymentMethodBodyTitle}>Zelle</Text>
                   <Text style={styles.paymentMethodBodyCopy}>FANSOUNDS CORP</Text>
+                  <Text style={styles.paymentMethodBodyCopy}>Zelle phone: {ZELLE_PHONE_NUMBER}</Text>
                   <Text style={styles.paymentMethodBodyCopy}>
                     Amount due: {moneyText(activeStop?.balance_due || 0)}
                   </Text>
@@ -3261,7 +3256,7 @@ useEffect(() => {
                 <>
                   <Text style={styles.paymentMethodBodyTitle}>Card</Text>
                   <Text style={styles.paymentMethodBodyCopy}>
-                    Card payment is coming in the next step. Manual card marking is disabled in this phase.
+                    Accept the card payment in your card terminal, then confirm here only after funds are approved.
                   </Text>
                 </>
               ) : null}
@@ -3286,35 +3281,31 @@ useEffect(() => {
                 <Text style={styles.paymentSecondaryButtonText}>Close</Text>
               </Pressable>
 
-              {paymentModalMethod === "card" ? (
-                <View style={styles.paymentCardDisabledButton}>
-                  <Text style={styles.paymentCardDisabledButtonText}>Card payment coming next</Text>
-                </View>
-              ) : (
-                <Pressable
-                  disabled={paymentModalBusy}
-                  onPress={() => {
-                    void confirmManualPayment();
-                  }}
-                  style={({ pressed }) => [
-                    styles.paymentPrimaryButton,
-                    pressed ? styles.pressed : null,
-                    paymentModalBusy ? styles.disabledButton : null,
-                  ]}
-                >
-                  {paymentModalBusy ? (
-                    <ActivityIndicator size="small" color="#ffffff" />
-                  ) : (
-                    <Text style={styles.paymentPrimaryButtonText}>
-                      {paymentModalMethod === "cash"
-                        ? "Confirm cash received"
-                        : paymentModalMethod === "zelle"
-                          ? "Confirm Zelle received"
-                          : "Confirm Venmo received"}
-                    </Text>
-                  )}
-                </Pressable>
-              )}
+              <Pressable
+                disabled={paymentModalBusy}
+                onPress={() => {
+                  void confirmManualPayment();
+                }}
+                style={({ pressed }) => [
+                  styles.paymentPrimaryButton,
+                  pressed ? styles.pressed : null,
+                  paymentModalBusy ? styles.disabledButton : null,
+                ]}
+              >
+                {paymentModalBusy ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={styles.paymentPrimaryButtonText}>
+                    {paymentModalMethod === "cash"
+                      ? "Confirm cash received"
+                      : paymentModalMethod === "zelle"
+                        ? "Confirm Zelle received"
+                        : paymentModalMethod === "venmo"
+                          ? "Confirm Venmo received"
+                          : "Confirm card received"}
+                  </Text>
+                )}
+              </Pressable>
             </View>
           </View>
         </View>

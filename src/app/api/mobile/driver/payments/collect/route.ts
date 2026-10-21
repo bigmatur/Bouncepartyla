@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  enqueueStaffBookingNotification,
+  processNotificationQueueBestEffort,
+} from "@/lib/notifications/engine";
 
 export const dynamic = "force-dynamic";
 
-type AllowedManualMethod = "cash" | "zelle" | "venmo";
+type AllowedManualMethod = "cash" | "zelle" | "venmo" | "card";
 
 function unauthorized(message = "Unauthorized") {
   return NextResponse.json({ success: false, error: message }, { status: 401 });
@@ -16,7 +20,7 @@ function forbidden(message = "Access denied") {
 function parseManualMethod(value: unknown): AllowedManualMethod | null {
   const method = String(value || "").trim().toLowerCase();
 
-  if (method === "cash" || method === "zelle" || method === "venmo") {
+  if (method === "cash" || method === "zelle" || method === "venmo" || method === "card") {
     return method;
   }
 
@@ -119,7 +123,7 @@ export async function POST(request: Request) {
 
   if (!method) {
     return NextResponse.json(
-      { success: false, error: "Only Cash, Zelle, and Venmo are supported in this step." },
+      { success: false, error: "Only Cash, Zelle, Venmo, and Card are supported in this step." },
       { status: 400 },
     );
   }
@@ -268,6 +272,65 @@ export async function POST(request: Request) {
     const reportedAt = String(
       operationalData?.payment_collected_at || new Date().toISOString(),
     );
+
+    const amountForNotification = Number.isFinite(amountReported)
+      ? Number(amountReported.toFixed(2))
+      : Number(authoritativeBalance.toFixed(2));
+
+    const paymentMethodLabel = String(method || "").trim().toLowerCase();
+    const paymentMethodDisplay = paymentMethodLabel
+      ? paymentMethodLabel.charAt(0).toUpperCase() + paymentMethodLabel.slice(1)
+      : "Payment";
+
+    try {
+      await Promise.all([
+        enqueueStaffBookingNotification({
+          eventCode: "payment_received",
+          bookingId,
+          recipientRole: "admin",
+          dedupeSuffix: `driver-${stopId}`,
+          payload: {
+            payment_amount: amountForNotification,
+            payment_method: paymentMethodDisplay,
+            payment_collected_method: paymentMethodLabel,
+            payment_collected_by: "driver",
+            route_stop_id: stopId,
+            reported_at: reportedAt,
+            action_url: `/admin/bookings/${bookingId}`,
+          },
+        }),
+        enqueueStaffBookingNotification({
+          eventCode: "payment_received",
+          bookingId,
+          recipientRole: "manager",
+          dedupeSuffix: `driver-${stopId}`,
+          payload: {
+            payment_amount: amountForNotification,
+            payment_method: paymentMethodDisplay,
+            payment_collected_method: paymentMethodLabel,
+            payment_collected_by: "driver",
+            route_stop_id: stopId,
+            reported_at: reportedAt,
+            action_url: `/admin/bookings/${bookingId}`,
+          },
+        }),
+      ]);
+
+      await processNotificationQueueBestEffort({
+        bookingId,
+        limit: 20,
+      });
+    } catch (notificationError) {
+      console.error("Driver payment notification enqueue failed", {
+        stopId,
+        bookingId,
+        method,
+        error:
+          notificationError instanceof Error
+            ? notificationError.message
+            : String(notificationError),
+      });
+    }
 
     return NextResponse.json({
       success: true,
