@@ -24,6 +24,59 @@ type ExpectedChecklistRow = {
   sort_order: number;
 };
 
+type ReservationGroup = {
+  booking_item_id: string | null;
+  inventory_item_id: string | null;
+  inventory_unit_id: string | null;
+  title: string;
+  quantity: number;
+  sort_order_seed: number;
+  key: string;
+};
+
+type ChecklistConflict = {
+  key: string;
+  reason: "fractional_quantity" | "protected_operational_row";
+  message: string;
+};
+
+export function warnOnChecklistReconciliationConflicts(params: {
+  bookingId: string;
+  conflicts: ChecklistConflict[];
+}) {
+  const { bookingId, conflicts } = params;
+
+  if (!Array.isArray(conflicts) || conflicts.length === 0) {
+    return false;
+  }
+
+  console.warn("Checklist reconciliation conflicts after booking edit", {
+    bookingId,
+    conflictCount: conflicts.length,
+    conflicts: conflicts.map((conflict) => ({
+      key: conflict.key,
+      reason: conflict.reason,
+      message: conflict.message,
+    })),
+  });
+
+  return true;
+}
+
+type FractionalConflictIdentity = {
+  inventory_unit_id: string | null;
+  booking_item_id: string | null;
+  inventory_item_id: string | null;
+};
+
+const ACTIVE_RESERVATION_STATUSES = new Set([
+  "reserved",
+  "picked",
+  "loaded",
+  "delivered",
+  "installed",
+]);
+
 function safeText(value: unknown) {
   return String(value || "").trim();
 }
@@ -37,6 +90,37 @@ function safeInt(value: unknown, fallback = 0) {
   return Math.round(parsed);
 }
 
+function safeQuantity(value: unknown, fallback = 0) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  if (parsed <= 0) {
+    return 0;
+  }
+
+  return parsed;
+}
+
+function hasOperationalEvidence(row: any) {
+  return Boolean(
+    row?.loaded ||
+    row?.installed ||
+    row?.picked_up ||
+    row?.returned ||
+    row?.needs_cleaning ||
+    row?.damaged ||
+    row?.missing ||
+    row?.loaded_at ||
+    row?.installed_at ||
+    row?.picked_up_at ||
+    row?.returned_at ||
+    safeText(row?.checked_by) ||
+    safeText(row?.notes),
+  );
+}
+
 function isMissingTableError(error: any) {
   const message = String(error?.message || "").toLowerCase();
   const code = String(error?.code || "").toLowerCase();
@@ -46,6 +130,16 @@ function isMissingTableError(error: any) {
     message.includes("could not find the table") ||
     message.includes("schema cache") ||
     message.includes("relation")
+  );
+}
+
+function isMissingFunctionError(error: any, functionName: string) {
+  const message = String(error?.message || "").toLowerCase();
+  const code = String(error?.code || "").toLowerCase();
+
+  return (
+    code === "42883" ||
+    message.includes("function") && message.includes("does not exist") && message.includes(functionName.toLowerCase())
   );
 }
 
@@ -166,6 +260,7 @@ export async function reconcileBookingChecklistFromCurrentState(params: {
         `
         id,
         booking_item_id,
+        status,
         quantity,
         inventory_item_id,
         inventory_unit_id,
@@ -233,6 +328,9 @@ export async function reconcileBookingChecklistFromCurrentState(params: {
   }
 
   const expected: ExpectedChecklistRow[] = [];
+  const conflicts: ChecklistConflict[] = [];
+  const fractionalConflictKeys = new Set<string>();
+  const fractionalConflictIdentities: FractionalConflictIdentity[] = [];
   let sortOrder = 100;
 
   for (const item of itemsResult.data || []) {
@@ -257,7 +355,15 @@ export async function reconcileBookingChecklistFromCurrentState(params: {
     sortOrder += 10;
   }
 
+  const reservationGroupByKey = new Map<string, ReservationGroup>();
+
   for (const reservation of reservationsResult.data || []) {
+    const reservationStatus = safeText((reservation as any)?.status).toLowerCase();
+
+    if (!ACTIVE_RESERVATION_STATUSES.has(reservationStatus)) {
+      continue;
+    }
+
     const inventoryItem = Array.isArray((reservation as any).inventory_items)
       ? (reservation as any).inventory_items[0]
       : (reservation as any).inventory_items;
@@ -266,26 +372,87 @@ export async function reconcileBookingChecklistFromCurrentState(params: {
       ? (reservation as any).inventory_units[0]
       : (reservation as any).inventory_units;
 
+    const bookingItemId = safeText((reservation as any).booking_item_id) || null;
+    const inventoryItemId =
+      safeText((reservation as any).inventory_item_id || inventoryItem?.id) || null;
+    const inventoryUnitId =
+      safeText((reservation as any).inventory_unit_id || inventoryUnit?.id) || null;
+
     const itemName = safeText(inventoryItem?.name) || "Inventory item";
     const unitCode = safeText(inventoryUnit?.unit_code || inventoryUnit?.serial_number);
+    const title = inventoryUnitId && unitCode ? `${itemName} — ${unitCode}` : itemName;
+    const quantity = safeQuantity((reservation as any).quantity, 1) || 1;
+
+    const groupKey = inventoryUnitId
+      ? `unit:${inventoryUnitId}`
+      : `item:${bookingItemId || "none"}:${inventoryItemId || "none"}`;
+
+    const existingGroup = reservationGroupByKey.get(groupKey);
+
+    if (!existingGroup) {
+      reservationGroupByKey.set(groupKey, {
+        booking_item_id: bookingItemId,
+        inventory_item_id: inventoryItemId,
+        inventory_unit_id: inventoryUnitId,
+        title,
+        quantity,
+        sort_order_seed: sortOrder,
+        key: groupKey,
+      });
+      sortOrder += 10;
+      continue;
+    }
+
+    existingGroup.quantity += quantity;
+    if (!existingGroup.inventory_unit_id) {
+      existingGroup.title = title;
+    }
+  }
+
+  for (const grouped of reservationGroupByKey.values()) {
+    if (!Number.isInteger(grouped.quantity)) {
+      const conflictRow: ExpectedChecklistRow = {
+        source: "inventory_reservation",
+        booking_item_id: grouped.booking_item_id,
+        inventory_item_id: grouped.inventory_item_id,
+        inventory_unit_id: grouped.inventory_unit_id,
+        title: grouped.title,
+        item_type: "component",
+        quantity: 0,
+        sort_order: grouped.sort_order_seed,
+        key: "",
+      };
+      conflictRow.key = checklistKeyForExpected(conflictRow);
+
+      fractionalConflictKeys.add(conflictRow.key);
+      fractionalConflictIdentities.push({
+        booking_item_id: grouped.booking_item_id,
+        inventory_item_id: grouped.inventory_item_id,
+        inventory_unit_id: grouped.inventory_unit_id,
+      });
+
+      conflicts.push({
+        key: conflictRow.key,
+        reason: "fractional_quantity",
+        message: `Unsupported fractional reservation quantity (${grouped.quantity}) for ${conflictRow.key}`,
+      });
+      continue;
+    }
 
     const row: ExpectedChecklistRow = {
       source: "inventory_reservation",
-      booking_item_id: safeText((reservation as any).booking_item_id) || null,
-      inventory_item_id:
-        safeText((reservation as any).inventory_item_id || inventoryItem?.id) || null,
-      inventory_unit_id:
-        safeText((reservation as any).inventory_unit_id || inventoryUnit?.id) || null,
-      title: unitCode ? `${itemName} — ${unitCode}` : itemName,
+      booking_item_id: grouped.booking_item_id,
+      inventory_item_id: grouped.inventory_item_id,
+      inventory_unit_id: grouped.inventory_unit_id,
+      title: grouped.title,
       item_type: "component",
-      quantity: Math.max(1, safeInt((reservation as any).quantity, 1)),
-      sort_order: sortOrder,
+      quantity: Math.max(1, safeInt(grouped.quantity, 1)),
+      sort_order: grouped.sort_order_seed,
       key: "",
     };
 
     row.key = checklistKeyForExpected(row);
     expected.push(row);
-    sortOrder += 10;
   }
 
   const expectedNoUnitCountByInventoryItemId = new Map<string, number>();
@@ -387,6 +554,28 @@ export async function reconcileBookingChecklistFromCurrentState(params: {
     }
 
     const nextData: Record<string, any> = {};
+    const existingHasOperationalEvidence = hasOperationalEvidence(existing);
+
+    if (
+      existingHasOperationalEvidence &&
+      (
+        safeText(existing.title) !== row.title ||
+        safeText(existing.item_type) !== row.item_type ||
+        safeText(existing.source) !== row.source ||
+        safeText(existing.booking_item_id) !== safeText(row.booking_item_id) ||
+        safeText(existing.inventory_item_id) !== safeText(row.inventory_item_id) ||
+        safeText(existing.inventory_unit_id) !== safeText(row.inventory_unit_id) ||
+        safeInt(existing.quantity, 1) !== row.quantity
+      )
+    ) {
+      conflicts.push({
+        key: row.key,
+        reason: "protected_operational_row",
+        message: `Preserved actioned checklist row ${safeText(existing.id)}; skipped identity/quantity rewrite.`,
+      });
+      preserved += 1;
+      continue;
+    }
 
     if (safeText(existing.title) !== row.title) {
       nextData.title = row.title;
@@ -433,7 +622,54 @@ export async function reconcileBookingChecklistFromCurrentState(params: {
 
   const staleIds = existingAutoRows
     .map((row) => safeText(row.id))
-    .filter((id) => id && !usedExistingIds.has(id));
+    .filter((id) => {
+      if (!id || usedExistingIds.has(id)) {
+        return false;
+      }
+
+      const row = existingAutoRows.find((item) => safeText(item.id) === id);
+
+      if (!row) {
+        return false;
+      }
+
+      const rowKeys = checklistKeysForExistingAuto(row);
+      const matchedFractionalConflict = rowKeys.some((key) =>
+        fractionalConflictKeys.has(key),
+      ) || fractionalConflictIdentities.some((identity) => {
+        if (safeText(row?.source) !== "inventory_reservation") {
+          return false;
+        }
+
+        const rowInventoryUnitId = safeText(row?.inventory_unit_id) || null;
+        const rowBookingItemId = safeText(row?.booking_item_id) || null;
+        const rowInventoryItemId = safeText(row?.inventory_item_id) || null;
+
+        if (identity.inventory_unit_id) {
+          return rowInventoryUnitId === identity.inventory_unit_id;
+        }
+
+        return (
+          !rowInventoryUnitId &&
+          rowBookingItemId === (identity.booking_item_id || null) &&
+          rowInventoryItemId === (identity.inventory_item_id || null)
+        );
+      });
+
+      if (matchedFractionalConflict) {
+        preserved += 1;
+        return false;
+      }
+
+      const hasOperationalState = hasOperationalEvidence(row);
+
+      if (hasOperationalState) {
+        preserved += 1;
+        return false;
+      }
+
+      return true;
+    });
 
   for (const update of updates) {
     const updateResult = await supabase
@@ -476,6 +712,7 @@ export async function reconcileBookingChecklistFromCurrentState(params: {
     updated: updates.length,
     preserved,
     deleted: staleIds.length,
+    conflicts,
   };
 }
 
@@ -593,5 +830,45 @@ export async function reconcileBookingOperationalEquipment(params: {
     checklist,
     routeSummary,
     handover,
+  };
+}
+
+export async function initializeBookingChecklistFromReservationsInsertOnly(params: {
+  supabase: SupabaseClientLike;
+  bookingId: string;
+}) {
+  const { supabase, bookingId } = params;
+
+  const rpcResult = await supabase.rpc("initialize_booking_checklist_items_insert_only", {
+    p_booking_id: bookingId,
+  });
+
+  if (rpcResult.error) {
+    if (
+      isMissingFunctionError(
+        rpcResult.error,
+        "initialize_booking_checklist_items_insert_only",
+      )
+    ) {
+      return {
+        status: "unavailable" as const,
+      };
+    }
+
+    throw new Error(rpcResult.error.message);
+  }
+
+  const payload = Array.isArray(rpcResult.data)
+    ? rpcResult.data[0]
+    : rpcResult.data;
+
+  const payloadSuccess =
+    payload &&
+    typeof payload === "object" &&
+    (payload as any).success === true;
+
+  return {
+    status: payloadSuccess ? "ok" as const : "failed" as const,
+    payload,
   };
 }

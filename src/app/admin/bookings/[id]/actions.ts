@@ -9,6 +9,7 @@ import { verifyBookingDiscountPassword } from "@/lib/booking/discount-password";
 import { addBookingPaymentCore } from "@/lib/booking/admin-booking-payment";
 import { updateBookingDiscountCore } from "@/lib/booking/admin-booking-discount";
 import {
+  warnOnChecklistReconciliationConflicts,
   reconcileBookingChecklistFromCurrentState,
   refreshUnsignedHandoverSnapshotForBooking,
   syncRouteStopItemsSummaryFromCurrentBooking,
@@ -1798,10 +1799,19 @@ export async function updateBookingItemsAction(formData: FormData) {
 
   if (inventoryRebuildComplete) {
     try {
-      await reconcileBookingChecklistFromCurrentState({
+      const checklistReconcileResult = await reconcileBookingChecklistFromCurrentState({
         supabase,
         bookingId,
       });
+
+      if (
+        warnOnChecklistReconciliationConflicts({
+          bookingId,
+          conflicts: checklistReconcileResult.conflicts,
+        })
+      ) {
+        operationalReconciliationWarning = true;
+      }
 
       await refreshUnsignedHandoverSnapshotForBooking({
         supabase,

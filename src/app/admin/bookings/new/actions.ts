@@ -30,6 +30,10 @@ import {
   normalizeBookingItemRequests,
 } from "@/features/booking/server/normalize-booking-request";
 import {
+  getChecklistInitializationRecoveryProcedure,
+  runChecklistInitializationBestEffort,
+} from "@/lib/booking/checklist-initializer";
+import {
   getBookingFormBoolean as getBooleanString,
   getBookingFormNullableString as getNullableString,
   getBookingFormNumber as getNumber,
@@ -46,6 +50,15 @@ import { buildBookingItemsSummaryFromCurrentBooking } from "@/lib/booking/operat
 
 type ParsedBookingItem = ParsedBookingProductItem;
 type ParsedModifierItem = ParsedBookingModifierItem;
+
+type ResolvedModifierInventorySelection = ParsedModifierItem & {
+  modifierGroupName: string;
+  modifierOptionName: string;
+  inventoryItemId: string | null;
+  inventoryQuantity: number;
+  trackInventory: boolean;
+  inventoryBehavior: "reusable" | "consumable";
+};
 
 type TemporaryInventoryRequirementRow = {
   booking_id: string;
@@ -1006,12 +1019,153 @@ async function validateRequiredModifierGroups({
   }
 }
 
+async function resolveAuthoritativeModifierInventorySelections(params: {
+  supabase: any;
+  items: ParsedBookingItem[];
+  modifiers: ParsedModifierItem[];
+}) {
+  const { supabase, items, modifiers } = params;
+
+  if (modifiers.length === 0) {
+    return [] as ResolvedModifierInventorySelection[];
+  }
+
+  const productIds = Array.from(
+    new Set(items.map((item) => String(item.productId || "").trim()).filter(Boolean)),
+  );
+
+  const optionIds = Array.from(
+    new Set(
+      modifiers
+        .map((modifier) => String(modifier.modifierOptionId || "").trim())
+        .filter(Boolean),
+    ),
+  );
+
+  const [groupLinksResult, optionRowsResult] = await Promise.all([
+    supabase
+      .from("product_modifier_groups")
+      .select(
+        `
+        product_id,
+        modifier_group_id,
+        active,
+        modifier_groups (
+          id,
+          name,
+          active
+        )
+      `,
+      )
+      .in("product_id", productIds),
+
+    supabase
+      .from("modifier_group_options")
+      .select(
+        "id, modifier_group_id, option_name, active, inventory_item_id, inventory_quantity, track_inventory, inventory_behavior",
+      )
+      .in("id", optionIds),
+  ]);
+
+  if (groupLinksResult.error) {
+    throw new Error(groupLinksResult.error.message);
+  }
+
+  if (optionRowsResult.error) {
+    throw new Error(optionRowsResult.error.message);
+  }
+
+  const allowedGroupIdsByProductId = new Map<string, Set<string>>();
+
+  for (const row of groupLinksResult.data || []) {
+    const productId = String((row as any).product_id || "").trim();
+    const groupId = String((row as any).modifier_group_id || "").trim();
+    const group = Array.isArray((row as any).modifier_groups)
+      ? (row as any).modifier_groups[0]
+      : (row as any).modifier_groups;
+
+    if (!productId || !groupId) {
+      continue;
+    }
+
+    const productGroupActive = (row as any).active !== false;
+    const groupActive = group?.active !== false;
+
+    if (!productGroupActive || !groupActive) {
+      continue;
+    }
+
+    const allowed = allowedGroupIdsByProductId.get(productId) || new Set<string>();
+    allowed.add(groupId);
+    allowedGroupIdsByProductId.set(productId, allowed);
+  }
+
+  const optionById = new Map<string, any>();
+
+  for (const row of optionRowsResult.data || []) {
+    const optionId = String((row as any).id || "").trim();
+    if (!optionId) {
+      continue;
+    }
+    optionById.set(optionId, row);
+  }
+
+  const resolved: ResolvedModifierInventorySelection[] = [];
+
+  for (const modifier of modifiers) {
+    const productId = String(modifier.productId || "").trim();
+    const groupId = String(modifier.modifierGroupId || "").trim();
+    const optionId = String(modifier.modifierOptionId || "").trim();
+
+    if (!productId || !groupId || !optionId) {
+      throw new Error("Invalid modifier selection payload.");
+    }
+
+    const option = optionById.get(optionId);
+
+    if (!option || (option as any).active === false) {
+      throw new Error(`Selected modifier option is unavailable: ${optionId}`);
+    }
+
+    const optionGroupId = String((option as any).modifier_group_id || "").trim();
+
+    if (!optionGroupId || optionGroupId !== groupId) {
+      throw new Error("Modifier option does not belong to the selected modifier group.");
+    }
+
+    const allowedGroups = allowedGroupIdsByProductId.get(productId) || new Set<string>();
+
+    if (!allowedGroups.has(groupId)) {
+      throw new Error("Modifier group is not allowed for the selected product.");
+    }
+
+    const authoritativeInventoryItemId = String((option as any).inventory_item_id || "").trim() || null;
+    const authoritativeInventoryQuantity = Math.max(
+      0,
+      Number((option as any).inventory_quantity ?? 1),
+    );
+    const authoritativeTrackInventory = (option as any).track_inventory !== false;
+    const authoritativeInventoryBehavior =
+      (option as any).inventory_behavior === "consumable" ? "consumable" : "reusable";
+
+    resolved.push({
+      ...modifier,
+      inventoryItemId: authoritativeInventoryItemId,
+      inventoryQuantity: authoritativeInventoryQuantity,
+      trackInventory: authoritativeTrackInventory,
+      inventoryBehavior: authoritativeInventoryBehavior,
+    });
+  }
+
+  return resolved;
+}
+
 async function validateModifierInventory({
   modifiers,
   items,
   availabilityResults,
 }: {
-  modifiers: ParsedModifierItem[];
+  modifiers: ResolvedModifierInventorySelection[];
   items: ParsedBookingItem[];
   availabilityResults: Array<{
     reservedFrom: string;
@@ -1370,7 +1524,7 @@ function mapBookingItemsBySelectionOrder(params: {
 function buildTemporaryBookingInventoryRequirements(params: {
   bookingId: string;
   items: ParsedBookingItem[];
-  modifiers: ParsedModifierItem[];
+  modifiers: ResolvedModifierInventorySelection[];
   availabilityResults: Array<{ reservedFrom: string; reservedUntil: string; components: any[] }>;
   insertedBookingItems: Array<{ id: string; product_id: string }>;
 }) {
@@ -1846,7 +2000,7 @@ async function insertBookingModifiers({
   insertedBookingItems,
 }: {
   bookingId: string;
-  modifiers: ParsedModifierItem[];
+  modifiers: ResolvedModifierInventorySelection[];
   items: ParsedBookingItem[];
   insertedBookingItems: Array<{
     id: string;
@@ -2376,7 +2530,7 @@ async function reserveModifierInventory({
   reservationWindowsByProduct,
 }: {
   bookingId: string;
-  modifiers: ParsedModifierItem[];
+  modifiers: ResolvedModifierInventorySelection[];
   items: ParsedBookingItem[];
   reservationWindowsByProduct: Map<
     string,
@@ -3287,10 +3441,17 @@ async function createBookingActionInternal(
       formData,
     );
 
+  const authoritativeModifiers =
+    await resolveAuthoritativeModifierInventorySelections({
+      supabase,
+      items,
+      modifiers,
+    });
+
   const locationMarkerColor =
     await resolveLocationMarkerColor({
       supabase,
-      modifiers,
+      modifiers: authoritativeModifiers,
     });
 
   const discountSettings =
@@ -3385,7 +3546,7 @@ async function createBookingActionInternal(
 
   const modifierSelectionsByProductId =
     groupModifierSelectionsByProductId(
-      modifiers.map(
+      authoritativeModifiers.map(
         (modifier) => ({
           productId:
             modifier.productId,
@@ -3434,11 +3595,11 @@ async function createBookingActionInternal(
 
   await validateRequiredModifierGroups({
     items,
-    modifiers,
+    modifiers: authoritativeModifiers,
   });
 
   await validateModifierInventory({
-    modifiers,
+    modifiers: authoritativeModifiers,
     items,
     availabilityResults,
   });
@@ -3527,7 +3688,7 @@ async function createBookingActionInternal(
     );
 
   const modifiersSubtotal =
-    modifiers.reduce(
+    authoritativeModifiers.reduce(
       (sum, modifier) => {
         const productQty =
           items.find(
@@ -4050,7 +4211,7 @@ async function createBookingActionInternal(
 
   await insertBookingModifiers({
     bookingId,
-    modifiers,
+    modifiers: authoritativeModifiers,
     items,
     insertedBookingItems,
   });
@@ -4089,7 +4250,7 @@ async function createBookingActionInternal(
         buildTemporaryBookingInventoryRequirements({
           bookingId,
           items,
-          modifiers,
+          modifiers: authoritativeModifiers,
           availabilityResults,
           insertedBookingItems,
         });
@@ -4141,10 +4302,40 @@ async function createBookingActionInternal(
 
     await reserveModifierInventory({
       bookingId,
-      modifiers,
+      modifiers: authoritativeModifiers,
       items,
       reservationWindowsByProduct,
     });
+
+    const checklistInitResult =
+      await runChecklistInitializationBestEffort({
+        supabase,
+        bookingId,
+        context: {
+          completionStrategy: "staff_complete_now",
+          status,
+          source: executionContext?.isMobileApiRequest
+            ? "mobile_admin_new_booking"
+            : "admin_new_booking",
+        },
+      });
+
+    if (!checklistInitResult.ok) {
+      console.error(
+        "Checklist initialization failed but booking flow will continue",
+        {
+          bookingId,
+          checklistStatus:
+            checklistInitResult.reason,
+          checklistDetails:
+            checklistInitResult.details,
+          recoveryProcedure:
+            getChecklistInitializationRecoveryProcedure({
+              bookingId,
+            }),
+        },
+      );
+    }
   }
 
   let staffCompletionUrl = "";
