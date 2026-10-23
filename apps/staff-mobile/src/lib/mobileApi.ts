@@ -855,6 +855,13 @@ export type MobileDriverManualPaymentMethod =
   | "venmo"
   | "card";
 
+export type MobileDriverPaymentNotCollectedReason =
+  | "customer_will_pay_later"
+  | "customer_not_available"
+  | "online_payment_pending"
+  | "payment_issue"
+  | "other";
+
 export type MobileDriverCollectPaymentResult = {
   stopId: string;
   bookingId: string;
@@ -862,6 +869,17 @@ export type MobileDriverCollectPaymentResult = {
   amountRecorded: number;
   amountReported?: number;
   balanceDue: number;
+  alreadyReported: boolean;
+  reportStatus?: "reported" | "already_reported" | "no_balance_due";
+  reportedAt?: string | null;
+};
+
+export type MobileDriverPaymentNotCollectedResult = {
+  stopId: string;
+  bookingId: string;
+  reason: MobileDriverPaymentNotCollectedReason;
+  comment?: string | null;
+  outstandingBalance: number;
   alreadyReported: boolean;
   reportStatus?: "reported" | "already_reported" | "no_balance_due";
   reportedAt?: string | null;
@@ -893,6 +911,42 @@ export async function collectDriverManualPaymentFromMobile(params: {
       success: false as const,
       error:
         "Payment result was not returned by the server.",
+    };
+  }
+
+  return {
+    success: true as const,
+    data: result.data.data,
+  };
+}
+
+export async function reportDriverPaymentNotCollectedFromMobile(params: {
+  stopId: string;
+  reason: MobileDriverPaymentNotCollectedReason;
+  comment?: string;
+}) {
+  const result = await authenticatedFetch<{
+    success: true;
+    data: MobileDriverPaymentNotCollectedResult;
+  }>("/api/mobile/driver/payments/not-collected", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+
+  if (!result.success) {
+    return {
+      success: false as const,
+      error:
+        result.error ||
+        "Could not report payment-not-collected.",
+    };
+  }
+
+  if (!result.data?.data) {
+    return {
+      success: false as const,
+      error:
+        "Payment-not-collected result was not returned by the server.",
     };
   }
 

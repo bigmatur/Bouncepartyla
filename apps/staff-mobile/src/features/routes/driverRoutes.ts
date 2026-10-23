@@ -15,6 +15,11 @@ export type MobileRouteStop = {
   id: string;
   booking_id: string | null;
   marker_color?: string | null;
+  booking_balance_due?: number | string | null;
+  payment_not_collected_reported?: boolean | null;
+  payment_not_collected_reason?: string | null;
+  payment_not_collected_comment?: string | null;
+  payment_not_collected_at?: string | null;
   stop_date: string | null;
   stop_type: string | null;
   status: string | null;
@@ -156,6 +161,18 @@ export function localDateISO(date = new Date()) {
   ).padStart(2, "0");
 
   return `${year}-${month}-${day}`;
+}
+
+function isMissingTableError(error: any) {
+  const message = String(error?.message || "").toLowerCase();
+  const code = String(error?.code || "").toLowerCase();
+
+  return (
+    code === "42p01" ||
+    message.includes("relation") ||
+    message.includes("does not exist") ||
+    message.includes("schema cache")
+  );
 }
 
 export function isCompletedStop(
@@ -888,7 +905,7 @@ export async function loadDriverRoute(
         "route_stops",
       )
       .select(
-        "id, booking_id, stop_date, stop_type, status, customer_name, customer_phone, address, city, state, zip, scheduled_start_time, scheduled_end_time, driver_name, truck_name, items_summary, setup_notes, pickup_notes, balance_due, payment_collected, payment_collected_amount, payment_collected_method, payment_collected_at, payment_collected_by, proof_photo_required, proof_photo_uploaded, driver_notes, sort_order, bookings ( marker_color, internal_notes )",
+        "id, booking_id, stop_date, stop_type, status, customer_name, customer_phone, address, city, state, zip, scheduled_start_time, scheduled_end_time, driver_name, truck_name, items_summary, setup_notes, pickup_notes, balance_due, payment_collected, payment_collected_amount, payment_collected_method, payment_collected_at, payment_collected_by, proof_photo_required, proof_photo_uploaded, driver_notes, sort_order, bookings ( marker_color, internal_notes, balance_due )",
       )
       .eq(
         "stop_date",
@@ -957,6 +974,7 @@ export async function loadDriverRoute(
 
     return {
       ...stopRow,
+      booking_balance_due: booking?.balance_due ?? null,
       marker_color:
         booking?.marker_color != null && String(booking.marker_color).trim()
           ? String(booking.marker_color)
@@ -972,17 +990,73 @@ export async function loadDriverRoute(
           : null,
   }));
 
+  const stopIds = normalizedStops.map((stop) => String(stop.id || "")).filter(Boolean);
+  let paymentExceptionByStopId = new Map<string, {
+    reasonCode: string | null;
+    comment: string | null;
+    reportedAt: string | null;
+  }>();
+
+  if (stopIds.length > 0) {
+    const paymentExceptionResult = await supabase
+      .from("route_stop_payment_exceptions")
+      .select("route_stop_id, reason_code, reason_comment, reported_at, is_active")
+      .in("route_stop_id", stopIds)
+      .eq("is_active", true);
+
+    if (paymentExceptionResult.error) {
+      if (!isMissingTableError(paymentExceptionResult.error)) {
+        throw new Error(paymentExceptionResult.error.message);
+      }
+    } else {
+      paymentExceptionByStopId = new Map(
+        ((paymentExceptionResult.data || []) as any[])
+          .map((row) => {
+            const stopId = String(row.route_stop_id || "").trim();
+
+            if (!stopId) {
+              return null;
+            }
+
+            return [
+              stopId,
+              {
+                reasonCode: row.reason_code ? String(row.reason_code) : null,
+                comment: row.reason_comment ? String(row.reason_comment) : null,
+                reportedAt: row.reported_at ? String(row.reported_at) : null,
+              },
+            ] as const;
+          })
+          .filter(Boolean) as Array<readonly [string, {
+            reasonCode: string | null;
+            comment: string | null;
+            reportedAt: string | null;
+          }]>,
+      );
+    }
+  }
+
+  const stopsWithPaymentExceptions = normalizedStops.map((stop) => {
+    const exception = paymentExceptionByStopId.get(String(stop.id || ""));
+
+    return {
+      ...stop,
+      payment_not_collected_reported: Boolean(exception),
+      payment_not_collected_reason: exception?.reasonCode || null,
+      payment_not_collected_comment: exception?.comment || null,
+      payment_not_collected_at: exception?.reportedAt || null,
+    };
+  });
+
   try {
     const weatherResult =
-      await loadDriverRouteWeatherFromMobile(
-        date,
-      );
+      await loadDriverRouteWeatherFromMobile(date);
 
     if (weatherResult.success) {
       return {
         driver,
         date,
-        stops: normalizedStops.map(
+        stops: stopsWithPaymentExceptions.map(
           (stop) => ({
             ...stop,
             weather:
@@ -1000,7 +1074,7 @@ export async function loadDriverRoute(
   return {
     driver,
     date,
-    stops: normalizedStops,
+    stops: stopsWithPaymentExceptions,
   };
 }
 
