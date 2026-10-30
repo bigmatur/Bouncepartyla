@@ -124,6 +124,7 @@ const IMAGE_MIME_CANDIDATES = [
 ];
 
 const TRUSTED_META_HOST_SUFFIXES = [
+  ".lookaside.fbsbx.com",
   ".fbcdn.net",
   ".cdninstagram.com",
   ".fna.fbcdn.net",
