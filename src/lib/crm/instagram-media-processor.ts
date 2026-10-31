@@ -1392,6 +1392,7 @@ async function selectCandidateMessages(params: {
           attachments: [],
         },
       })
+      .not("metadata->message->attachments", "eq", "[]")
       .order("created_at", {
         ascending: true,
         nullsFirst: true,
@@ -1415,6 +1416,7 @@ async function selectCandidateMessages(params: {
           attachments: [],
         },
       })
+      .not("metadata->message->attachments", "eq", "[]")
       .order("created_at", {
         ascending: false,
         nullsFirst: false,
