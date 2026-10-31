@@ -125,33 +125,7 @@ export async function calculateCanonicalBookingPricing(input: {
       } catch (error: any) {
         const liveError = error?.message || "Tax lookup failed.";
 
-        const [zipCacheResult, cityCacheResult] = await Promise.all([
-          setupZip
-            ? input.supabase
-                .from("tax_rates_cache")
-                .select("tax_rate, zip, city")
-                .eq("zip", setupZip)
-                .limit(1)
-                .maybeSingle()
-            : Promise.resolve({ data: null, error: null } as any),
-          setupCity
-            ? input.supabase
-                .from("tax_rates_cache")
-                .select("tax_rate, zip, city")
-                .ilike("city", setupCity)
-                .limit(1)
-                .maybeSingle()
-            : Promise.resolve({ data: null, error: null } as any),
-        ]);
-
-        const cacheRow = zipCacheResult?.data || cityCacheResult?.data || null;
-
-        if (cacheRow && Number.isFinite(Number(cacheRow.tax_rate || 0))) {
-          taxRate = normalizeTaxRatePercent(cacheRow.tax_rate);
-          taxError = null;
-        } else {
-          taxError = liveError;
-        }
+        taxError = `${liveError} Tax is not verified; ZIP/city cache was not used.`;
       }
     }
   }

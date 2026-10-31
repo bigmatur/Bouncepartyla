@@ -1753,6 +1753,9 @@ export default function NewBookingWizard({
         return;
       }
 
+      if (!result || typeof result !== "object" || !Number.isFinite(result.taxRate) || !Number.isFinite(result.deliveryFee)) {
+        throw new Error("Delivery and tax calculation returned no valid result. Please retry.");
+      }
       setPricingResult(result);
       setDeliveryFee(Number(result.deliveryFee || 0));
       setTaxRate(Number(result.taxRate || 0));
@@ -2395,6 +2398,15 @@ export default function NewBookingWizard({
   ];
 
   function handleFormSubmit(event: FormEvent<HTMLFormElement>) {
+    if (pricingLoading || !pricingResult || pricingResult.taxError) {
+      event.preventDefault();
+      setStep(5);
+      setFormErrorMessage(pricingLoading
+        ? "Wait for delivery and tax calculation to finish."
+        : "Tax is not verified for this address. Resolve the tax lookup error before creating this booking.");
+      setBookingSubmitPending(false);
+      return;
+    }
     // Prevent accidental Enter-key submit while required steps are incomplete.
     if (!canCreateBooking) {
       event.preventDefault();

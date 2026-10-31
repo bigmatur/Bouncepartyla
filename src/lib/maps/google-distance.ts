@@ -90,6 +90,7 @@ export async function getGoogleDrivingDistanceMiles({
       Accept: "application/json",
     },
     cache: "no-store",
+    signal: AbortSignal.timeout(8000),
   });
 
   const raw = await readJsonResponse(response);
