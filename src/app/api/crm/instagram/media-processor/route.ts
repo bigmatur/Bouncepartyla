@@ -11,6 +11,8 @@ export const dynamic = "force-dynamic";
 
 const DEFAULT_BATCH_SIZE = 15;
 const MAX_BATCH_SIZE = 50;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function authorized(request: Request) {
   const config =
@@ -83,12 +85,33 @@ export async function POST(
       );
     }
 
+    const requestBody =
+      body as Record<string, unknown> | undefined;
     const candidateBatchSize =
-      (body as Record<string, unknown> | undefined)
-        ?.batchSize;
+      requestBody?.batchSize;
+    const candidateMessageId =
+      requestBody?.messageId;
+
+    let messageId: string | undefined;
+
+    if (candidateMessageId !== undefined) {
+      if (
+        typeof candidateMessageId !== "string" ||
+        !UUID_PATTERN.test(candidateMessageId.trim())
+      ) {
+        return NextResponse.json(
+          {
+            error: "messageId must be a valid UUID.",
+          },
+          { status: 400 },
+        );
+      }
+
+      messageId = candidateMessageId.trim();
+    }
 
     let batchSize =
-      DEFAULT_BATCH_SIZE;
+      messageId ? 1 : DEFAULT_BATCH_SIZE;
 
     if (candidateBatchSize !== undefined) {
       if (
@@ -127,9 +150,20 @@ export async function POST(
       batchSize = candidateBatchSize;
     }
 
+    if (messageId && batchSize !== 1) {
+      return NextResponse.json(
+        {
+          error:
+            "batchSize must be 1 when messageId is provided.",
+        },
+        { status: 400 },
+      );
+    }
+
     const result =
       await processInstagramMediaBatch({
         batchSize,
+        messageId,
       });
 
     const runtimeConfig =
@@ -138,6 +172,7 @@ export async function POST(
     return NextResponse.json({
       ok: true,
       batchSize,
+      messageId,
       executionBudgetMs:
         runtimeConfig.executionBudgetMs,
       cleanupReserveMs:
