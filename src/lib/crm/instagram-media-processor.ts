@@ -653,7 +653,11 @@ async function fetchSourceBinary(params: {
       });
     }
 
-    if (declaredMime && declaredMime !== detectedMime) {
+    const isAllowedJpegPngMismatch =
+      (declaredMime === "image/jpeg" && detectedMime === "image/png") ||
+      (declaredMime === "image/png" && detectedMime === "image/jpeg");
+
+    if (declaredMime && declaredMime !== detectedMime && !isAllowedJpegPngMismatch) {
       throw Object.assign(
         new Error(`Declared MIME ${declaredMime} mismatches detected ${detectedMime}.`),
         {
