@@ -57,22 +57,33 @@ begin
       and coalesce(d.active, true) = true
       and d.deleted_at is null
   ) then
-    insert into public.profiles (
-      auth_user_id,
-      role,
-      is_active,
-      updated_at
-    )
-    values (auth.uid(), 'driver', true, now())
-    on conflict do nothing;
-
+    -- A driver can legitimately use the same auth account as a customer.
+    -- The active route-driver link is the authorization boundary here; do not
+    -- overwrite the existing customer role just to enable staff support chat.
     select p.id into v_profile_id
     from public.profiles p
     where p.auth_user_id = auth.uid()
       and coalesce(p.is_active, true) = true
-      and coalesce(p.role::text, '') <> 'customer'
     order by p.created_at asc nulls last, p.id
     limit 1;
+
+    if v_profile_id is null then
+      insert into public.profiles (
+        auth_user_id,
+        role,
+        is_active,
+        updated_at
+      )
+      values (auth.uid(), 'driver', true, now())
+      on conflict do nothing;
+
+      select p.id into v_profile_id
+      from public.profiles p
+      where p.auth_user_id = auth.uid()
+        and coalesce(p.is_active, true) = true
+      order by p.created_at asc nulls last, p.id
+      limit 1;
+    end if;
   end if;
 
   if v_profile_id is null then raise exception 'staff_profile_required'; end if;
