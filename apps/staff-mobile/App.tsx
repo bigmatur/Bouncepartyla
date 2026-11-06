@@ -81,6 +81,11 @@ function AppShell() {
     setChatNoticeVisible(false);
   }, []);
 
+  const clearChatUnread = useCallback(() => {
+    setChatUnread(0);
+    setChatNoticeVisible(false);
+  }, []);
+
   return (
     <View style={styles.shell}>
       <View style={styles.screenArea}>
@@ -97,10 +102,7 @@ function AppShell() {
           <ShiftScreen />
         ) : tab === "chat" ? (
           <SupportChatScreen
-            onMessagesRead={() => {
-              setChatUnread(0);
-              setChatNoticeVisible(false);
-            }}
+            onMessagesRead={clearChatUnread}
           />
         ) : (
           <MoreScreen />

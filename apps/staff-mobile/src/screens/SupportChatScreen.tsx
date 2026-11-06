@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, AppState, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { supabase } from "../lib/supabase";
@@ -22,6 +22,7 @@ export function SupportChatScreen({
   const [sending, setSending] = useState(false);
   const [body, setBody] = useState("");
   const [error, setError] = useState("");
+  const messagesScrollRef = useRef<ScrollView>(null);
 
   const refresh = useCallback(async () => {
     setError("");
@@ -29,9 +30,19 @@ export function SupportChatScreen({
     if (result.error) { setError(result.error.message); setLoading(false); return; }
     setMessages(Array.isArray(result.data) ? [...result.data].reverse() : []);
     setLoading(false);
-    void supabase.rpc("mark_my_staff_support_read");
-    onMessagesRead?.();
+    const readResult = await supabase.rpc("mark_my_staff_support_read");
+    if (!readResult.error) {
+      onMessagesRead?.();
+    }
   }, [onMessagesRead]);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      messagesScrollRef.current?.scrollToEnd({ animated: true });
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [messages]);
 
   useEffect(() => {
     void refresh();
@@ -74,7 +85,7 @@ export function SupportChatScreen({
     <Text style={styles.eyebrow}>BOUNCE PARTY LA</Text>
     <Text style={styles.title}>Support chat</Text>
     <Text style={styles.copy}>Message the operations team. They reply in CRM Inbox.</Text>
-    {loading ? <ActivityIndicator color="#23313f" style={styles.loader} /> : <ScrollView contentContainerStyle={styles.messages}>
+    {loading ? <ActivityIndicator color="#23313f" style={styles.loader} /> : <ScrollView ref={messagesScrollRef} onContentSizeChange={() => messagesScrollRef.current?.scrollToEnd({ animated: true })} contentContainerStyle={styles.messages}>
       {messages.length === 0 ? <Text style={styles.empty}>No messages yet. Start a conversation with support.</Text> : messages.map((message) => <View key={message.id} style={[styles.bubble, message.direction === "outbound" ? styles.reply : styles.sent]}>
         <Text style={styles.bubbleLabel}>{message.direction === "outbound" ? "Support" : "You"}</Text>
         <Text style={[styles.bubbleText, message.direction === "outbound" ? styles.replyText : null]}>{message.body_text || ""}</Text>
