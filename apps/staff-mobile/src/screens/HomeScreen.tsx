@@ -3589,6 +3589,27 @@ useEffect(() => {
               </View>
             ) : null}
 
+            <Pressable
+              disabled={paymentModalBusy}
+              onPress={() => {
+                setPaymentModalOpen(false);
+                setPaymentModalError("");
+                reportPaymentNotCollected();
+              }}
+              style={({ pressed }) => [
+                styles.paymentNotCollectedShortcut,
+                pressed ? styles.pressed : null,
+                paymentModalBusy ? styles.disabledButton : null,
+              ]}
+            >
+              <Text style={styles.paymentNotCollectedShortcutTitle}>
+                Payment not collected
+              </Text>
+              <Text style={styles.paymentNotCollectedShortcutText}>
+                Save a reason instead of confirming payment
+              </Text>
+            </Pressable>
+
             <View style={styles.paymentSheetActions}>
               <Pressable
                 disabled={paymentModalBusy}
@@ -5620,6 +5641,29 @@ const styles = StyleSheet.create({
     color: "#8d2f1f",
     fontSize: 12,
     fontWeight: "700",
+  },
+
+  paymentNotCollectedShortcut: {
+    backgroundColor: "rgba(35,49,63,0.06)",
+    borderColor: "rgba(35,49,63,0.34)",
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+  },
+
+  paymentNotCollectedShortcutTitle: {
+    color: "#23313f",
+    fontSize: 13,
+    fontWeight: "900",
+  },
+
+  paymentNotCollectedShortcutText: {
+    color: "#617080",
+    fontSize: 11,
+    fontWeight: "700",
+    marginTop: 3,
   },
 
   paymentSheetActions: {
