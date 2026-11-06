@@ -54,10 +54,9 @@ begin
       auth_user_id,
       role,
       is_active,
-      default_interface,
       updated_at
     )
-    values (auth.uid(), 'driver', true, 'driver', now())
+    values (auth.uid(), 'driver', true, now())
     on conflict do nothing;
 
     select p.id into v_profile_id
