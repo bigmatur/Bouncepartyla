@@ -17,6 +17,7 @@ import MarkConversationRead from "./MarkConversationRead";
 import CrmCustomerContext from "./CrmCustomerContext";
 import CrmContextFloatingPanel from "./CrmContextFloatingPanel";
 import CrmMobileInbox from "./CrmMobileInbox";
+import { CrmConversationAutoScroll } from "./CrmConversationAutoScroll";
 
 import {
   replyToCrmConversationAction,
@@ -1755,7 +1756,7 @@ export default async function CrmInboxPage({
   </header>
 
  
-<div className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5">
+<div data-crm-conversation-scroll className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5">
                   <div className="mx-auto max-w-4xl space-y-3">
                     {selectedMessages.map(
                       (
@@ -1935,6 +1936,14 @@ export default async function CrmInboxPage({
                       </div>
 
                     )}
+
+                    <CrmConversationAutoScroll
+                      messageKey={String(
+                        selectedMessages[
+                          selectedMessages.length - 1
+                        ]?.id || selectedConversation.id,
+                      )}
+                    />
 
                   </div>
 
