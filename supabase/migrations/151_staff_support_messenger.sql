@@ -102,15 +102,34 @@ declare
   v_conversation_id uuid;
   v_name text;
 begin
+  select coalesce(
+    nullif(btrim(concat_ws(' ', p.first_name, p.last_name)), ''),
+    (
+      select nullif(btrim(d.name), '')
+      from public.route_drivers d
+      join auth.users u on u.id = auth.uid()
+      where (
+        d.auth_user_id = auth.uid()
+        or (
+          nullif(lower(btrim(coalesce(d.account_email, ''))), '') is not null
+          and lower(btrim(coalesce(d.account_email, ''))) = lower(btrim(coalesce(u.email, '')))
+        )
+      )
+        and coalesce(d.active, true) = true
+        and d.deleted_at is null
+      order by d.updated_at desc nulls last, d.created_at desc nulls last, d.id
+      limit 1
+    )
+  ) into v_name
+  from public.profiles p
+  where p.id = v_profile_id;
+
   select c.id into v_conversation_id
   from public.crm_conversations c
   where c.staff_profile_id = v_profile_id and c.conversation_scope = 'staff_internal'
   for update;
 
   if v_conversation_id is null then
-    select nullif(btrim(concat_ws(' ', p.first_name, p.last_name)), '') into v_name
-    from public.profiles p where p.id = v_profile_id;
-
     insert into public.crm_conversations (
       staff_profile_id, subject, status, priority, needs_reply, unread_count,
       customer_unread_count, last_channel, conversation_scope
@@ -118,6 +137,10 @@ begin
       v_profile_id, 'Staff support — ' || coalesce(v_name, 'Staff account'),
       'open', 'normal', false, 0, 0, 'internal', 'staff_internal'
     ) returning id into v_conversation_id;
+  else
+    update public.crm_conversations
+    set subject = 'Staff support — ' || coalesce(v_name, 'Staff account'), updated_at = now()
+    where id = v_conversation_id;
   end if;
   return v_conversation_id;
 end;

@@ -1048,7 +1048,8 @@ export default async function CrmInboxPage({
     .toLowerCase();
 
   const isInternalConversation =
-    selectedConversationScope === "internal";
+    selectedConversationScope === "internal" ||
+    selectedConversationScope === "staff_internal";
 
   const replyChannel = isInternalConversation
     ? "internal"
