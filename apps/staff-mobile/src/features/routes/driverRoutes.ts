@@ -15,6 +15,13 @@ export type MobileRouteStop = {
   id: string;
   booking_id: string | null;
   marker_color?: string | null;
+  booking_balance_due?: number | string | null;
+  booking_payment_reported?: boolean;
+  booking_payment_report_needs_review?: boolean;
+  payment_not_collected_reported?: boolean | null;
+  payment_not_collected_reason?: string | null;
+  payment_not_collected_comment?: string | null;
+  payment_not_collected_at?: string | null;
   stop_date: string | null;
   stop_type: string | null;
   status: string | null;
@@ -156,6 +163,18 @@ export function localDateISO(date = new Date()) {
   ).padStart(2, "0");
 
   return `${year}-${month}-${day}`;
+}
+
+function isMissingTableError(error: any) {
+  const message = String(error?.message || "").toLowerCase();
+  const code = String(error?.code || "").toLowerCase();
+
+  return (
+    code === "42p01" ||
+    message.includes("relation") ||
+    message.includes("does not exist") ||
+    message.includes("schema cache")
+  );
 }
 
 export function isCompletedStop(
@@ -888,7 +907,7 @@ export async function loadDriverRoute(
         "route_stops",
       )
       .select(
-        "id, booking_id, stop_date, stop_type, status, customer_name, customer_phone, address, city, state, zip, scheduled_start_time, scheduled_end_time, driver_name, truck_name, items_summary, setup_notes, pickup_notes, balance_due, payment_collected, payment_collected_amount, payment_collected_method, payment_collected_at, payment_collected_by, proof_photo_required, proof_photo_uploaded, driver_notes, sort_order, bookings ( marker_color, internal_notes )",
+        "id, booking_id, stop_date, stop_type, status, customer_name, customer_phone, address, city, state, zip, scheduled_start_time, scheduled_end_time, driver_name, truck_name, items_summary, setup_notes, pickup_notes, balance_due, payment_collected, payment_collected_amount, payment_collected_method, payment_collected_at, payment_collected_by, proof_photo_required, proof_photo_uploaded, driver_notes, sort_order, bookings ( marker_color, internal_notes, balance_due )",
       )
       .eq(
         "stop_date",
@@ -957,6 +976,7 @@ export async function loadDriverRoute(
 
     return {
       ...stopRow,
+      booking_balance_due: booking?.balance_due ?? null,
       marker_color:
         booking?.marker_color != null && String(booking.marker_color).trim()
           ? String(booking.marker_color)
@@ -972,17 +992,164 @@ export async function loadDriverRoute(
           : null,
   }));
 
+  const unverifiedPaymentStatusForBooking = (bookingId: string) => {
+    const bookingStops = normalizedStops.filter(
+      (stop) => String(stop.booking_id || "") === bookingId,
+    );
+
+    const bookingBalanceDue = bookingStops.reduce<number | null>((current, stop) => {
+      const rawBalance = stop.booking_balance_due ?? stop.balance_due;
+      const candidate = Number(rawBalance);
+
+      if (rawBalance == null || !Number.isFinite(candidate)) {
+        return current;
+      }
+
+      return Math.max(current ?? 0, candidate);
+    }, null);
+
+    return {
+      reported: false,
+      // An explicit zero balance needs no payment. Positive or unavailable
+      // balance data stays blocked until the booking-scoped RPC verifies it.
+      needsReview: bookingBalanceDue == null || bookingBalanceDue > 0,
+    };
+  };
+
+  // Read-only, booking-scoped status: includes reports from other route dates.
+  // The RPC verifies the authenticated driver's assignment on the server.
+  // Fail closed rather than offer Collect when the status cannot be verified.
+  const bookingIds = [...new Set(normalizedStops.map((stop) => stop.booking_id).filter((id): id is string => Boolean(id)))];
+  const paymentStatusByBooking = new Map<string, { reported: boolean; needsReview: boolean }>();
+  if (bookingIds.length > 0) {
+    const paymentStatusResult = await supabase.rpc("get_my_driver_booking_payment_reports", {
+      p_booking_ids: bookingIds,
+    });
+    if (paymentStatusResult.error) {
+      console.warn(
+        "[driver-route] Could not verify booking payment reports; payment actions remain blocked for non-zero or unknown balances.",
+        paymentStatusResult.error,
+      );
+
+      for (const bookingId of bookingIds) {
+        paymentStatusByBooking.set(
+          bookingId,
+          unverifiedPaymentStatusForBooking(bookingId),
+        );
+      }
+    } else {
+      const requestedBookingIds = new Set(bookingIds);
+      for (const row of (paymentStatusResult.data || []) as Array<{
+        booking_id: string;
+        payment_reported: boolean;
+        payment_report_needs_review: boolean;
+      }>) {
+        const bookingId = String(row.booking_id || "");
+
+        if (
+          !requestedBookingIds.has(bookingId) ||
+          typeof row.payment_reported !== "boolean" ||
+          typeof row.payment_report_needs_review !== "boolean"
+        ) {
+          continue;
+        }
+
+        paymentStatusByBooking.set(bookingId, {
+          reported: row.payment_reported,
+          needsReview: row.payment_report_needs_review,
+        });
+      }
+
+      if (paymentStatusByBooking.size !== bookingIds.length) {
+        console.warn(
+          "[driver-route] Payment report RPC returned an incomplete or invalid booking set; missing bookings remain blocked for non-zero or unknown balances.",
+          {
+            requested: bookingIds.length,
+            returned: paymentStatusByBooking.size,
+          },
+        );
+
+        for (const bookingId of bookingIds) {
+          if (!paymentStatusByBooking.has(bookingId)) {
+            paymentStatusByBooking.set(
+              bookingId,
+              unverifiedPaymentStatusForBooking(bookingId),
+            );
+          }
+        }
+      }
+    }
+  }
+
+  const stopIds = normalizedStops.map((stop) => String(stop.id || "")).filter(Boolean);
+  let paymentExceptionByStopId = new Map<string, {
+    reasonCode: string | null;
+    comment: string | null;
+    reportedAt: string | null;
+  }>();
+
+  if (stopIds.length > 0) {
+    const paymentExceptionResult = await supabase
+      .from("route_stop_payment_exceptions")
+      .select("route_stop_id, reason_code, reason_comment, reported_at, is_active")
+      .in("route_stop_id", stopIds)
+      .eq("is_active", true);
+
+    if (paymentExceptionResult.error) {
+      if (!isMissingTableError(paymentExceptionResult.error)) {
+        throw new Error(paymentExceptionResult.error.message);
+      }
+    } else {
+      paymentExceptionByStopId = new Map(
+        ((paymentExceptionResult.data || []) as any[])
+          .map((row) => {
+            const stopId = String(row.route_stop_id || "").trim();
+
+            if (!stopId) {
+              return null;
+            }
+
+            return [
+              stopId,
+              {
+                reasonCode: row.reason_code ? String(row.reason_code) : null,
+                comment: row.reason_comment ? String(row.reason_comment) : null,
+                reportedAt: row.reported_at ? String(row.reported_at) : null,
+              },
+            ] as const;
+          })
+          .filter(Boolean) as Array<readonly [string, {
+            reasonCode: string | null;
+            comment: string | null;
+            reportedAt: string | null;
+          }]>,
+      );
+    }
+  }
+
+  const stopsWithPaymentExceptions = normalizedStops.map((stop) => {
+    const exception = paymentExceptionByStopId.get(String(stop.id || ""));
+
+    return {
+      ...stop,
+      booking_payment_reported: paymentStatusByBooking.get(String(stop.booking_id))?.reported ?? false,
+      booking_payment_report_needs_review: paymentStatusByBooking.get(String(stop.booking_id))?.needsReview ?? false,
+      payment_not_collected_reported: Boolean(exception),
+      payment_not_collected_reason: exception?.reasonCode || null,
+      payment_not_collected_comment: exception?.comment || null,
+      payment_not_collected_at: exception?.reportedAt || null,
+    };
+  });
+
   try {
     const weatherResult =
-      await loadDriverRouteWeatherFromMobile(
-        date,
-      );
+      await loadDriverRouteWeatherFromMobile(date);
 
     if (weatherResult.success) {
       return {
         driver,
         date,
-        stops: normalizedStops.map(
+        stops: stopsWithPaymentExceptions.map(
           (stop) => ({
             ...stop,
             weather:
@@ -1000,7 +1167,7 @@ export async function loadDriverRoute(
   return {
     driver,
     date,
-    stops: normalizedStops,
+    stops: stopsWithPaymentExceptions,
   };
 }
 

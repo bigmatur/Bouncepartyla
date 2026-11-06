@@ -19,6 +19,10 @@ const ALLOWED_MIME_TYPES = new Set([
   "application/pdf",
 ]);
 
+export function isAllowedCrmAttachmentMimeType(mimeType: string): boolean {
+  return ALLOWED_MIME_TYPES.has(String(mimeType || "").toLowerCase());
+}
+
 function safeFileName(value: string) {
   const clean = String(value || "file")
     .trim()

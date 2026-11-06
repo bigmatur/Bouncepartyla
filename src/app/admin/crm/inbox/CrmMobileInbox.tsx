@@ -26,6 +26,7 @@ type Props = {
   canReply: boolean;
   replyAction: Action;
   closeAction: Action;
+  updateInstagramLabelAction: (formData: FormData) => void | Promise<void>;
   updateLeadNotesAction: (formData: FormData) => void | Promise<void>;
   updateLeadFollowUpAction: (formData: FormData) => void | Promise<void>;
   createTaskAction: (formData: FormData) => void | Promise<void>;
@@ -36,11 +37,66 @@ type Props = {
   resendContractAction: (formData: FormData) => void | Promise<void>;
 };
 
-function personName(conversation: any, lead: any, customer: any) {
+function normalizeInstagramHandle(value: unknown) {
+  return String(value || "").trim().replace(/^@+/, "").toLowerCase();
+}
+
+function isGenericInstagramIdentity(value: unknown) {
+  const normalized = String(value || "").trim();
+
+  if (!normalized) {
+    return false;
+  }
+
+  return /^instagram\s+\d+$/i.test(normalized);
+}
+
+function messageSenderDisplayName(message: any) {
+  if (!message || typeof message !== "object") {
+    return "";
+  }
+
+  const metadata =
+    message.metadata && typeof message.metadata === "object"
+      ? (message.metadata as Record<string, unknown>)
+      : {};
+
+  const username = normalizeInstagramHandle(
+    metadata.username || metadata.sender_username,
+  );
+  const channel = String(message.channel || "").trim().toLowerCase();
+
+  if (channel === "instagram" && username) {
+    return `@${username}`;
+  }
+
+  const senderIdentity = String(message.sender_identity || "").trim();
+  if (
+    senderIdentity &&
+    !isGenericInstagramIdentity(senderIdentity) &&
+    !(channel === "instagram" && /^[0-9]{8,32}$/.test(senderIdentity))
+  ) {
+    return senderIdentity;
+  }
+
+  if (username) {
+    return `@${username}`;
+  }
+
+  return String(
+    metadata.sender_display_name || metadata.sender_name || "",
+  ).trim();
+}
+
+function personName(conversation: any, lead: any, customer: any, lastMessage?: any) {
   return (
     customer?.full_name ||
     [customer?.first_name, customer?.last_name].filter(Boolean).join(" ").trim() ||
     lead?.customer_name ||
+    messageSenderDisplayName(lastMessage) ||
+    (isGenericInstagramIdentity(conversation?.subject)
+      ? "Instagram contact"
+      : "") ||
     conversation?.subject ||
     "CRM contact"
   );
@@ -56,6 +112,30 @@ function channelLabel(value: unknown) {
 function workingStatus(conversation: any) {
   if (conversation?.status === "closed") return "Closed";
   return conversation?.needs_reply ? "Waiting for us" : "Waiting for customer";
+}
+
+function instagramLabelOptions() {
+  return [
+    { value: "", label: "No label" },
+    { value: "flag", label: "Flag" },
+    { value: "booked", label: "Booked" },
+    { value: "lead", label: "Lead" },
+    { value: "ordered", label: "Ordered" },
+    { value: "paid", label: "Paid" },
+    { value: "shipped", label: "Shipped" },
+  ];
+}
+
+function instagramLabelText(value: unknown) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+
+  const option = instagramLabelOptions().find(
+    (item) => item.value === normalized,
+  );
+
+  return option?.label || "";
 }
 
 function timeLabel(value: unknown) {
@@ -85,6 +165,8 @@ function MessageBubble({ message }: { message: any }) {
 
   const statusText = message.failed_at
     ? "Failed"
+    : message.read_at
+      ? "Read"
     : message.delivered_at
       ? "Delivered"
       : outbound
@@ -108,7 +190,7 @@ function MessageBubble({ message }: { message: any }) {
       >
         {!outbound && (
           <div className="mb-0.5 text-[10px] font-semibold text-[#9a723e]">
-            {message.sender_identity || channelLabel(message.channel)}
+            {messageSenderDisplayName(message) || channelLabel(message.channel)}
           </div>
         )}
 
@@ -268,7 +350,11 @@ useEffect(() => {
 }, [props.selectedMessages.length]);
 
   const selected = props.selectedConversation;
-  const selectedName = selected ? personName(selected, props.selectedLead, props.selectedCustomer) : "";
+  const selectedLastMessage =
+    selected && props.selectedConversation
+      ? props.lastMessagesById[String(props.selectedConversation.id)]
+      : null;
+  const selectedName = selected ? personName(selected, props.selectedLead, props.selectedCustomer, selectedLastMessage) : "";
   const customer = props.contextCustomer || props.selectedCustomer;
   const booking = props.contextBooking;
   const bookings = Array.isArray(customer?.bookings) ? customer.bookings : [];
@@ -293,9 +379,9 @@ useEffect(() => {
           {props.conversations.map((conversation) => {
             const lead = props.leadsById[String(conversation.lead_id)];
             const customerRow = props.customersById[String(conversation.customer_id)];
-            const name = personName(conversation, lead, customerRow);
-            const unread = Number(conversation.unread_count || 0);
             const last = props.lastMessagesById[String(conversation.id)];
+            const name = personName(conversation, lead, customerRow, last);
+            const unread = Number(conversation.unread_count || 0);
             return (
               <Link key={conversation.id} href={hrefFor({ status: props.activeFilter, q: props.searchQuery, conversation: String(conversation.id) })} className={`block border-b border-[#eee5dc] px-4 py-4 last:border-0 ${unread > 0 ? 'bg-[#fff8ec]' : 'bg-white'}`}>
                 <div className="flex items-start gap-3">
@@ -316,6 +402,13 @@ useEffect(() => {
       : "WAITING FOR CUSTOMER"}
   </span>
 )}</div>
+                    {conversation.instagram_label && (
+                      <div className="mt-1">
+                        <span className="rounded-full bg-[#efe9ff] px-2 py-0.5 text-[9px] font-bold text-[#5742a2]">
+                          {instagramLabelText(conversation.instagram_label)}
+                        </span>
+                      </div>
+                    )}
                     <div className="mt-1.5 truncate text-xs text-[#6c6258]">{last?.body_text || lead?.requested_product || 'No messages yet'}</div>
                     {(lead?.event_date || lead?.event_city) && (
   <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-[#8a6740]">
@@ -375,6 +468,9 @@ useEffect(() => {
               )}
               {" · "}
               {workingStatus(selected)}
+              {selected.instagram_label
+                ? ` · ${instagramLabelText(selected.instagram_label)}`
+                : ""}
             </div>
           </button>
 
@@ -416,6 +512,38 @@ useEffect(() => {
           </button>
         </div>
       </header>
+
+      {String(selected.last_channel || "").trim().toLowerCase() === "instagram" && (
+        <form
+          action={props.updateInstagramLabelAction}
+          className="z-20 shrink-0 border-b border-[#ddd5cb] bg-[#f5efe6]/98 px-2.5 py-2"
+        >
+          <input type="hidden" name="conversationId" value={selected.id} />
+
+          <div className="flex items-center gap-2">
+            <select
+              name="instagramLabel"
+              defaultValue={String(selected.instagram_label || "")
+                .trim()
+                .toLowerCase()}
+              className="min-h-[38px] min-w-0 flex-1 rounded-full border border-[#d8cec0] bg-white px-3 text-xs font-semibold text-[#443d37] outline-none"
+            >
+              {instagramLabelOptions().map((option) => (
+                <option key={option.value || "none"} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="submit"
+              className="min-h-[38px] rounded-full bg-[#23313f] px-3 text-xs font-semibold text-white"
+            >
+              Save
+            </button>
+          </div>
+        </form>
+      )}
 
       <div
   

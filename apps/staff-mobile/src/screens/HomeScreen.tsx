@@ -51,7 +51,9 @@ import {
 import { supabase } from "../lib/supabase";
 import {
   collectDriverManualPaymentFromMobile,
+  reportDriverPaymentNotCollectedFromMobile,
   type MobileDriverManualPaymentMethod,
+  type MobileDriverPaymentNotCollectedReason,
 } from "../lib/mobileApi";
 import { HandoverModal } from "./HandoverModal";
 import { RouteCalendarModal } from "./RouteCalendarModal";
@@ -101,6 +103,10 @@ function formatTime(value: string | null) {
 }
 
 function stopLabel(stop: MobileRouteStop) {
+  if (isBreakStop(stop)) {
+    return "Break";
+  }
+
   const type = String(
     stop.stop_type || "",
   ).toLowerCase();
@@ -121,11 +127,15 @@ function isBreakStop(stop: MobileRouteStop) {
   const customerName = String(stop.customer_name || "").trim();
   const itemsSummary = String(stop.items_summary || "").trim();
   const setupNotes = String(stop.setup_notes || "").trim();
+  const isBreakLabel = (value: string) =>
+    /^break(?:\s*(?:\(\s*)?\d{1,3}\s*(?:min|mins|minutes)(?:\s*\))?)?$/i.test(
+      value,
+    );
 
   return (
     stopType === "break" ||
-    /^break$/i.test(customerName) ||
-    /^break\s*\(\d{1,3}\s*(?:min|mins|minutes)\)$/i.test(itemsSummary) ||
+    isBreakLabel(customerName) ||
+    isBreakLabel(itemsSummary) ||
     /(?:^|\s)break[_\s-]*minutes\s*[:=]\s*\d{1,3}(?:\s|$)/i.test(setupNotes)
   );
 }
@@ -229,6 +239,19 @@ type PaymentModalMethod =
   | "zelle"
   | "venmo"
   | "card";
+
+type PaymentNotCollectedReasonOption = {
+  value: MobileDriverPaymentNotCollectedReason;
+  label: string;
+};
+
+const PAYMENT_NOT_COLLECTED_REASON_OPTIONS: PaymentNotCollectedReasonOption[] = [
+  { value: "customer_will_pay_later", label: "Customer Will Pay Later" },
+  { value: "customer_not_available", label: "Customer Not Available" },
+  { value: "online_payment_pending", label: "Online Payment Pending" },
+  { value: "payment_issue", label: "Payment Issue" },
+  { value: "other", label: "Other" },
+];
 
 const ZELLE_QR_ASSET = require("../../assets/payments/zelle-qr.png");
 const VENMO_QR_ASSET = require("../../assets/payments/venmo-qr.png");
@@ -339,10 +362,12 @@ function paidShiftMinutes(
 
 type HomeScreenProps = {
   onImmersiveChange?: (active: boolean) => void;
+  onOpenMessenger?: () => void;
 };
 
 export function HomeScreen({
   onImmersiveChange,
+  onOpenMessenger,
 }: HomeScreenProps = {}) {
   const today = localDateISO();
 
@@ -455,6 +480,21 @@ const [
     useState(false);
 
   const [paymentModalError, setPaymentModalError] =
+    useState("");
+
+  const [paymentExceptionModalOpen, setPaymentExceptionModalOpen] =
+    useState(false);
+
+  const [paymentExceptionReason, setPaymentExceptionReason] =
+    useState<MobileDriverPaymentNotCollectedReason | null>(null);
+
+  const [paymentExceptionComment, setPaymentExceptionComment] =
+    useState("");
+
+  const [paymentExceptionBusy, setPaymentExceptionBusy] =
+    useState(false);
+
+  const [paymentExceptionError, setPaymentExceptionError] =
     useState("");
 
   const loadRoute = useCallback(
@@ -906,18 +946,11 @@ useEffect(() => {
     activeStop?.status || "",
   ).toLowerCase();
 
-  const activeBalanceDue = Number(
-    activeStop?.balance_due || 0,
+  const activeBookingBalanceDue = Number(
+    (activeStop?.booking_balance_due ??
+      activeStop?.balance_due) ||
+      0,
   );
-
-  const activePaymentRequired =
-    Number.isFinite(
-      activeBalanceDue,
-    ) &&
-    activeBalanceDue > 0 &&
-    !Boolean(
-      activeStop?.payment_collected,
-    );
 
   const activeStopType = String(
     activeStop?.stop_type || "",
@@ -925,6 +958,28 @@ useEffect(() => {
 
   const activeIsPickup =
     activeStopType === "pickup";
+
+  // Authoritative booking-wide status is applied only for pickup completion.
+  // Delivery completion keeps its own stop-level payment / PNC checks.
+  const paymentReportedOnRoute =
+    activeIsPickup &&
+    Boolean(activeStop?.booking_payment_reported);
+
+  const hasInsufficientPaymentReport =
+    activeIsPickup &&
+    Boolean(
+      activeStop?.booking_payment_report_needs_review,
+    );
+
+  const activePaymentRequired =
+    Number.isFinite(activeBookingBalanceDue) &&
+    activeBookingBalanceDue > 0 &&
+    !paymentReportedOnRoute;
+
+  const activePaymentExceptionReported =
+    Boolean(
+      activeStop?.payment_not_collected_reported,
+    );
 
   const activeProofRequired =
     Boolean(activeStop) &&
@@ -964,7 +1019,9 @@ useEffect(() => {
   const completionBlocked =
     Boolean(isCompletionAction) &&
     (
-      activePaymentRequired ||
+      hasInsufficientPaymentReport ||
+      (activePaymentRequired &&
+        !activePaymentExceptionReported) ||
       activeProofBlockingRequired
     );
 
@@ -1137,14 +1194,17 @@ useEffect(() => {
 
   const messageCustomer =
     useCallback(async () => {
+      setError("");
+
+      if (onOpenMessenger) {
+        onOpenMessenger();
+        return;
+      }
+
       const phone = String(
-        activeStop?.customer_phone ||
-          "",
+        activeStop?.customer_phone || "",
       )
-        .replace(
-          /[^0-9+]/g,
-          "",
-        )
+        .replace(/[^0-9+]/g, "")
         .trim();
 
       if (!phone) {
@@ -1155,11 +1215,8 @@ useEffect(() => {
       }
 
       const url = `sms:${phone}`;
-
       const supported =
-        await Linking.canOpenURL(
-          url,
-        );
+        await Linking.canOpenURL(url);
 
       if (!supported) {
         setError(
@@ -1171,6 +1228,7 @@ useEffect(() => {
       await Linking.openURL(url);
     }, [
       activeStop?.customer_phone,
+      onOpenMessenger,
     ]);
 
   const uploadProofPhotoAsset =
@@ -1239,17 +1297,57 @@ useEffect(() => {
       setStopToolPending("photo");
 
       try {
-        const permission =
-          source === "camera"
-            ? await ImagePicker.requestCameraPermissionsAsync()
-            : await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (source === "camera") {
+          const cameraPermission =
+            await ImagePicker.requestCameraPermissionsAsync();
 
-        if (!permission.granted) {
-          throw new Error(
-            source === "camera"
-              ? "Camera permission is required to take a proof photo."
-              : "Photo library permission is required to upload a proof photo.",
-          );
+          if (!cameraPermission.granted) {
+            throw new Error(
+              "Camera permission is required to take a proof photo.",
+            );
+          }
+        } else {
+          const isLimitedLibraryAccess = (
+            permission: ImagePicker.MediaLibraryPermissionResponse,
+          ) =>
+            Platform.OS === "ios" &&
+            permission.accessPrivileges === "limited";
+
+          let libraryPermission =
+            await ImagePicker.getMediaLibraryPermissionsAsync();
+
+          if (
+            !libraryPermission.granted &&
+            !isLimitedLibraryAccess(libraryPermission)
+          ) {
+            libraryPermission =
+              await ImagePicker.requestMediaLibraryPermissionsAsync();
+          }
+
+          if (
+            !libraryPermission.granted &&
+            !isLimitedLibraryAccess(libraryPermission)
+          ) {
+            if (!libraryPermission.canAskAgain) {
+              Alert.alert(
+                "Photo library access is blocked",
+                "Allow photo access in iPhone Settings to upload proof photos.",
+                [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "Open Settings",
+                    onPress: () => {
+                      void Linking.openSettings();
+                    },
+                  },
+                ],
+              );
+            }
+
+            throw new Error(
+              "Photo library permission is required to upload a proof photo.",
+            );
+          }
         }
 
         const result =
@@ -1453,6 +1551,18 @@ useEffect(() => {
       setPaymentModalMethod("cash");
     }, [paymentModalBusy]);
 
+  const closePaymentExceptionModal =
+    useCallback(() => {
+      if (paymentExceptionBusy) {
+        return;
+      }
+
+      setPaymentExceptionModalOpen(false);
+      setPaymentExceptionReason(null);
+      setPaymentExceptionComment("");
+      setPaymentExceptionError("");
+    }, [paymentExceptionBusy]);
+
   const collectPayment =
     useCallback(() => {
       if (
@@ -1462,8 +1572,20 @@ useEffect(() => {
         return;
       }
 
+      if (hasInsufficientPaymentReport) {
+        setError("A partial or zero payment report already exists. Ask an administrator to reconcile it before collecting again.");
+        return;
+      }
+
+      if (paymentReportedOnRoute) {
+        setError("Payment was already reported for this booking on this route.");
+        return;
+      }
+
       const amount = Number(
-        activeStop.balance_due || 0,
+        (activeStop.booking_balance_due ??
+          activeStop.balance_due) ||
+          0,
       );
 
       if (
@@ -1482,6 +1604,54 @@ useEffect(() => {
     }, [
       activeStop,
       stopToolPending,
+      paymentReportedOnRoute,
+      hasInsufficientPaymentReport,
+    ]);
+
+  const reportPaymentNotCollected =
+    useCallback(() => {
+      if (
+        !activeStop ||
+        stopToolPending
+      ) {
+        return;
+      }
+
+      if (hasInsufficientPaymentReport) {
+        setError("A partial or zero payment report already exists. Ask an administrator to reconcile it before collecting again.");
+        return;
+      }
+
+      if (paymentReportedOnRoute) {
+        setError("Payment was already reported for this booking on this route.");
+        return;
+      }
+
+      const amount = Number(
+        (activeStop.booking_balance_due ??
+          activeStop.balance_due) ||
+          0,
+      );
+
+      if (
+        !Number.isFinite(amount) ||
+        amount <= 0
+      ) {
+        setError(
+          "There is no balance due for this stop.",
+        );
+        return;
+      }
+
+      setPaymentExceptionReason(null);
+      setPaymentExceptionComment("");
+      setPaymentExceptionError("");
+      setPaymentExceptionModalOpen(true);
+    }, [
+      activeStop,
+      stopToolPending,
+      paymentReportedOnRoute,
+      hasInsufficientPaymentReport,
     ]);
 
   const confirmManualPayment =
@@ -1491,6 +1661,16 @@ useEffect(() => {
         stopToolPending ||
         paymentModalBusy
       ) {
+        return;
+      }
+
+      if (hasInsufficientPaymentReport) {
+        setPaymentModalError("An existing partial or zero payment report requires administrator reconciliation.");
+        return;
+      }
+
+      if (paymentReportedOnRoute || activeBookingBalanceDue <= 0) {
+        setPaymentModalError("No payment can be reported for this booking from this stop.");
         return;
       }
 
@@ -1528,7 +1708,7 @@ useEffect(() => {
               ? "No balance due"
               : "Payment reported",
           result.data.reportStatus === "already_reported"
-            ? "Payment already reported for this stop. Route data was refreshed."
+            ? "Payment already reported for this booking. Route data was refreshed."
             : result.data.reportStatus === "no_balance_due"
               ? "This stop currently has no balance due to report. Route data was refreshed."
               : `${moneyText(result.data.amountRecorded)} was reported via ${paymentModalMethod.toUpperCase()}.`,
@@ -1545,9 +1725,98 @@ useEffect(() => {
       }
     }, [
       activeStop,
+      activeBookingBalanceDue,
+      paymentReportedOnRoute,
+      hasInsufficientPaymentReport,
       loadRoute,
       paymentModalBusy,
       paymentModalMethod,
+      stopToolPending,
+    ]);
+
+  const confirmPaymentNotCollected =
+    useCallback(async () => {
+      if (
+        !activeStop ||
+        stopToolPending ||
+        paymentExceptionBusy
+      ) {
+        return;
+      }
+
+      if (!paymentExceptionReason) {
+        setPaymentExceptionError(
+          "Select a reason.",
+        );
+        return;
+      }
+
+      if (
+        paymentExceptionReason === "other" &&
+        !String(paymentExceptionComment || "").trim()
+      ) {
+        setPaymentExceptionError(
+          "Comment is required when reason is Other.",
+        );
+        return;
+      }
+
+      setStopToolPending("payment");
+      setPaymentExceptionBusy(true);
+      setPaymentExceptionError("");
+      setError("");
+
+      try {
+        const result =
+          await reportDriverPaymentNotCollectedFromMobile({
+            stopId: activeStop.id,
+            reason: paymentExceptionReason,
+            comment: paymentExceptionComment.trim() || undefined,
+          });
+
+        if (!result.success || !result.data) {
+          setPaymentExceptionError(
+            result.error ||
+              "Could not save Payment Not Collected.",
+          );
+          return;
+        }
+
+        await loadRoute("refresh");
+
+        setPaymentExceptionModalOpen(false);
+        setPaymentExceptionReason(null);
+        setPaymentExceptionComment("");
+        setPaymentExceptionError("");
+
+        Alert.alert(
+          result.data.reportStatus === "already_reported"
+            ? "Payment Not Collected already reported"
+            : result.data.reportStatus === "no_balance_due"
+              ? "No balance due"
+              : "Payment Not Collected saved",
+          result.data.reportStatus === "already_reported"
+            ? "This stop already has a saved Payment Not Collected record. Route data was refreshed."
+            : result.data.reportStatus === "no_balance_due"
+              ? "This stop currently has no outstanding balance. Route data was refreshed."
+              : "Payment Not Collected was saved. You can now complete this stop if all other requirements are met.",
+        );
+      } catch (paymentExceptionSaveError) {
+        setPaymentExceptionError(
+          paymentExceptionSaveError instanceof Error
+            ? paymentExceptionSaveError.message
+            : "Could not save Payment Not Collected.",
+        );
+      } finally {
+        setPaymentExceptionBusy(false);
+        setStopToolPending(null);
+      }
+    }, [
+      activeStop,
+      loadRoute,
+      paymentExceptionBusy,
+      paymentExceptionComment,
+      paymentExceptionReason,
       stopToolPending,
     ]);
 
@@ -1819,12 +2088,7 @@ useEffect(() => {
       <View style={styles.screen}>
     <ScrollView
       style={styles.scroll}
-      contentContainerStyle={[
-        styles.content,
-        activeStop
-          ? styles.contentWithStickyAction
-          : null,
-      ]}
+      contentContainerStyle={styles.content}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
@@ -2279,6 +2543,17 @@ useEffect(() => {
                 </Text>
               </View>
 
+              {isBreakStop(activeStop) ? (
+                <View style={styles.detailBlock}>
+                  <Text style={styles.currentTime}>
+                    {formatTime(activeStop.scheduled_start_time)}
+                  </Text>
+                  <Text style={styles.detailText}>
+                    Planned break · Use Start Break / End Break in Shift to track actual time.
+                  </Text>
+                </View>
+              ) : (
+                <>
               <Text
                 style={
                   styles.currentTime
@@ -2496,9 +2771,11 @@ useEffect(() => {
                         styles.operationLabel
                       }
                     >
-                      {activePaymentRequired
-                        ? "PAYMENT DUE"
-                        : "PAYMENT"}
+                      {hasInsufficientPaymentReport
+                        ? "PAYMENT REVIEW"
+                        : activePaymentRequired
+                          ? "PAYMENT DUE"
+                          : "PAYMENT"}
                     </Text>
 
                     <Text
@@ -2509,56 +2786,99 @@ useEffect(() => {
                           : null,
                       ]}
                     >
-                      {activePaymentRequired
-                        ? moneyText(
-                            activeStop.balance_due,
+                      {hasInsufficientPaymentReport
+                        ? "⚠ Partial payment report — contact admin"
+                        : activePaymentRequired
+                          ? moneyText(
+                            activeStop.booking_balance_due ??
+                              activeStop.balance_due,
                           )
-                        : "✓ No payment required"}
+                        : paymentReportedOnRoute
+                          ? "✓ Payment reported (pending reconciliation)"
+                          : "✓ No payment required"}
                     </Text>
                   </View>
 
-                  {activePaymentRequired ? (
-                    <Pressable
-                      disabled={
-                        stopToolPending !==
-                        null
-                      }
-                      onPress={
-                        collectPayment
-                      }
-                      style={({
-                        pressed,
-                      }) => [
-                        styles.operationButton,
+                  {activePaymentRequired && !hasInsufficientPaymentReport ? (
+                    <View style={styles.paymentActionColumn}>
+                      <Pressable
+                        disabled={
+                          stopToolPending !==
+                          null
+                        }
+                        onPress={
+                          collectPayment
+                        }
+                        style={({
+                          pressed,
+                        }) => [
+                          styles.operationButton,
 
-                        pressed
-                          ? styles.pressed
-                          : null,
+                          pressed
+                            ? styles.pressed
+                            : null,
 
-                        stopToolPending !==
-                        null
-                          ? styles.disabledButton
-                          : null,
-                      ]}
-                    >
-                      {stopToolPending ===
-                      "payment" ? (
-                        <ActivityIndicator
-                          size="small"
-                          color="#23313f"
-                        />
-                      ) : (
-                        <Text
-                          style={
-                            styles.operationButtonText
-                          }
-                        >
-                          Collect
+                          stopToolPending !==
+                          null
+                            ? styles.disabledButton
+                            : null,
+                        ]}
+                      >
+                        {stopToolPending ===
+                        "payment" ? (
+                          <ActivityIndicator
+                            size="small"
+                            color="#23313f"
+                          />
+                        ) : (
+                          <Text
+                            style={
+                              styles.operationButtonText
+                            }
+                          >
+                            Collect
+                          </Text>
+                        )}
+                      </Pressable>
+
+                      <Pressable
+                        disabled={
+                          stopToolPending !== null
+                        }
+                        onPress={
+                          reportPaymentNotCollected
+                        }
+                        style={({ pressed }) => [
+                          styles.operationButtonGhost,
+                          pressed ? styles.pressed : null,
+                          stopToolPending !== null
+                            ? styles.disabledButton
+                            : null,
+                        ]}
+                      >
+                        <Text style={styles.operationButtonGhostText}>
+                          Payment Not Collected
                         </Text>
-                      )}
-                    </Pressable>
+                      </Pressable>
+                    </View>
                   ) : null}
                 </View>
+
+                {activePaymentExceptionReported ? (
+                  <View style={styles.paymentExceptionInfoCard}>
+                    <Text style={styles.paymentExceptionInfoTitle}>
+                      Payment Not Collected saved
+                    </Text>
+                    <Text style={styles.paymentExceptionInfoText}>
+                      Reason: {PAYMENT_NOT_COLLECTED_REASON_OPTIONS.find((item) => item.value === activeStop.payment_not_collected_reason)?.label || "Saved"}
+                    </Text>
+                    {String(activeStop.payment_not_collected_comment || "").trim() ? (
+                      <Text style={styles.paymentExceptionInfoText}>
+                        Comment: {String(activeStop.payment_not_collected_comment || "").trim()}
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : null}
               </View>
 
               <View
@@ -2780,6 +3100,8 @@ useEffect(() => {
                   </>
                 ) : null}
               </View>
+                </>
+              )}
             </View>
           ) : (
             <View
@@ -2997,10 +3319,7 @@ useEffect(() => {
                               1
                             }
                           >
-                            {stop.customer_name ||
-                              stopLabel(
-                                stop,
-                              )}
+                            {isBreak ? "Break" : (stop.customer_name || stopLabel(stop))}
                           </Text>
 
                           <Text
@@ -3035,6 +3354,7 @@ useEffect(() => {
                             )}
                           </Text>
 
+                          {!isBreak ? (
                           <Text
                             style={
                               styles.stopAddressText
@@ -3049,9 +3369,10 @@ useEffect(() => {
                             ) ||
                               "No address"}
                           </Text>
+                          ) : null}
                         </View>
 
-                        {stop.weather ? (
+                        {!isBreak && stop.weather ? (
                           <Text
                             style={{ color: "#5f735c", fontSize: 11, fontWeight: "800", marginTop: 5 }}
                             numberOfLines={1}
@@ -3163,7 +3484,7 @@ useEffect(() => {
                 Balance Due
               </Text>
               <Text style={styles.paymentSheetAmount}>
-                {moneyText(activeStop?.balance_due || 0)}
+                {moneyText(activeBookingBalanceDue)}
               </Text>
             </View>
 
@@ -3206,7 +3527,7 @@ useEffect(() => {
                 <>
                   <Text style={styles.paymentMethodBodyTitle}>Cash</Text>
                   <Text style={styles.paymentMethodBodyCopy}>
-                    Amount due: {moneyText(activeStop?.balance_due || 0)}
+                    Amount due: {moneyText(activeBookingBalanceDue)}
                   </Text>
                 </>
               ) : null}
@@ -3217,7 +3538,7 @@ useEffect(() => {
                   <Text style={styles.paymentMethodBodyCopy}>FANSOUNDS CORP</Text>
                   <Text style={styles.paymentMethodBodyCopy}>Zelle phone: {ZELLE_PHONE_NUMBER}</Text>
                   <Text style={styles.paymentMethodBodyCopy}>
-                    Amount due: {moneyText(activeStop?.balance_due || 0)}
+                    Amount due: {moneyText(activeBookingBalanceDue)}
                   </Text>
                   <View style={styles.paymentQrBox}>
                     <Image
@@ -3237,7 +3558,7 @@ useEffect(() => {
                   <Text style={styles.paymentMethodBodyTitle}>Venmo</Text>
                   <Text style={styles.paymentMethodBodyCopy}>@bouncepartyla · Fansounds Corp</Text>
                   <Text style={styles.paymentMethodBodyCopy}>
-                    Amount due: {moneyText(activeStop?.balance_due || 0)}
+                    Amount due: {moneyText(activeBookingBalanceDue)}
                   </Text>
                   <View style={styles.paymentQrBox}>
                     <Image
@@ -3304,6 +3625,118 @@ useEffect(() => {
                           ? "Confirm Venmo received"
                           : "Confirm card received"}
                   </Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={paymentExceptionModalOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={closePaymentExceptionModal}
+      >
+        <View style={styles.paymentModalBackdrop}>
+          <Pressable
+            style={styles.paymentModalDismissArea}
+            onPress={closePaymentExceptionModal}
+          />
+
+          <View style={styles.paymentSheet}>
+            <View style={styles.paymentSheetHandle} />
+
+            <View style={styles.paymentSheetHeader}>
+              <Text style={styles.paymentSheetEyebrow}>
+                PAYMENT NOT COLLECTED
+              </Text>
+              <Text style={styles.paymentSheetTitle}>
+                Reason is required
+              </Text>
+              <Text style={styles.paymentSheetAmount}>
+                {moneyText((activeStop?.booking_balance_due ?? activeStop?.balance_due) || 0)}
+              </Text>
+            </View>
+
+            <View style={styles.paymentExceptionReasonList}>
+              {PAYMENT_NOT_COLLECTED_REASON_OPTIONS.map((item) => {
+                const active = paymentExceptionReason === item.value;
+
+                return (
+                  <Pressable
+                    key={item.value}
+                    disabled={paymentExceptionBusy}
+                    onPress={() => {
+                      setPaymentExceptionReason(item.value);
+                      setPaymentExceptionError("");
+                    }}
+                    style={({ pressed }) => [
+                      styles.paymentExceptionReasonRow,
+                      active ? styles.paymentExceptionReasonRowActive : null,
+                      pressed ? styles.pressed : null,
+                      paymentExceptionBusy ? styles.disabledButton : null,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.paymentExceptionReasonText,
+                        active ? styles.paymentExceptionReasonTextActive : null,
+                      ]}
+                    >
+                      {item.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {paymentExceptionReason === "other" ? (
+              <TextInput
+                value={paymentExceptionComment}
+                onChangeText={setPaymentExceptionComment}
+                placeholder="Add comment (required for Other)"
+                placeholderTextColor="rgba(35,49,63,0.44)"
+                multiline
+                textAlignVertical="top"
+                style={styles.paymentExceptionCommentInput}
+              />
+            ) : null}
+
+            {paymentExceptionError ? (
+              <View style={styles.paymentModalErrorCard}>
+                <Text style={styles.paymentModalErrorText}>{paymentExceptionError}</Text>
+              </View>
+            ) : null}
+
+            <View style={styles.paymentSheetActions}>
+              <Pressable
+                disabled={paymentExceptionBusy}
+                onPress={closePaymentExceptionModal}
+                style={({ pressed }) => [
+                  styles.paymentSecondaryButton,
+                  pressed ? styles.pressed : null,
+                  paymentExceptionBusy ? styles.disabledButton : null,
+                ]}
+              >
+                <Text style={styles.paymentSecondaryButtonText}>Close</Text>
+              </Pressable>
+
+              <Pressable
+                disabled={paymentExceptionBusy}
+                onPress={() => {
+                  void confirmPaymentNotCollected();
+                }}
+                style={({ pressed }) => [
+                  styles.paymentPrimaryButton,
+                  pressed ? styles.pressed : null,
+                  paymentExceptionBusy ? styles.disabledButton : null,
+                ]}
+              >
+                {paymentExceptionBusy ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={styles.paymentPrimaryButtonText}>Save Reason</Text>
                 )}
               </Pressable>
             </View>
@@ -3714,10 +4147,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingTop: 20,
     paddingBottom: 48,
-  },
-
-  contentWithStickyAction: {
-    paddingBottom: 168,
   },
 
   centered: {
@@ -4540,12 +4969,9 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
 
+  // Footer stays visible but participates in layout instead of covering content.
   stickyActionWrap: {
-    bottom: 8,
-    left: 0,
-    position: "absolute",
-    right: 0,
-    zIndex: 10,
+    paddingBottom: 8,
   },
 
   stickyActionCard: {
@@ -5234,6 +5660,99 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "900",
     textAlign: "center",
+  },
+
+  paymentActionColumn: {
+    alignItems: "flex-end",
+    gap: 8,
+  },
+
+  operationButtonGhost: {
+    alignItems: "center",
+    backgroundColor: "rgba(35,49,63,0.06)",
+    borderColor: "rgba(35,49,63,0.34)",
+    borderRadius: 999,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 34,
+    paddingHorizontal: 12,
+  },
+
+  operationButtonGhostText: {
+    color: "#23313f",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.2,
+  },
+
+  paymentExceptionInfoCard: {
+    backgroundColor: "rgba(35,49,63,0.05)",
+    borderColor: "rgba(35,49,63,0.15)",
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 3,
+    marginTop: 12,
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+  },
+
+  paymentExceptionInfoTitle: {
+    color: "#23313f",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
+  },
+
+  paymentExceptionInfoText: {
+    color: "#354a5e",
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 17,
+  },
+
+  paymentExceptionReasonList: {
+    gap: 8,
+    marginTop: 12,
+  },
+
+  paymentExceptionReasonRow: {
+    backgroundColor: "#ffffff",
+    borderColor: "#d7ccbf",
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+
+  paymentExceptionReasonRowActive: {
+    backgroundColor: "#23313f",
+    borderColor: "#23313f",
+  },
+
+  paymentExceptionReasonText: {
+    color: "#23313f",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  paymentExceptionReasonTextActive: {
+    color: "#ffffff",
+  },
+
+  paymentExceptionCommentInput: {
+    backgroundColor: "#ffffff",
+    borderColor: "#d7ccbf",
+    borderRadius: 12,
+    borderWidth: 1,
+    color: "#23313f",
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18,
+    marginTop: 10,
+    minHeight: 88,
+    paddingHorizontal: 11,
+    paddingVertical: 10,
   },
 
   paymentCardDisabledButton: {

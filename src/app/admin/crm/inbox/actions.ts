@@ -5,7 +5,10 @@ import { redirect } from "next/navigation";
 
 import { requireAdminPermission } from "@/lib/auth/require-admin";
 import { syncCrmGmailInbox } from "@/lib/crm/gmail";
-import { simulateCrmInstagramInbound } from "@/lib/crm/instagram";
+import {
+  markCrmInstagramConversationSeen,
+  simulateCrmInstagramInbound,
+} from "@/lib/crm/instagram";
 import {
   parseCrmAttachments,
   removeCrmAttachments,
@@ -161,7 +164,7 @@ export async function markCrmConversationReadAction(
 
   const conversationResult = await supabase
     .from("crm_conversations")
-    .select("id, conversation_scope")
+    .select("id, conversation_scope, last_channel")
     .eq("id", safeConversationId)
     .maybeSingle();
 
@@ -201,6 +204,29 @@ export async function markCrmConversationReadAction(
     .eq("id", safeConversationId);
 
   if (result.error) throw new Error(result.error.message);
+
+  const lastChannel = String(
+    conversationResult.data?.last_channel || "",
+  )
+    .trim()
+    .toLowerCase();
+
+  if (lastChannel === "instagram") {
+    await markCrmInstagramConversationSeen({
+      conversationId: safeConversationId,
+    }).catch((error) => {
+      console.warn(
+        "Instagram mark_seen sync failed for CRM read action",
+        {
+          conversationId: safeConversationId,
+          error:
+            error instanceof Error
+              ? error.message
+              : String(error),
+        },
+      );
+    });
+  }
 
   revalidatePath("/admin/crm/inbox");
   revalidatePath(`/admin/crm/inbox/${safeConversationId}`);
@@ -244,6 +270,63 @@ export async function setCrmConversationClosedAction(
   revalidatePath(`/admin/crm/inbox/${conversationId}`);
 
   redirect(`/admin/crm/inbox/${conversationId}`);
+}
+
+export async function updateCrmInstagramLabelAction(
+  formData: FormData,
+) {
+  const { supabase } = await requireAdminPermission("customers.edit");
+
+  const conversationId = String(
+    formData.get("conversationId") || "",
+  ).trim();
+
+  const label = String(
+    formData.get("instagramLabel") || "",
+  )
+    .trim()
+    .toLowerCase();
+
+  if (!conversationId) {
+    throw new Error("Missing conversation id.");
+  }
+
+  const allowedLabels = new Set([
+    "",
+    "flag",
+    "booked",
+    "lead",
+    "ordered",
+    "paid",
+    "shipped",
+  ]);
+
+  if (!allowedLabels.has(label)) {
+    throw new Error("Invalid Instagram label.");
+  }
+
+  const updateResult = await supabase
+    .from("crm_conversations")
+    .update({
+      instagram_label: label || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", conversationId)
+    .eq("last_channel", "instagram")
+    .select("id")
+    .maybeSingle();
+
+  if (updateResult.error) {
+    throw new Error(updateResult.error.message);
+  }
+
+  if (!updateResult.data?.id) {
+    throw new Error("Instagram conversation not found.");
+  }
+
+  revalidatePath("/admin/crm");
+  revalidatePath("/admin/crm/inbox");
+  revalidatePath(`/admin/crm/inbox/${conversationId}`);
 }
 
 export async function updateCrmLeadNotesAction(

@@ -32,6 +32,124 @@ type Owner = {
   lead_id: string | null;
 };
 
+function normalizeInstagramHandle(value: unknown) {
+  return String(value || "")
+    .trim()
+    .replace(/^@+/, "")
+    .toLowerCase();
+}
+
+function isLikelyInstagramUserId(value: unknown) {
+  const normalized = String(value || "").trim();
+
+  return /^[0-9]{8,32}$/.test(normalized);
+}
+
+function resolveInstagramUsername(params: {
+  normalizedIdentity?: string;
+  senderDisplayName?: string;
+}) {
+  const fromIdentity = normalizeInstagramHandle(
+    params.normalizedIdentity,
+  );
+
+  if (
+    fromIdentity &&
+    !isLikelyInstagramUserId(
+      fromIdentity,
+    )
+  ) {
+    return fromIdentity;
+  }
+
+  const fromDisplayName = normalizeInstagramHandle(
+    params.senderDisplayName,
+  );
+
+  if (
+    fromDisplayName &&
+    !isLikelyInstagramUserId(
+      fromDisplayName,
+    )
+  ) {
+    return fromDisplayName;
+  }
+
+  return "";
+}
+
+function shouldBackfillInstagramLeadName(value: string) {
+  const normalized = String(value || "").trim();
+
+  if (!normalized) {
+    return true;
+  }
+
+  return /^instagram\s+/i.test(normalized);
+}
+
+async function backfillInstagramLeadName(params: {
+  leadId: string;
+  normalizedIdentity: string;
+  senderDisplayName?: string;
+}) {
+  const leadId = String(params.leadId || "").trim();
+
+  if (!leadId) {
+    return;
+  }
+
+  const senderDisplayName = String(params.senderDisplayName || "").trim();
+
+  if (!senderDisplayName) {
+    return;
+  }
+
+  const supabase = createServiceClient();
+  const leadResult = await supabase
+    .from("booking_leads")
+    .select("id, customer_name, instagram_username")
+    .eq("id", leadId)
+    .maybeSingle();
+
+  if (leadResult.error || !leadResult.data?.id) {
+    return;
+  }
+
+  const updates: Record<string, unknown> = {};
+  const currentName = String(leadResult.data.customer_name || "").trim();
+  const currentInstagramUsername = String(
+    leadResult.data.instagram_username || "",
+  ).trim();
+
+  if (shouldBackfillInstagramLeadName(currentName)) {
+    updates.customer_name = senderDisplayName;
+  }
+
+  const resolvedInstagramUsername =
+    resolveInstagramUsername({
+      normalizedIdentity:
+        params.normalizedIdentity,
+      senderDisplayName:
+        params.senderDisplayName,
+    });
+
+  if (!currentInstagramUsername && resolvedInstagramUsername) {
+    updates.instagram_username = resolvedInstagramUsername;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return;
+  }
+
+  updates.updated_at = new Date().toISOString();
+
+  await supabase
+    .from("booking_leads")
+    .update(updates)
+    .eq("id", leadId);
+}
+
 function normalizePhone(value: string) {
   const digits = String(value || "")
     .replace(/\D/g, "");
@@ -293,8 +411,18 @@ async function findOrCreateLead(
     params.identityType ===
     "instagram"
   ) {
-    leadInsert.instagram_username =
-      params.normalizedIdentity;
+    const resolvedInstagramUsername =
+      resolveInstagramUsername({
+        normalizedIdentity:
+          params.normalizedIdentity,
+        senderDisplayName:
+          params.senderDisplayName,
+      });
+
+    if (resolvedInstagramUsername) {
+      leadInsert.instagram_username =
+        resolvedInstagramUsername;
+    }
   }
 
   const created = await supabase
@@ -327,6 +455,17 @@ async function resolveOwner(
     });
 
   if (existing) {
+    if (
+      params.identityType === "instagram" &&
+      existing.lead_id
+    ) {
+      await backfillInstagramLeadName({
+        leadId: String(existing.lead_id),
+        normalizedIdentity: params.normalizedIdentity,
+        senderDisplayName: params.senderDisplayName,
+      });
+    }
+
     return existing;
   }
 
@@ -342,6 +481,17 @@ async function resolveOwner(
       : await findOrCreateLead(
           params,
         );
+
+  if (
+    params.identityType === "instagram" &&
+    leadId
+  ) {
+    await backfillInstagramLeadName({
+      leadId,
+      normalizedIdentity: params.normalizedIdentity,
+      senderDisplayName: params.senderDisplayName,
+    });
+  }
 
   const identity =
     await supabase

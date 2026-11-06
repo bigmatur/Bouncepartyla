@@ -94,12 +94,19 @@ export default function DashboardBookingMap({
       const geocoder = new window.google.maps.Geocoder();
       const infoWindow = new window.google.maps.InfoWindow();
 
+      // Several bookings may share an address. Resolve it once per render.
+      const locations = new Map<string, Promise<any | null>>();
       await Promise.all(points.map(async (point) => {
-        const location = await new Promise<any | null>((resolve) => {
-          geocoder.geocode({ address: point.address }, (results: any, status: string) => {
-            resolve(status === "OK" && results?.length ? results[0].geometry?.location || null : null);
-          });
-        });
+        if (cancelled) return;
+        const addressKey = point.address.trim();
+        if (!locations.has(addressKey)) {
+          locations.set(addressKey, new Promise<any | null>((resolve) => {
+            geocoder.geocode({ address: point.address }, (results: any, status: string) => {
+              resolve(status === "OK" && results?.length ? results[0].geometry?.location || null : null);
+            });
+          }));
+        }
+        const location = await locations.get(addressKey)!;
 
         if (cancelled || !location) return;
 
@@ -117,14 +124,28 @@ export default function DashboardBookingMap({
           },
         });
         marker.addListener("click", () => {
-          infoWindow.setContent(`
-            <div style="min-width:180px;padding:2px 1px;font-family:Arial,sans-serif">
-              <strong>${point.bookingNumber}</strong><br/>
-              <span>${point.customerName}</span><br/>
-              <span>${point.eventDate} · ${formatMoney(point.totalAmount)}</span><br/>
-              <a href="/admin/bookings/${point.id}" style="display:inline-block;margin-top:7px;color:#243342;font-weight:600">Open booking</a>
-            </div>
-          `);
+          const content = document.createElement("div");
+          content.style.cssText = "min-width:180px;padding:2px 1px;font-family:Arial,sans-serif";
+
+          const bookingNumber = document.createElement("strong");
+          bookingNumber.textContent = point.bookingNumber;
+          content.append(bookingNumber, document.createElement("br"));
+
+          const customerName = document.createElement("span");
+          customerName.textContent = point.customerName;
+          content.append(customerName, document.createElement("br"));
+
+          const bookingDetails = document.createElement("span");
+          bookingDetails.textContent = `${point.eventDate} · ${formatMoney(point.totalAmount)}`;
+          content.append(bookingDetails, document.createElement("br"));
+
+          const bookingLink = document.createElement("a");
+          bookingLink.href = `/admin/bookings/${encodeURIComponent(point.id)}`;
+          bookingLink.textContent = "Open booking";
+          bookingLink.style.cssText = "display:inline-block;margin-top:7px;color:#243342;font-weight:600";
+          content.append(bookingLink);
+
+          infoWindow.setContent(content);
           infoWindow.open({ map, anchor: marker });
         });
         markers.push(marker);

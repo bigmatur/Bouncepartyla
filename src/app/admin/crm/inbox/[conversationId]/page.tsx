@@ -14,11 +14,68 @@ import {
 } from "../actions";
 import CrmReplyForm from "./CrmReplyForm";
 
+const CRM_TIME_ZONE = "America/Los_Angeles";
+
+function normalizeInstagramHandle(value: unknown) {
+  return String(value || "").trim().replace(/^@+/, "").toLowerCase();
+}
+
+function isGenericInstagramIdentity(value: unknown) {
+  const normalized = String(value || "").trim();
+
+  if (!normalized) {
+    return false;
+  }
+
+  return /^instagram\s+\d+$/i.test(normalized);
+}
+
+function messageSenderDisplayName(message: any) {
+  if (!message || typeof message !== "object") {
+    return "";
+  }
+
+  const metadata =
+    message.metadata && typeof message.metadata === "object"
+      ? (message.metadata as Record<string, unknown>)
+      : {};
+
+  const username = normalizeInstagramHandle(
+    metadata.username || metadata.sender_username,
+  );
+  const channel = String(message.channel || "").trim().toLowerCase();
+
+  if (channel === "instagram" && username) {
+    return `@${username}`;
+  }
+
+  const senderIdentity = String(
+    message.sender_identity || "",
+  ).trim();
+
+  if (
+    senderIdentity &&
+    !isGenericInstagramIdentity(senderIdentity) &&
+    !(channel === "instagram" && /^[0-9]{8,32}$/.test(senderIdentity))
+  ) {
+    return senderIdentity;
+  }
+
+  if (username) {
+    return `@${username}`;
+  }
+
+  return String(
+    metadata.sender_display_name || metadata.sender_name || "",
+  ).trim();
+}
+
 function formatDate(value: string | null | undefined) {
   if (!value) return "";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "";
   return new Intl.DateTimeFormat("en-US", {
+    timeZone: CRM_TIME_ZONE,
     month: "short",
     day: "numeric",
     hour: "numeric",
@@ -84,13 +141,17 @@ export default async function CrmConversationPage({
     ? conversation.data.bookings[0]
     : conversation.data.bookings;
 
+  const rawMessages: any[] = messages.data || [];
+
   const personName =
     customer?.full_name ||
     lead?.customer_name ||
+    messageSenderDisplayName(rawMessages[rawMessages.length - 1]) ||
+    (isGenericInstagramIdentity(conversation.data.subject)
+      ? "Instagram contact"
+      : "") ||
     conversation.data.subject ||
     "Conversation";
-
-  const rawMessages: any[] = messages.data || [];
 
   const allMessages = await Promise.all(
     rawMessages.map(async (message) => {
@@ -211,7 +272,7 @@ export default async function CrmConversationPage({
                         outbound ? "text-white/65" : "text-[#9a723e]",
                       ].join(" ")}
                     >
-                      {channelLabel(message.channel)} · {outbound ? "You" : message.sender_identity || "Customer"}
+                      {channelLabel(message.channel)} · {outbound ? "You" : messageSenderDisplayName(message) || "Customer"}
                     </div>
 
                     {message.body_text && (
@@ -276,9 +337,18 @@ export default async function CrmConversationPage({
                     >
                       <span>{formatDate(message.sent_at || message.created_at)}</span>
                       {outbound && (
-                        <span>· {String(message.status || "sent").replaceAll("_", " ")}</span>
+                        <span>
+                          · {message.failed_at
+                            ? "failed"
+                            : message.read_at
+                              ? "read"
+                              : message.delivered_at
+                                ? "delivered"
+                                : String(message.status || "sent").replaceAll("_", " ")}
+                        </span>
                       )}
-                      {message.delivered_at && <span>Delivered</span>}
+                      {message.read_at && <span>Read</span>}
+                      {!message.read_at && message.delivered_at && <span>Delivered</span>}
                       {message.failed_at && (
                         <span className="font-semibold text-red-500">Failed</span>
                       )}

@@ -208,22 +208,6 @@ export async function POST(request: Request) {
     );
   }
 
-  if (Boolean(stop.payment_collected)) {
-    return NextResponse.json({
-      success: true,
-      data: {
-        stopId,
-        bookingId,
-        method,
-        amountRecorded: authoritativeBalance,
-        amountReported: authoritativeBalance,
-        balanceDue: authoritativeBalance,
-        alreadyReported: true,
-        reportStatus: "already_reported",
-      },
-    });
-  }
-
   if (authoritativeBalance <= 0) {
     return NextResponse.json({
       success: true,
@@ -265,16 +249,29 @@ export async function POST(request: Request) {
         ? (operationalResult.data as Record<string, unknown>)
         : null;
 
+    const alreadyReported = operationalData?.already_reported === true;
+
+    const amountRecorded = Number(
+      operationalData?.payment_collected_amount ??
+        (alreadyReported ? 0 : authoritativeBalance),
+    );
+
     const amountReported = Number(
-      operationalData?.payment_collected_amount ?? authoritativeBalance,
+      operationalData?.booking_payment_reported_amount ??
+        operationalData?.payment_collected_amount ??
+        authoritativeBalance,
     );
 
-    const reportedAt = String(
-      operationalData?.payment_collected_at || new Date().toISOString(),
-    );
+    const reportedAtRaw = operationalData?.payment_collected_at;
+    const reportedAt =
+      typeof reportedAtRaw === "string" && reportedAtRaw.trim()
+        ? reportedAtRaw
+        : alreadyReported
+          ? null
+          : new Date().toISOString();
 
-    const amountForNotification = Number.isFinite(amountReported)
-      ? Number(amountReported.toFixed(2))
+    const amountForNotification = Number.isFinite(amountRecorded)
+      ? Number(amountRecorded.toFixed(2))
       : Number(authoritativeBalance.toFixed(2));
 
     const paymentMethodLabel = String(method || "").trim().toLowerCase();
@@ -282,54 +279,56 @@ export async function POST(request: Request) {
       ? paymentMethodLabel.charAt(0).toUpperCase() + paymentMethodLabel.slice(1)
       : "Payment";
 
-    try {
-      await Promise.all([
-        enqueueStaffBookingNotification({
-          eventCode: "payment_received",
-          bookingId,
-          recipientRole: "admin",
-          dedupeSuffix: `driver-${stopId}`,
-          payload: {
-            payment_amount: amountForNotification,
-            payment_method: paymentMethodDisplay,
-            payment_collected_method: paymentMethodLabel,
-            payment_collected_by: "driver",
-            route_stop_id: stopId,
-            reported_at: reportedAt,
-            action_url: `/admin/bookings/${bookingId}`,
-          },
-        }),
-        enqueueStaffBookingNotification({
-          eventCode: "payment_received",
-          bookingId,
-          recipientRole: "manager",
-          dedupeSuffix: `driver-${stopId}`,
-          payload: {
-            payment_amount: amountForNotification,
-            payment_method: paymentMethodDisplay,
-            payment_collected_method: paymentMethodLabel,
-            payment_collected_by: "driver",
-            route_stop_id: stopId,
-            reported_at: reportedAt,
-            action_url: `/admin/bookings/${bookingId}`,
-          },
-        }),
-      ]);
+    if (!alreadyReported) {
+      try {
+        await Promise.all([
+          enqueueStaffBookingNotification({
+            eventCode: "payment_received",
+            bookingId,
+            recipientRole: "admin",
+            dedupeSuffix: `driver-${stopId}`,
+            payload: {
+              payment_amount: amountForNotification,
+              payment_method: paymentMethodDisplay,
+              payment_collected_method: paymentMethodLabel,
+              payment_collected_by: "driver",
+              route_stop_id: stopId,
+              reported_at: reportedAt,
+              action_url: `/admin/bookings/${bookingId}`,
+            },
+          }),
+          enqueueStaffBookingNotification({
+            eventCode: "payment_received",
+            bookingId,
+            recipientRole: "manager",
+            dedupeSuffix: `driver-${stopId}`,
+            payload: {
+              payment_amount: amountForNotification,
+              payment_method: paymentMethodDisplay,
+              payment_collected_method: paymentMethodLabel,
+              payment_collected_by: "driver",
+              route_stop_id: stopId,
+              reported_at: reportedAt,
+              action_url: `/admin/bookings/${bookingId}`,
+            },
+          }),
+        ]);
 
-      await processNotificationQueueBestEffort({
-        bookingId,
-        limit: 20,
-      });
-    } catch (notificationError) {
-      console.error("Driver payment notification enqueue failed", {
-        stopId,
-        bookingId,
-        method,
-        error:
-          notificationError instanceof Error
-            ? notificationError.message
-            : String(notificationError),
-      });
+        await processNotificationQueueBestEffort({
+          bookingId,
+          limit: 20,
+        });
+      } catch (notificationError) {
+        console.error("Driver payment notification enqueue failed", {
+          stopId,
+          bookingId,
+          method,
+          error:
+            notificationError instanceof Error
+              ? notificationError.message
+              : String(notificationError),
+        });
+      }
     }
 
     return NextResponse.json({
@@ -338,15 +337,17 @@ export async function POST(request: Request) {
         stopId,
         bookingId,
         method,
-        amountRecorded: Number.isFinite(amountReported)
-          ? Number(amountReported.toFixed(2))
-          : Number(authoritativeBalance.toFixed(2)),
+        amountRecorded: Number.isFinite(amountRecorded)
+          ? Number(amountRecorded.toFixed(2))
+          : alreadyReported
+            ? 0
+            : Number(authoritativeBalance.toFixed(2)),
         amountReported: Number.isFinite(amountReported)
           ? Number(amountReported.toFixed(2))
           : Number(authoritativeBalance.toFixed(2)),
         balanceDue: Number(authoritativeBalance.toFixed(2)),
-        alreadyReported: false,
-        reportStatus: "reported",
+        alreadyReported,
+        reportStatus: alreadyReported ? "already_reported" : "reported",
         reportedAt,
       },
     });

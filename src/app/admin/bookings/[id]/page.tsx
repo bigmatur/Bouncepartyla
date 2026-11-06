@@ -29,6 +29,7 @@ type PageProps = {
     saved?: string;
     resign?: string;
     inventory?: string;
+    operational?: string;
     approvalWarning?: string;
     pos?: string;
     completionUrl?: string;
@@ -851,6 +852,7 @@ export default async function BookingDetailsPage(props: PageProps) {
   const savedValue = String(searchParams?.saved || "");
   const showSavedBanner = Boolean(savedValue);
   const showResignBanner = String(searchParams?.resign || "") === "1";
+  const showOperationalWarning = searchParams?.operational === "warning";
   const showInventoryWarning = String(searchParams?.inventory || "") === "warning";
   const showApprovalWarning = String(searchParams?.approvalWarning || "") === "park-capacity";
   const autoOpenPos = String(searchParams?.pos || "") === "1";
@@ -907,6 +909,8 @@ export default async function BookingDetailsPage(props: PageProps) {
           Booking saved, but some inventory reservations could not be rebuilt for selected date/time.
         </section>
       )}
+
+      {showOperationalWarning && (<section role="alert" className="rounded-2xl border border-amber-300 bg-amber-50 px-5 py-3 text-sm text-amber-900">Booking saved, but equipment synchronization is incomplete. Check the checklist, route items, and handover document before dispatch.</section>)}
 
       {showApprovalWarning && (
         <section className="rounded-2xl border border-[#efd582] bg-[#fff4d8] px-5 py-3 text-sm text-[#8a6b20]">

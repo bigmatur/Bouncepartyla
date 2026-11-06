@@ -8,6 +8,7 @@ export type SalesTaxRow = {
   eventDate: string;
   address: string;
   city: string;
+  zip: string;
   county: string;
   cashlessPayment: number;
   cash: number;
@@ -38,18 +39,6 @@ function normalizeIsoDate(value: string | null | undefined) {
 
 function one<T = any>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? value[0] || null : value || null;
-}
-
-function isMissingTableError(error: any) {
-  const message = String(error?.message || "").toLowerCase();
-  const code = String(error?.code || "").toLowerCase();
-
-  return (
-    code === "42p01" ||
-    message.includes("could not find the table") ||
-    message.includes("schema cache") ||
-    message.includes("relation")
-  );
 }
 
 export function resolveSalesTaxRange(params?: { from?: string; to?: string }) {
@@ -178,48 +167,6 @@ export async function loadSalesTaxReportData(params: {
 
   const bookings = (bookingsResult.data || []) as any[];
 
-  const zipCodes = Array.from(
-    new Set(
-      bookings
-        .map((booking) => String(booking?.setup_zip || "").trim())
-        .filter(Boolean)
-    )
-  );
-
-  let taxRows: any[] = [];
-
-  if (zipCodes.length > 0) {
-    const taxResult = await supabase
-      .from("tax_rates_cache")
-      .select("zip, tax_area_code, tax_rate, created_at")
-      .in("zip", zipCodes)
-      .order("created_at", { ascending: false });
-
-    if (taxResult.error && !isMissingTableError(taxResult.error)) {
-      throw new Error(taxResult.error.message);
-    }
-
-    taxRows = taxResult.error ? [] : taxResult.data || [];
-  }
-
-  const taxMetaByZip = new Map<string, { county: string; taxRatePercent: number | null }>();
-
-  for (const row of taxRows) {
-    const zip = String((row as any)?.zip || "").trim();
-
-    if (!zip || taxMetaByZip.has(zip)) {
-      continue;
-    }
-
-    const rawCounty = String((row as any)?.tax_area_code || "").trim();
-    const normalizedRate = normalizeTaxRateToPercent((row as any)?.tax_rate);
-
-    taxMetaByZip.set(zip, {
-      county: rawCounty ? rawCounty.toUpperCase() : "—",
-      taxRatePercent: normalizedRate > 0 ? Number(normalizedRate.toFixed(2)) : null,
-    });
-  }
-
   const rows: SalesTaxRow[] = bookings
     .filter((booking) => {
       const status = String(booking?.status || "").toLowerCase();
@@ -236,9 +183,8 @@ export async function loadSalesTaxReportData(params: {
       const split = splitPayments(paymentRows);
       const city = String(booking?.setup_city || "").trim();
       const zip = String(booking?.setup_zip || "").trim();
-      const taxMeta = taxMetaByZip.get(zip) || null;
       const bookingTaxPercent = normalizeTaxRateToPercent(booking?.tax_rate);
-      const taxRatePercent = Number((bookingTaxPercent || taxMeta?.taxRatePercent || 0).toFixed(2));
+      const taxRatePercent = Number((bookingTaxPercent || 0).toFixed(2));
       const totalTax = Number(Number(booking?.tax_amount || 0).toFixed(2));
 
       return {
@@ -247,7 +193,8 @@ export async function loadSalesTaxReportData(params: {
         eventDate: String(booking?.event_date || ""),
         address: buildAddress(booking),
         city: city || "—",
-        county: taxMeta?.county || "—",
+        zip,
+        county: "—",
         cashlessPayment: Number(split.cashless.toFixed(2)),
         cash: Number(split.cash.toFixed(2)),
         taxRatePercent,

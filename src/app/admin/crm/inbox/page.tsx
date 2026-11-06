@@ -23,6 +23,7 @@ import {
   setCrmConversationClosedAction,
   simulateCrmInstagramInboundAction,
   syncCrmEmailInboxAction,
+  updateCrmInstagramLabelAction,
   updateCrmLeadNotesAction,
   updateCrmLeadFollowUpAction,
   updateCrmLeadStatusAction,
@@ -33,6 +34,71 @@ type SearchParams = Promise<{
   q?: string;
   conversation?: string;
 }>;
+
+const CRM_TIME_ZONE = "America/Los_Angeles";
+
+function normalizeInstagramHandle(value: unknown) {
+  return String(value || "").trim().replace(/^@+/, "").toLowerCase();
+}
+
+function isGenericInstagramIdentity(value: unknown) {
+  const normalized = String(value || "").trim();
+
+  if (!normalized) {
+    return false;
+  }
+
+  return /^instagram\s+\d+$/i.test(normalized);
+}
+
+function messageSenderDisplayName(message: any) {
+  if (!message || typeof message !== "object") {
+    return "";
+  }
+
+  const metadata =
+    message.metadata && typeof message.metadata === "object"
+      ? (message.metadata as Record<string, unknown>)
+      : {};
+
+  const username = normalizeInstagramHandle(
+    metadata.username || metadata.sender_username,
+  );
+  const channel = String(message.channel || "").trim().toLowerCase();
+
+  if (channel === "instagram" && username) {
+    return `@${username}`;
+  }
+
+  const senderIdentity = String(
+    message.sender_identity || "",
+  ).trim();
+
+  if (
+    senderIdentity &&
+    !isGenericInstagramIdentity(senderIdentity) &&
+    !(channel === "instagram" && /^[0-9]{8,32}$/.test(senderIdentity))
+  ) {
+    return senderIdentity;
+  }
+
+  if (username) {
+    return `@${username}`;
+  }
+
+  return String(
+    metadata.sender_display_name || metadata.sender_name || "",
+  ).trim();
+}
+
+function conversationDateKey(value: Date) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: CRM_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(value);
+}
 
 function formatConversationTime(
   value: string | null | undefined,
@@ -45,18 +111,19 @@ function formatConversationTime(
   const now = new Date();
 
   const sameDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate();
+    conversationDateKey(date) ===
+    conversationDateKey(now);
 
   if (sameDay) {
     return new Intl.DateTimeFormat("en-US", {
+      timeZone: CRM_TIME_ZONE,
       hour: "numeric",
       minute: "2-digit",
     }).format(date);
   }
 
   return new Intl.DateTimeFormat("en-US", {
+    timeZone: CRM_TIME_ZONE,
     month: "short",
     day: "numeric",
   }).format(date);
@@ -71,6 +138,7 @@ function formatMessageTime(
   if (Number.isNaN(date.getTime())) return "";
 
   return new Intl.DateTimeFormat("en-US", {
+    timeZone: CRM_TIME_ZONE,
     month: "short",
     day: "numeric",
     hour: "numeric",
@@ -108,6 +176,30 @@ function leadStatusLabel(
     : "";
 }
 
+function instagramLabelOptions() {
+  return [
+    { value: "", label: "No label" },
+    { value: "flag", label: "Flag" },
+    { value: "booked", label: "Booked" },
+    { value: "lead", label: "Lead" },
+    { value: "ordered", label: "Ordered" },
+    { value: "paid", label: "Paid" },
+    { value: "shipped", label: "Shipped" },
+  ];
+}
+
+function instagramLabelText(value: unknown) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+
+  const option = instagramLabelOptions().find(
+    (item) => item.value === normalized,
+  );
+
+  return option?.label || "";
+}
+
 function normalizeSearchValue(value: unknown) {
   return String(value || "")
     .trim()
@@ -118,11 +210,13 @@ function conversationPersonName(params: {
   conversation: any;
   lead: any;
   customer: any;
+  lastMessage?: any;
 }) {
   const {
     conversation,
     lead,
     customer,
+    lastMessage,
   } = params;
 
   const customerName = customer
@@ -139,6 +233,12 @@ function conversationPersonName(params: {
     customerName ||
     String(customer?.full_name || "").trim() ||
     String(lead?.customer_name || "").trim() ||
+    messageSenderDisplayName(
+      lastMessage,
+    ) ||
+    (isGenericInstagramIdentity(conversation?.subject)
+      ? "Instagram contact"
+      : "") ||
     String(conversation.subject || "").trim() ||
     "CRM contact"
   );
@@ -148,11 +248,13 @@ function conversationSubtitle(params: {
   conversation: any;
   lead: any;
   customer: any;
+  lastMessage?: any;
 }) {
   const {
     conversation,
     lead,
     customer,
+    lastMessage,
   } = params;
 
   const instagramUsername = String(
@@ -161,6 +263,15 @@ function conversationSubtitle(params: {
 
   if (instagramUsername) {
     return `@${instagramUsername.replace(/^@+/, "")}`;
+  }
+
+  const messageSender =
+    messageSenderDisplayName(
+      lastMessage,
+    );
+
+  if (messageSender) {
+    return messageSender;
   }
 
   return (
@@ -245,6 +356,7 @@ export default async function CrmInboxPage({
       status,
       priority,
       needs_reply,
+      instagram_label,
       unread_count,
       last_read_at,
       last_channel,
@@ -414,7 +526,9 @@ export default async function CrmInboxPage({
         conversation_id,
         direction,
         channel,
+        sender_identity,
         body_text,
+        metadata,
         sent_at,
         created_at
       `)
@@ -508,6 +622,10 @@ export default async function CrmInboxPage({
             lead?.status,
             lead?.requested_product,
             lastMessage?.body_text,
+            lastMessage?.sender_identity,
+            messageSenderDisplayName(
+              lastMessage,
+            ),
           ]
             .map(
               normalizeSearchValue,
@@ -546,6 +664,7 @@ export default async function CrmInboxPage({
           status,
           priority,
           needs_reply,
+          instagram_label,
           unread_count,
           last_read_at,
           last_channel,
@@ -1239,6 +1358,7 @@ export default async function CrmInboxPage({
                           conversation,
                           lead,
                           customer,
+                          lastMessage,
                         },
                       );
 
@@ -1248,6 +1368,7 @@ export default async function CrmInboxPage({
                           conversation,
                           lead,
                           customer,
+                          lastMessage,
                         },
                       );
 
@@ -1348,6 +1469,12 @@ export default async function CrmInboxPage({
                                 </span>
                               )}
 
+                              {conversation.instagram_label && (
+                                <span className="max-w-[130px] truncate rounded-full bg-[#efe9ff] px-2 py-0.5 text-[9px] font-bold text-[#5742a2]">
+                                  {instagramLabelText(conversation.instagram_label)}
+                                </span>
+                              )}
+
                               {conversation.needs_reply && (
                                 <span className="rounded-full bg-[#fff0d5] px-2 py-0.5 text-[9px] font-bold text-[#9b6100]">
                                   NEEDS REPLY
@@ -1427,6 +1554,7 @@ export default async function CrmInboxPage({
           conversation: selectedConversation,
           lead: selectedLead,
           customer: selectedCustomer,
+          lastMessage: selectedMessages[selectedMessages.length - 1],
         })
           .slice(0, 2)
           .toUpperCase()}
@@ -1439,6 +1567,7 @@ export default async function CrmInboxPage({
               conversation: selectedConversation,
               lead: selectedLead,
               customer: selectedCustomer,
+              lastMessage: selectedMessages[selectedMessages.length - 1],
             })}
           </h2>
 
@@ -1452,6 +1581,14 @@ export default async function CrmInboxPage({
             <span className="rounded-full bg-[#f1ede7] px-2.5 py-1 text-[10px] font-bold text-[#70665c]">
               {leadStatusLabel(
                 selectedLead.status,
+              )}
+            </span>
+          )}
+
+          {selectedConversation.instagram_label && (
+            <span className="rounded-full bg-[#efe9ff] px-2.5 py-1 text-[10px] font-bold text-[#5742a2]">
+              {instagramLabelText(
+                selectedConversation.instagram_label,
               )}
             </span>
           )}
@@ -1480,6 +1617,7 @@ export default async function CrmInboxPage({
               conversation: selectedConversation,
               lead: selectedLead,
               customer: selectedCustomer,
+              lastMessage: selectedMessages[selectedMessages.length - 1],
             })}
           </span>
 
@@ -1558,6 +1696,44 @@ export default async function CrmInboxPage({
         </button>
       </form>
 
+      {String(
+        selectedConversation.last_channel || "",
+      )
+        .trim()
+        .toLowerCase() === "instagram" && (
+        <form
+          action={updateCrmInstagramLabelAction}
+          className="flex items-center gap-2"
+        >
+          <input
+            type="hidden"
+            name="conversationId"
+            value={selectedConversation.id}
+          />
+
+          <select
+            name="instagramLabel"
+            defaultValue={String(selectedConversation.instagram_label || "")
+              .trim()
+              .toLowerCase()}
+            className="rounded-full border border-[#d8cec0] bg-white px-3 py-2 text-xs font-semibold text-[#443d37] outline-none"
+          >
+            {instagramLabelOptions().map((option) => (
+              <option key={option.value || "none"} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+
+          <button
+            type="submit"
+            className="rounded-full border border-[#d8cec0] bg-white px-3 py-2 text-xs font-semibold text-[#443d37] transition hover:bg-[#f7f3ed]"
+          >
+            Save label
+          </button>
+        </form>
+      )}
+
         {selectedLead?.id && (
           <a
             href={`/admin/crm/events/${selectedLead.id}`}
@@ -1623,7 +1799,7 @@ export default async function CrmInboxPage({
                                 <span>
                                   {outbound
                                     ? "You"
-                                    : message.sender_identity ||
+                                    : messageSenderDisplayName(message) ||
                                       "Customer"}
                                 </span>
                               </div>
@@ -1727,13 +1903,19 @@ export default async function CrmInboxPage({
                                 {outbound && (
                                   <span>
                                     ·{" "}
-                                    {String(
-                                      message.status ||
-                                        "sent",
-                                    ).replaceAll(
-                                      "_",
-                                      " ",
-                                    )}
+                                    {message.failed_at
+                                      ? "failed"
+                                      : message.read_at
+                                        ? "read"
+                                        : message.delivered_at
+                                          ? "delivered"
+                                          : String(
+                                              message.status ||
+                                                "sent",
+                                            ).replaceAll(
+                                              "_",
+                                              " ",
+                                            )}
                                   </span>
                                 )}
                               </div>
@@ -1852,6 +2034,7 @@ export default async function CrmInboxPage({
         canReply={canReply}
         replyAction={replyToCrmConversationAction}
         closeAction={setCrmConversationClosedAction}
+      updateInstagramLabelAction={updateCrmInstagramLabelAction}
       updateLeadNotesAction={updateCrmLeadNotesAction}
       updateLeadFollowUpAction={updateCrmLeadFollowUpAction}
       createTaskAction={createTaskAction}

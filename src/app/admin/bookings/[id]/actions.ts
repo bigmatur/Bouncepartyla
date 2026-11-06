@@ -16,6 +16,10 @@ import {
 } from "@/lib/booking/operational-equipment";
 import { checkBookingItemAvailabilityAction } from "../new/availability-actions";
 import { scryptSync, timingSafeEqual } from "node:crypto";
+import {
+  resolveAuthoritativeModifierInventorySelections,
+  type ModifierInventorySelectionInput,
+} from "@/lib/booking/modifier-inventory-resolver";
 
 function getString(formData: FormData, key: string) {
   const value = formData.get(key);
@@ -957,6 +961,164 @@ async function insertBookingItemWithFallback(params: {
   return String((data as any).id);
 }
 
+async function resolveLegacyModifierIdsForOptions(params: {
+  supabase: any;
+  options: Array<{
+    optionId: string;
+    optionName: string;
+  }>;
+  initialByOptionId?: Map<string, string>;
+}) {
+  const resolvedByOptionId = new Map<string, string>(params.initialByOptionId || []);
+
+  const optionsById = new Map<string, string>();
+
+  for (const option of params.options) {
+    const optionId = String(option.optionId || "").trim();
+    if (!optionId) {
+      continue;
+    }
+
+    if (!optionsById.has(optionId)) {
+      optionsById.set(optionId, String(option.optionName || "").trim());
+    }
+  }
+
+  const optionIds = Array.from(optionsById.keys());
+
+  if (optionIds.length === 0) {
+    return resolvedByOptionId;
+  }
+
+  let optionRowsResult: any = await params.supabase
+    .from("modifier_group_options")
+    .select("id, modifier_id, option_name")
+    .in("id", optionIds);
+
+  if (
+    optionRowsResult.error &&
+    isMissingColumnError(optionRowsResult.error, "modifier_group_options", "modifier_id")
+  ) {
+    optionRowsResult = await params.supabase
+      .from("modifier_group_options")
+      .select("id, option_name")
+      .in("id", optionIds);
+  }
+
+  if (optionRowsResult.error) {
+    throw new Error(optionRowsResult.error.message);
+  }
+
+  const optionRowsById = new Map<string, any>();
+
+  for (const row of optionRowsResult.data || []) {
+    const optionId = String((row as any).id || "").trim();
+    if (!optionId) {
+      continue;
+    }
+
+    optionRowsById.set(optionId, row);
+
+    const linkedModifierId = String((row as any).modifier_id || "").trim();
+    if (linkedModifierId) {
+      resolvedByOptionId.set(optionId, linkedModifierId);
+    }
+  }
+
+  for (const optionId of optionIds) {
+    if (resolvedByOptionId.has(optionId)) {
+      continue;
+    }
+
+    const optionRow = optionRowsById.get(optionId);
+    const optionName =
+      optionsById.get(optionId) ||
+      String((optionRow as any)?.option_name || "Option").trim();
+
+    const slugBase = `auto-opt-${optionId.replace(/[^a-zA-Z0-9]+/g, "").slice(0, 16)}`;
+
+    let legacyModifierId = "";
+
+    let existingBySlugResult: any = await params.supabase
+      .from("modifiers")
+      .select("id")
+      .eq("slug", slugBase)
+      .maybeSingle();
+
+    if (existingBySlugResult.error) {
+      if (isMissingColumnError(existingBySlugResult.error, "modifiers", "slug")) {
+        existingBySlugResult = { data: null, error: null };
+      } else {
+        throw new Error(existingBySlugResult.error.message);
+      }
+    }
+
+    if (existingBySlugResult.data?.id) {
+      legacyModifierId = String((existingBySlugResult.data as any).id);
+    }
+
+    if (!legacyModifierId) {
+      let createResult: any = await params.supabase
+        .from("modifiers")
+        .insert({
+          name: optionName || "Option",
+          slug: slugBase,
+          base_price: 0,
+          taxable: true,
+          active: true,
+          sort_order: 0,
+        })
+        .select("id")
+        .single();
+
+      if (createResult.error && isMissingColumnError(createResult.error, "modifiers", "slug")) {
+        createResult = await params.supabase
+          .from("modifiers")
+          .insert({
+            name: optionName || "Option",
+            base_price: 0,
+            taxable: true,
+            active: true,
+            sort_order: 0,
+          })
+          .select("id")
+          .single();
+      }
+
+      if (createResult.error) {
+        throw new Error(createResult.error.message);
+      }
+
+      legacyModifierId = String((createResult.data as any)?.id || "");
+    }
+
+    if (!legacyModifierId) {
+      throw new Error(`Failed to resolve modifier_id for option ${optionId}`);
+    }
+
+    resolvedByOptionId.set(optionId, legacyModifierId);
+
+    const linkResult = await params.supabase
+      .from("modifier_group_options")
+      .update({ modifier_id: legacyModifierId })
+      .eq("id", optionId);
+
+    if (linkResult.error && !isMissingColumnError(linkResult.error, "modifier_group_options", "modifier_id")) {
+      throw new Error(linkResult.error.message);
+    }
+  }
+
+  const unresolvedOptionIds = optionIds.filter((optionId) => !resolvedByOptionId.get(optionId));
+
+  if (unresolvedOptionIds.length > 0) {
+    throw new Error(
+      `Failed to resolve modifier_id for options: ${Array.from(new Set(unresolvedOptionIds)).join(", ")}`
+    );
+  }
+
+  return resolvedByOptionId;
+}
+
 async function insertBookingModifiersWithFallback(params: {
   bookingId: string;
   modifiers: Array<{
@@ -973,107 +1135,20 @@ async function insertBookingModifiersWithFallback(params: {
     inventoryQuantity: number;
     trackInventory: boolean;
   }>;
+  preResolvedLegacyModifierIdByOptionId?: Map<string, string>;
 }) {
   const supabase = await createClient();
 
   if (params.modifiers.length === 0) return;
 
-  const optionIds = Array.from(new Set(params.modifiers.map((item) => item.optionId))).filter(
-    Boolean
-  );
-
-  const optionToLegacyModifierId = new Map<string, string>();
-
-  if (optionIds.length > 0) {
-    let optionRowsResult: any = await supabase
-      .from("modifier_group_options")
-      .select("id, modifier_id, name, option_name, label")
-      .in("id", optionIds);
-
-    if (
-      optionRowsResult.error &&
-      isMissingColumnError(
-        optionRowsResult.error,
-        "modifier_group_options",
-        "modifier_id"
-      )
-    ) {
-      optionRowsResult = await supabase
-        .from("modifier_group_options")
-        .select("id, name, option_name, label")
-        .in("id", optionIds);
-    }
-
-    const optionRows = optionRowsResult.data || [];
-
-    for (const row of optionRows) {
-      if ((row as any).id && (row as any).modifier_id) {
-        optionToLegacyModifierId.set((row as any).id, (row as any).modifier_id);
-      }
-    }
-
-    for (const row of optionRows) {
-      const optionId = String((row as any).id || "");
-
-      if (!optionId || optionToLegacyModifierId.has(optionId)) {
-        continue;
-      }
-
-      const optionName = String(
-        (row as any).option_name || (row as any).name || (row as any).label || "Option"
-      ).trim();
-
-      const slugBase = `auto-opt-${optionId.replace(/[^a-zA-Z0-9]+/g, "").slice(0, 16)}`;
-
-      let legacyModifierId = "";
-
-      const existingModifierResult = await supabase
-        .from("modifiers")
-        .select("id")
-        .eq("slug", slugBase)
-        .maybeSingle();
-
-      if (!existingModifierResult.error && existingModifierResult.data?.id) {
-        legacyModifierId = String((existingModifierResult.data as any).id);
-      }
-
-      if (!legacyModifierId) {
-        const createModifierResult = await supabase
-          .from("modifiers")
-          .insert({
-            name: optionName || "Option",
-            slug: slugBase,
-            base_price: 0,
-            taxable: true,
-            active: true,
-            sort_order: 0,
-          })
-          .select("id")
-          .single();
-
-        if (!createModifierResult.error && createModifierResult.data?.id) {
-          legacyModifierId = String((createModifierResult.data as any).id);
-        }
-      }
-
-      if (legacyModifierId) {
-        optionToLegacyModifierId.set(optionId, legacyModifierId);
-
-        const linkResult = await supabase
-          .from("modifier_group_options")
-          .update({ modifier_id: legacyModifierId })
-          .eq("id", optionId);
-
-        if (linkResult.error && !isMissingColumnError(linkResult.error, "modifier_group_options", "modifier_id")) {
-          console.warn("Failed to link option to generated legacy modifier", {
-            optionId,
-            legacyModifierId,
-            error: linkResult.error.message,
-          });
-        }
-      }
-    }
-  }
+  let resolvedLegacyModifierIdByOptionId = await resolveLegacyModifierIdsForOptions({
+    supabase,
+    options: params.modifiers.map((item) => ({
+      optionId: item.optionId,
+      optionName: item.optionName,
+    })),
+    initialByOptionId: params.preResolvedLegacyModifierIdByOptionId,
+  });
 
   const fkModifierIdConstraint = "booking_modifiers_modifier_id_fkey";
 
@@ -1086,234 +1161,64 @@ async function insertBookingModifiersWithFallback(params: {
   }) =>
     `[idx:${item.itemIndex}][gid:${item.groupId}][oid:${item.optionId}] ${item.groupName}: ${item.optionName}`;
 
-  async function ensureLegacyModifierId(optionId: string, optionName: string) {
-    const existing = optionToLegacyModifierId.get(optionId);
-    if (existing) {
-      return existing;
+  function buildStrictRows() {
+    const unresolvedOptionIds = params.modifiers
+      .filter((item) => !resolvedLegacyModifierIdByOptionId.get(item.optionId))
+      .map((item) => item.optionId);
+
+    if (unresolvedOptionIds.length > 0) {
+      throw new Error(
+        `Failed to resolve modifier_id for options: ${Array.from(
+          new Set(unresolvedOptionIds)
+        ).join(", ")}`
+      );
     }
 
-    const slugBase = `auto-opt-${optionId.replace(/[^a-zA-Z0-9]+/g, "").slice(0, 16)}`;
-
-    const existingBySlugResult = await supabase
-      .from("modifiers")
-      .select("id")
-      .eq("slug", slugBase)
-      .maybeSingle();
-
-    if (!existingBySlugResult.error && (existingBySlugResult.data as any)?.id) {
-      const id = String((existingBySlugResult.data as any).id);
-      optionToLegacyModifierId.set(optionId, id);
-      return id;
-    }
-
-    let createResult: any = await supabase
-      .from("modifiers")
-      .insert({
-        name: optionName || "Option",
-        slug: slugBase,
-        base_price: 0,
-        taxable: true,
-        active: true,
-        sort_order: 0,
-      })
-      .select("id")
-      .single();
-
-    if (createResult.error && isMissingColumnError(createResult.error, "modifiers", "slug")) {
-      createResult = await supabase
-        .from("modifiers")
-        .insert({
-          name: optionName || "Option",
-          base_price: 0,
-          taxable: true,
-          active: true,
-          sort_order: 0,
-        })
-        .select("id")
-        .single();
-    }
-
-    if (createResult.error) {
-      return "";
-    }
-
-    const createdId = String((createResult.data as any)?.id || "");
-    if (!createdId) {
-      return "";
-    }
-
-    optionToLegacyModifierId.set(optionId, createdId);
-
-    const linkResult = await supabase
-      .from("modifier_group_options")
-      .update({ modifier_id: createdId })
-      .eq("id", optionId);
-
-    if (linkResult.error && !isMissingColumnError(linkResult.error, "modifier_group_options", "modifier_id")) {
-      console.warn("Failed to link option to generated legacy modifier", {
-        optionId,
-        createdId,
-        error: linkResult.error.message,
-      });
-    }
-
-    return createdId;
-  }
-
-  const resolvedLegacyModifierIdByOptionId = new Map<string, string>();
-
-  for (const item of params.modifiers) {
-    const optionId = String(item.optionId || "");
-    if (!optionId) {
-      continue;
-    }
-
-    const ensuredId = await ensureLegacyModifierId(optionId, item.optionName);
-    if (ensuredId) {
-      resolvedLegacyModifierIdByOptionId.set(optionId, ensuredId);
-    }
-  }
-
-  async function insertWithNewSchemaVariants() {
-    const variants: Array<Array<Record<string, any>>> = [
-      params.modifiers.map((item) => ({
-        booking_id: params.bookingId,
-        booking_item_id: item.bookingItemId,
-        modifier_group_id: item.groupId,
-        modifier_group_option_id: item.optionId,
-        inventory_item_id: item.inventoryItemId,
-        inventory_quantity: item.inventoryQuantity * item.quantity,
-        track_inventory: item.trackInventory,
-        price_delta: item.priceDelta,
-        label: item.optionName,
-        quantity: item.quantity,
-        unit_price: item.priceDelta,
-        line_total: Number((item.priceDelta * item.quantity).toFixed(2)),
-        notes: modifierNote(item),
-      })),
-
-      params.modifiers.map((item) => ({
-        booking_id: params.bookingId,
-        booking_item_id: item.bookingItemId,
-        modifier_group_id: item.groupId,
-        modifier_group_option_id: item.optionId,
-        price_delta: item.priceDelta,
-        label: item.optionName,
-        quantity: item.quantity,
-        unit_price: item.priceDelta,
-        line_total: Number((item.priceDelta * item.quantity).toFixed(2)),
-        notes: modifierNote(item),
-      })),
-
-      params.modifiers.map((item) => ({
-        booking_id: params.bookingId,
-        booking_item_id: item.bookingItemId,
-        modifier_group_id: item.groupId,
-        modifier_group_option_id: item.optionId,
-        price_delta: item.priceDelta,
-        label: item.optionName,
-        quantity: item.quantity,
-        unit_price: item.priceDelta,
-        line_total: Number((item.priceDelta * item.quantity).toFixed(2)),
-        notes: modifierNote(item),
-      })),
-
-      params.modifiers.map((item) => ({
-        booking_id: params.bookingId,
-        booking_item_id: item.bookingItemId,
-        modifier_group_id: item.groupId,
-        modifier_group_option_id: item.optionId,
-        quantity: item.quantity,
-        unit_price: item.priceDelta,
-        line_total: Number((item.priceDelta * item.quantity).toFixed(2)),
-        notes: modifierNote(item),
-      })),
-
-      params.modifiers.map((item) => ({
-        booking_id: params.bookingId,
-        booking_item_id: item.bookingItemId,
-        modifier_group_id: item.groupId,
-        modifier_group_option_id: item.optionId,
-        quantity: item.quantity,
-        unit_price: item.priceDelta,
-        line_total: Number((item.priceDelta * item.quantity).toFixed(2)),
-        notes: modifierNote(item),
-      })),
-
-      params.modifiers.map((item) => ({
-        booking_id: params.bookingId,
-        booking_item_id: item.bookingItemId,
-        modifier_group_option_id: item.optionId,
-        quantity: item.quantity,
-        notes: modifierNote(item),
-      })),
-
-      params.modifiers.map((item) => ({
-        booking_id: params.bookingId,
-        booking_item_id: item.bookingItemId,
-        modifier_group_option_id: item.optionId,
-        quantity: item.quantity,
-        notes: modifierNote(item),
-      })),
-    ];
-
-    let lastError: any = null;
-
-    for (const rows of variants) {
-      const result = await supabase.from("booking_modifiers").insert(rows);
-
-      if (!result.error) {
-        return null;
-      }
-
-      lastError = result.error;
-    }
-
-    return lastError;
-  }
-
-  let { error } = await supabase.from("booking_modifiers").insert(
-    params.modifiers.map((item) => ({
+    return params.modifiers.map((item) => ({
       booking_id: params.bookingId,
       booking_item_id: item.bookingItemId,
-      modifier_id: resolvedLegacyModifierIdByOptionId.get(item.optionId) || item.optionId,
+
+      // Keep compatibility with the existing modifier schema.
+      modifier_id: resolvedLegacyModifierIdByOptionId.get(item.optionId)!,
+
+      // Preserve the selected option and inventory relationship.
+      modifier_group_id: item.groupId,
+      modifier_group_option_id: item.optionId,
+      inventory_item_id: item.inventoryItemId,
+      inventory_quantity: item.inventoryQuantity * item.quantity,
+      track_inventory: item.trackInventory,
+
       quantity: item.quantity,
       unit_price: item.priceDelta,
+      price_delta: item.priceDelta,
       subtotal: Number((item.priceDelta * item.quantity).toFixed(2)),
       taxable: true,
       notes: modifierNote(item),
-    }))
-  );
+    }));
+  }
+
+  let strictRows = buildStrictRows();
+
+  let { error } = await supabase.from("booking_modifiers").insert(strictRows);
 
   if (
     error &&
     String(error?.message || "").toLowerCase().includes(fkModifierIdConstraint)
   ) {
-    const retryResult = await supabase.from("booking_modifiers").insert(
-      params.modifiers.map((item) => ({
-        booking_id: params.bookingId,
-        booking_item_id: item.bookingItemId,
-        modifier_id: item.optionId,
-        quantity: item.quantity,
-        unit_price: item.priceDelta,
-        subtotal: Number((item.priceDelta * item.quantity).toFixed(2)),
-        taxable: true,
-        notes: modifierNote(item),
-      }))
-    );
+    resolvedLegacyModifierIdByOptionId = await resolveLegacyModifierIdsForOptions({
+      supabase,
+      options: params.modifiers.map((item) => ({
+        optionId: item.optionId,
+        optionName: item.optionName,
+      })),
+      initialByOptionId: resolvedLegacyModifierIdByOptionId,
+    });
+
+    strictRows = buildStrictRows();
+
+    const retryResult = await supabase.from("booking_modifiers").insert(strictRows);
 
     error = retryResult.error;
-  }
-
-  if (
-    error &&
-    String(error?.message || "").toLowerCase().includes(fkModifierIdConstraint)
-  ) {
-    error = await insertWithNewSchemaVariants();
-  }
-
-  if (error && isMissingColumnError(error, "booking_modifiers", "modifier_id")) {
-    error = await insertWithNewSchemaVariants();
   }
 
   if (error) {
@@ -1499,6 +1404,70 @@ export async function updateBookingItemsAction(formData: FormData) {
 
   const modifiers = parseBookingModifiersForEdit(formData);
 
+  const existingModifierRowsResult = await supabase
+    .from("booking_modifiers")
+    .select(
+      "booking_item_id, modifier_group_id, modifier_group_option_id, booking_items!inner(product_id)"
+    )
+    .eq("booking_id", bookingId);
+
+  if (existingModifierRowsResult.error) {
+    throw new Error(existingModifierRowsResult.error.message);
+  }
+
+  const legacySelectionKeys = new Set<string>();
+
+  for (const row of existingModifierRowsResult.data || []) {
+    const bookingItem = Array.isArray((row as any).booking_items)
+      ? (row as any).booking_items[0]
+      : (row as any).booking_items;
+
+    const productId = String((bookingItem as any)?.product_id || "").trim();
+    const groupId = String((row as any).modifier_group_id || "").trim();
+    const optionId = String((row as any).modifier_group_option_id || "").trim();
+
+    if (!productId || !groupId || !optionId) {
+      continue;
+    }
+
+    legacySelectionKeys.add(`${productId}::${groupId}::${optionId}`);
+  }
+
+  const modifierInputs: ModifierInventorySelectionInput[] = modifiers
+    .map((modifier) => {
+      const item = items[modifier.itemIndex];
+      if (!item) {
+        return null;
+      }
+
+      return {
+        productId: item.productId,
+        productSelectionIndex: modifier.itemIndex,
+        modifierGroupId: modifier.groupId,
+        modifierGroupName: modifier.groupName,
+        modifierOptionId: modifier.optionId,
+        modifierOptionName: modifier.optionName,
+        quantity: 1,
+        priceDelta: modifier.priceDelta,
+      };
+    })
+    .filter(Boolean) as ModifierInventorySelectionInput[];
+
+  const resolvedModifiers = await resolveAuthoritativeModifierInventorySelections({
+    supabase,
+    items,
+    modifiers: modifierInputs,
+    preserveLegacySelectionKeys: legacySelectionKeys,
+  });
+
+  const preflightLegacyModifierIdByOptionId = await resolveLegacyModifierIdsForOptions({
+    supabase,
+    options: resolvedModifiers.map((modifier) => ({
+      optionId: modifier.modifierOptionId,
+      optionName: modifier.modifierOptionName,
+    })),
+  });
+
   const { data: booking, error: bookingError } = await supabase
     .from("bookings")
     .select("id, discount_amount, delivery_fee, tax_rate, deposit_amount")
@@ -1551,24 +1520,24 @@ export async function updateBookingItemsAction(formData: FormData) {
 
   await insertBookingModifiersWithFallback({
     bookingId,
-    modifiers: modifiers
+    preResolvedLegacyModifierIdByOptionId: preflightLegacyModifierIdByOptionId,
+    modifiers: resolvedModifiers
       .map((modifier) => {
-        const item = items[modifier.itemIndex];
-        const bookingItemId = bookingItemIdsByIndex.get(modifier.itemIndex);
+        const bookingItemId = bookingItemIdsByIndex.get(modifier.productSelectionIndex);
 
-        if (!item || !bookingItemId) {
+        if (!bookingItemId) {
           return null;
         }
 
         return {
-          itemIndex: modifier.itemIndex,
+          itemIndex: modifier.productSelectionIndex,
           bookingItemId,
-          productId: item.productId,
-          quantity: item.quantity,
-          groupId: modifier.groupId,
-          groupName: modifier.groupName,
-          optionId: modifier.optionId,
-          optionName: modifier.optionName,
+          productId: modifier.productId,
+          quantity: items[modifier.productSelectionIndex]?.quantity || 1,
+          groupId: modifier.modifierGroupId,
+          groupName: modifier.modifierGroupName,
+          optionId: modifier.modifierOptionId,
+          optionName: modifier.modifierOptionName,
           priceDelta: modifier.priceDelta,
           inventoryItemId: modifier.inventoryItemId,
           inventoryQuantity: modifier.inventoryQuantity,
@@ -1615,10 +1584,10 @@ export async function updateBookingItemsAction(formData: FormData) {
         productId: item.productId,
         quantity: item.quantity,
       })),
-      modifiers: modifiers.map((modifier) => ({
-        itemIndex: modifier.itemIndex,
-        optionId: modifier.optionId,
-        optionName: modifier.optionName,
+      modifiers: resolvedModifiers.map((modifier) => ({
+        itemIndex: modifier.productSelectionIndex,
+        optionId: modifier.modifierOptionId,
+        optionName: modifier.modifierOptionName,
         inventoryItemId: modifier.inventoryItemId,
         inventoryQuantity: modifier.inventoryQuantity,
         trackInventory: modifier.trackInventory,
@@ -1658,9 +1627,9 @@ export async function updateBookingItemsAction(formData: FormData) {
   );
 
   const modifiersSubtotal = Number(
-    modifiers
+    resolvedModifiers
       .reduce((sum, modifier) => {
-        const item = items[modifier.itemIndex];
+        const item = items[modifier.productSelectionIndex];
         const qty = item?.quantity || 1;
         return sum + modifier.priceDelta * qty;
       }, 0)
