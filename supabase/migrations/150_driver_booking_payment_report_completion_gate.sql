@@ -24,6 +24,14 @@ CREATE TABLE IF NOT EXISTS public.route_booking_payment_reports (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+ALTER TABLE public.route_booking_payment_reports ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL PRIVILEGES ON TABLE public.route_booking_payment_reports
+  FROM PUBLIC, anon, authenticated;
+
+GRANT ALL PRIVILEGES ON TABLE public.route_booking_payment_reports
+  TO service_role;
+
 CREATE INDEX IF NOT EXISTS idx_route_booking_payment_reports_booking
   ON public.route_booking_payment_reports(booking_id, created_at DESC);
 
@@ -264,6 +272,12 @@ BEGIN
   );
 END;
 $function$;
+
+REVOKE ALL ON FUNCTION public.mark_my_route_stop_payment_collected(uuid, numeric, text)
+  FROM PUBLIC, anon, authenticated;
+
+GRANT EXECUTE ON FUNCTION public.mark_my_route_stop_payment_collected(uuid, numeric, text)
+  TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.get_my_driver_booking_payment_reports(
   p_booking_ids uuid[]

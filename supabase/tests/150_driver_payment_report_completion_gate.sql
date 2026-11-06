@@ -2,6 +2,65 @@
 
 begin;
 
+-- Security invariants for the operational payment-report table and RPC.
+do $$
+declare
+  v_rls_enabled boolean;
+begin
+  select c.relrowsecurity
+    into v_rls_enabled
+  from pg_class c
+  join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'public'
+    and c.relname = 'route_booking_payment_reports'
+    and c.relkind = 'r';
+
+  if not coalesce(v_rls_enabled, false) then
+    raise exception 'FAIL security: route_booking_payment_reports must have RLS enabled';
+  end if;
+
+  if has_table_privilege(
+    'anon',
+    'public.route_booking_payment_reports',
+    'SELECT, INSERT, UPDATE, DELETE'
+  ) then
+    raise exception 'FAIL security: anon must not have direct payment-report table privileges';
+  end if;
+
+  if has_table_privilege(
+    'authenticated',
+    'public.route_booking_payment_reports',
+    'SELECT, INSERT, UPDATE, DELETE'
+  ) then
+    raise exception 'FAIL security: authenticated must not have direct payment-report table privileges';
+  end if;
+
+  if not has_table_privilege(
+    'service_role',
+    'public.route_booking_payment_reports',
+    'SELECT, INSERT, UPDATE, DELETE'
+  ) then
+    raise exception 'FAIL security: service_role must retain payment-report table access';
+  end if;
+
+  if has_function_privilege(
+    'anon',
+    'public.mark_my_route_stop_payment_collected(uuid,numeric,text)',
+    'EXECUTE'
+  ) then
+    raise exception 'FAIL security: anon must not execute mark_my_route_stop_payment_collected';
+  end if;
+
+  if not has_function_privilege(
+    'authenticated',
+    'public.mark_my_route_stop_payment_collected(uuid,numeric,text)',
+    'EXECUTE'
+  ) then
+    raise exception 'FAIL security: authenticated must execute mark_my_route_stop_payment_collected';
+  end if;
+end
+$$;
+
 -- Driver auth fixtures
 insert into auth.users (
   id,
