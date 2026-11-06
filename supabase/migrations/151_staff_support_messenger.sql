@@ -40,6 +40,34 @@ begin
   order by p.created_at asc nulls last, p.id
   limit 1;
 
+  -- Older driver accounts can be linked directly to route_drivers without a
+  -- profiles row. Bootstrap only a verified active route driver; never create
+  -- a profile merely because an arbitrary authenticated user opens the app.
+  if v_profile_id is null and exists (
+    select 1
+    from public.route_drivers d
+    where d.auth_user_id = auth.uid()
+      and coalesce(d.active, true) = true
+      and d.deleted_at is null
+  ) then
+    insert into public.profiles (
+      auth_user_id,
+      role,
+      is_active,
+      updated_at
+    )
+    values (auth.uid(), 'driver', true, now())
+    on conflict do nothing;
+
+    select p.id into v_profile_id
+    from public.profiles p
+    where p.auth_user_id = auth.uid()
+      and coalesce(p.is_active, true) = true
+      and coalesce(p.role::text, '') <> 'customer'
+    order by p.created_at asc nulls last, p.id
+    limit 1;
+  end if;
+
   if v_profile_id is null then raise exception 'staff_profile_required'; end if;
   return v_profile_id;
 end;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { supabase } from "../lib/supabase";
 
@@ -42,7 +42,11 @@ export function SupportChatScreen() {
     setSending(false);
   }, [body, refresh, sending]);
 
-  return <View style={styles.screen}>
+  return <KeyboardAvoidingView
+    behavior={Platform.OS === "ios" ? "padding" : undefined}
+    keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
+    style={styles.screen}
+  >
     <Text style={styles.eyebrow}>BOUNCE PARTY LA</Text>
     <Text style={styles.title}>Support chat</Text>
     <Text style={styles.copy}>Message the operations team. They reply in CRM Inbox.</Text>
@@ -54,7 +58,7 @@ export function SupportChatScreen() {
     </ScrollView>}
     {error ? <Text style={styles.error}>{error}</Text> : null}
     <View style={styles.composer}><TextInput value={body} onChangeText={setBody} placeholder="Write a message…" multiline maxLength={4000} style={styles.input} /><Pressable disabled={sending || !body.trim()} onPress={() => void send()} style={[styles.send, sending || !body.trim() ? styles.disabled : null]}><Text style={styles.sendText}>{sending ? "Sending…" : "Send"}</Text></Pressable></View>
-  </View>;
+  </KeyboardAvoidingView>;
 }
 
 const styles = StyleSheet.create({
