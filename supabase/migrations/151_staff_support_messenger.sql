@@ -11,7 +11,7 @@ alter table public.crm_conversations
 
 alter table public.crm_conversations
   add constraint crm_conversations_scope_check
-  check (conversation_scope in ('external', 'internal', 'staff_internal'));
+  check (conversation_scope in ('external', 'internal', 'internal_driver', 'staff_internal'));
 
 create unique index if not exists uq_crm_staff_internal_conversation
   on public.crm_conversations(staff_profile_id)
