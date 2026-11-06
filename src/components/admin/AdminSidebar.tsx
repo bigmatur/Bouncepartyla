@@ -124,6 +124,7 @@ export default function AdminSidebar({
   availableInterfaces,
   grantedPermissions,
   myNotificationsUnreadCount = 0,
+  crmInboxUnreadCount = 0,
   mobile = false,
 }: {
   displayName: string;
@@ -133,6 +134,7 @@ export default function AdminSidebar({
   availableInterfaces: InterfaceKey[];
   grantedPermissions: AppPermission[];
   myNotificationsUnreadCount?: number;
+  crmInboxUnreadCount?: number;
   mobile?: boolean;
 }) {
   const pathname = usePathname();
@@ -146,6 +148,8 @@ export default function AdminSidebar({
     myNotificationsUnreadCount > 9
       ? "9+"
       : String(Math.max(0, myNotificationsUnreadCount));
+  const crmInboxBadgeLabel =
+    crmInboxUnreadCount > 99 ? "99+" : String(Math.max(0, crmInboxUnreadCount));
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [accountPanelOpen, setAccountPanelOpen] = useState(false);
   const [expandedNavHrefs, setExpandedNavHrefs] = useState<string[]>([]);
@@ -303,7 +307,14 @@ export default function AdminSidebar({
                         <span className="flex h-5 w-5 items-center justify-center text-base">
                           {item.icon}
                         </span>
-                        {item.label}
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span>{item.label}</span>
+                          {item.href === "/admin/crm" && crmInboxUnreadCount > 0 ? (
+                            <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#c9964f] px-1.5 text-[11px] font-bold text-white">
+                              {crmInboxBadgeLabel}
+                            </span>
+                          ) : null}
+                        </span>
                       </button>
                     ) : (
                       <Link href={item.href} className={["flex min-w-0 flex-1 items-center gap-3 px-4", mobile ? "py-2.5" : "py-3"].join(" ")}>
@@ -362,7 +373,14 @@ export default function AdminSidebar({
                             <span className="flex h-4 w-4 items-center justify-center text-sm">
                               {child.icon || "•"}
                             </span>
-                            {child.label}
+                            <span className="flex min-w-0 items-center gap-2">
+                              <span>{child.label}</span>
+                              {child.href === "/admin/crm/inbox" && crmInboxUnreadCount > 0 ? (
+                                <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#c9964f] px-1.5 text-[11px] font-bold text-white">
+                                  {crmInboxBadgeLabel}
+                                </span>
+                              ) : null}
+                            </span>
                           </Link>
                         );
                       })}

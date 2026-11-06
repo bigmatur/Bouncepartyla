@@ -25,6 +25,7 @@ export default async function AdminLayout({
   }
 
   let myNotificationsUnreadCount = 0;
+  let crmInboxUnreadCount = 0;
 
   const authUserId = String(access.user?.id || "").trim();
   if (authUserId) {
@@ -41,6 +42,21 @@ export default async function AdminLayout({
     }
   }
 
+  if (access.grantedPermissions.includes("customers.view")) {
+    const unreadResult = await supabase
+      .from("crm_conversations")
+      .select("unread_count")
+      .gt("unread_count", 0);
+
+    if (!unreadResult.error) {
+      crmInboxUnreadCount = (unreadResult.data || []).reduce(
+        (total, conversation) =>
+          total + Math.max(0, Number(conversation.unread_count || 0)),
+        0,
+      );
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#f5efe6] text-[#1d1d1b]">
       <AdminShell
@@ -51,6 +67,7 @@ export default async function AdminLayout({
         availableInterfaces={access.availableInterfaces}
         grantedPermissions={access.grantedPermissions}
         myNotificationsUnreadCount={myNotificationsUnreadCount}
+        crmInboxUnreadCount={crmInboxUnreadCount}
       >
         {children}
       </AdminShell>
