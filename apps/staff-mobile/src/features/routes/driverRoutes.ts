@@ -16,6 +16,8 @@ export type MobileRouteStop = {
   booking_id: string | null;
   marker_color?: string | null;
   booking_balance_due?: number | string | null;
+  booking_payment_reported?: boolean;
+  booking_payment_report_needs_review?: boolean;
   payment_not_collected_reported?: boolean | null;
   payment_not_collected_reason?: string | null;
   payment_not_collected_comment?: string | null;
@@ -990,6 +992,95 @@ export async function loadDriverRoute(
           : null,
   }));
 
+  const unverifiedPaymentStatusForBooking = (bookingId: string) => {
+    const bookingStops = normalizedStops.filter(
+      (stop) => String(stop.booking_id || "") === bookingId,
+    );
+
+    const bookingBalanceDue = bookingStops.reduce<number | null>((current, stop) => {
+      const rawBalance = stop.booking_balance_due ?? stop.balance_due;
+      const candidate = Number(rawBalance);
+
+      if (rawBalance == null || !Number.isFinite(candidate)) {
+        return current;
+      }
+
+      return Math.max(current ?? 0, candidate);
+    }, null);
+
+    return {
+      reported: false,
+      // An explicit zero balance needs no payment. Positive or unavailable
+      // balance data stays blocked until the booking-scoped RPC verifies it.
+      needsReview: bookingBalanceDue == null || bookingBalanceDue > 0,
+    };
+  };
+
+  // Read-only, booking-scoped status: includes reports from other route dates.
+  // The RPC verifies the authenticated driver's assignment on the server.
+  // Fail closed rather than offer Collect when the status cannot be verified.
+  const bookingIds = [...new Set(normalizedStops.map((stop) => stop.booking_id).filter((id): id is string => Boolean(id)))];
+  const paymentStatusByBooking = new Map<string, { reported: boolean; needsReview: boolean }>();
+  if (bookingIds.length > 0) {
+    const paymentStatusResult = await supabase.rpc("get_my_driver_booking_payment_reports", {
+      p_booking_ids: bookingIds,
+    });
+    if (paymentStatusResult.error) {
+      console.warn(
+        "[driver-route] Could not verify booking payment reports; payment actions remain blocked for non-zero or unknown balances.",
+        paymentStatusResult.error,
+      );
+
+      for (const bookingId of bookingIds) {
+        paymentStatusByBooking.set(
+          bookingId,
+          unverifiedPaymentStatusForBooking(bookingId),
+        );
+      }
+    } else {
+      const requestedBookingIds = new Set(bookingIds);
+      for (const row of (paymentStatusResult.data || []) as Array<{
+        booking_id: string;
+        payment_reported: boolean;
+        payment_report_needs_review: boolean;
+      }>) {
+        const bookingId = String(row.booking_id || "");
+
+        if (
+          !requestedBookingIds.has(bookingId) ||
+          typeof row.payment_reported !== "boolean" ||
+          typeof row.payment_report_needs_review !== "boolean"
+        ) {
+          continue;
+        }
+
+        paymentStatusByBooking.set(bookingId, {
+          reported: row.payment_reported,
+          needsReview: row.payment_report_needs_review,
+        });
+      }
+
+      if (paymentStatusByBooking.size !== bookingIds.length) {
+        console.warn(
+          "[driver-route] Payment report RPC returned an incomplete or invalid booking set; missing bookings remain blocked for non-zero or unknown balances.",
+          {
+            requested: bookingIds.length,
+            returned: paymentStatusByBooking.size,
+          },
+        );
+
+        for (const bookingId of bookingIds) {
+          if (!paymentStatusByBooking.has(bookingId)) {
+            paymentStatusByBooking.set(
+              bookingId,
+              unverifiedPaymentStatusForBooking(bookingId),
+            );
+          }
+        }
+      }
+    }
+  }
+
   const stopIds = normalizedStops.map((stop) => String(stop.id || "")).filter(Boolean);
   let paymentExceptionByStopId = new Map<string, {
     reasonCode: string | null;
@@ -1041,6 +1132,8 @@ export async function loadDriverRoute(
 
     return {
       ...stop,
+      booking_payment_reported: paymentStatusByBooking.get(String(stop.booking_id))?.reported ?? false,
+      booking_payment_report_needs_review: paymentStatusByBooking.get(String(stop.booking_id))?.needsReview ?? false,
       payment_not_collected_reported: Boolean(exception),
       payment_not_collected_reason: exception?.reasonCode || null,
       payment_not_collected_comment: exception?.comment || null,

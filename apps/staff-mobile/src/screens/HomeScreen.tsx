@@ -942,26 +942,34 @@ useEffect(() => {
       0,
   );
 
-  const activePaymentRequired =
-    Number.isFinite(
-      activeBookingBalanceDue,
-    ) &&
-    activeBookingBalanceDue > 0 &&
-    !Boolean(
-      activeStop?.payment_collected,
-    );
-
-  const activePaymentExceptionReported =
-    Boolean(
-      activeStop?.payment_not_collected_reported,
-    );
-
   const activeStopType = String(
     activeStop?.stop_type || "",
   ).toLowerCase();
 
   const activeIsPickup =
     activeStopType === "pickup";
+
+  // Authoritative booking-wide status is applied only for pickup completion.
+  // Delivery completion keeps its own stop-level payment / PNC checks.
+  const paymentReportedOnRoute =
+    activeIsPickup &&
+    Boolean(activeStop?.booking_payment_reported);
+
+  const hasInsufficientPaymentReport =
+    activeIsPickup &&
+    Boolean(
+      activeStop?.booking_payment_report_needs_review,
+    );
+
+  const activePaymentRequired =
+    Number.isFinite(activeBookingBalanceDue) &&
+    activeBookingBalanceDue > 0 &&
+    !paymentReportedOnRoute;
+
+  const activePaymentExceptionReported =
+    Boolean(
+      activeStop?.payment_not_collected_reported,
+    );
 
   const activeProofRequired =
     Boolean(activeStop) &&
@@ -1001,6 +1009,7 @@ useEffect(() => {
   const completionBlocked =
     Boolean(isCompletionAction) &&
     (
+      hasInsufficientPaymentReport ||
       (activePaymentRequired &&
         !activePaymentExceptionReported) ||
       activeProofBlockingRequired
@@ -1512,6 +1521,16 @@ useEffect(() => {
         return;
       }
 
+      if (hasInsufficientPaymentReport) {
+        setError("A partial or zero payment report already exists. Ask an administrator to reconcile it before collecting again.");
+        return;
+      }
+
+      if (paymentReportedOnRoute) {
+        setError("Payment was already reported for this booking on this route.");
+        return;
+      }
+
       const amount = Number(
         (activeStop.booking_balance_due ??
           activeStop.balance_due) ||
@@ -1534,6 +1553,8 @@ useEffect(() => {
     }, [
       activeStop,
       stopToolPending,
+      paymentReportedOnRoute,
+      hasInsufficientPaymentReport,
     ]);
 
   const reportPaymentNotCollected =
@@ -1542,6 +1563,16 @@ useEffect(() => {
         !activeStop ||
         stopToolPending
       ) {
+        return;
+      }
+
+      if (hasInsufficientPaymentReport) {
+        setError("A partial or zero payment report already exists. Ask an administrator to reconcile it before collecting again.");
+        return;
+      }
+
+      if (paymentReportedOnRoute) {
+        setError("Payment was already reported for this booking on this route.");
         return;
       }
 
@@ -1568,6 +1599,8 @@ useEffect(() => {
     }, [
       activeStop,
       stopToolPending,
+      paymentReportedOnRoute,
+      hasInsufficientPaymentReport,
     ]);
 
   const confirmManualPayment =
@@ -1577,6 +1610,16 @@ useEffect(() => {
         stopToolPending ||
         paymentModalBusy
       ) {
+        return;
+      }
+
+      if (hasInsufficientPaymentReport) {
+        setPaymentModalError("An existing partial or zero payment report requires administrator reconciliation.");
+        return;
+      }
+
+      if (paymentReportedOnRoute || activeBookingBalanceDue <= 0) {
+        setPaymentModalError("No payment can be reported for this booking from this stop.");
         return;
       }
 
@@ -1614,7 +1657,7 @@ useEffect(() => {
               ? "No balance due"
               : "Payment reported",
           result.data.reportStatus === "already_reported"
-            ? "Payment already reported for this stop. Route data was refreshed."
+            ? "Payment already reported for this booking. Route data was refreshed."
             : result.data.reportStatus === "no_balance_due"
               ? "This stop currently has no balance due to report. Route data was refreshed."
               : `${moneyText(result.data.amountRecorded)} was reported via ${paymentModalMethod.toUpperCase()}.`,
@@ -1631,6 +1674,9 @@ useEffect(() => {
       }
     }, [
       activeStop,
+      activeBookingBalanceDue,
+      paymentReportedOnRoute,
+      hasInsufficientPaymentReport,
       loadRoute,
       paymentModalBusy,
       paymentModalMethod,
@@ -2668,9 +2714,11 @@ useEffect(() => {
                         styles.operationLabel
                       }
                     >
-                      {activePaymentRequired
-                        ? "PAYMENT DUE"
-                        : "PAYMENT"}
+                      {hasInsufficientPaymentReport
+                        ? "PAYMENT REVIEW"
+                        : activePaymentRequired
+                          ? "PAYMENT DUE"
+                          : "PAYMENT"}
                     </Text>
 
                     <Text
@@ -2681,16 +2729,20 @@ useEffect(() => {
                           : null,
                       ]}
                     >
-                      {activePaymentRequired
-                        ? moneyText(
+                      {hasInsufficientPaymentReport
+                        ? "⚠ Partial payment report — contact admin"
+                        : activePaymentRequired
+                          ? moneyText(
                             activeStop.booking_balance_due ??
                               activeStop.balance_due,
                           )
-                        : "✓ No payment required"}
+                        : paymentReportedOnRoute
+                          ? "✓ Payment reported (pending reconciliation)"
+                          : "✓ No payment required"}
                     </Text>
                   </View>
 
-                  {activePaymentRequired ? (
+                  {activePaymentRequired && !hasInsufficientPaymentReport ? (
                     <View style={styles.paymentActionColumn}>
                       <Pressable
                         disabled={
@@ -3374,7 +3426,7 @@ useEffect(() => {
                 Balance Due
               </Text>
               <Text style={styles.paymentSheetAmount}>
-                {moneyText(activeStop?.balance_due || 0)}
+                {moneyText(activeBookingBalanceDue)}
               </Text>
             </View>
 
@@ -3417,7 +3469,7 @@ useEffect(() => {
                 <>
                   <Text style={styles.paymentMethodBodyTitle}>Cash</Text>
                   <Text style={styles.paymentMethodBodyCopy}>
-                    Amount due: {moneyText(activeStop?.balance_due || 0)}
+                    Amount due: {moneyText(activeBookingBalanceDue)}
                   </Text>
                 </>
               ) : null}
@@ -3428,7 +3480,7 @@ useEffect(() => {
                   <Text style={styles.paymentMethodBodyCopy}>FANSOUNDS CORP</Text>
                   <Text style={styles.paymentMethodBodyCopy}>Zelle phone: {ZELLE_PHONE_NUMBER}</Text>
                   <Text style={styles.paymentMethodBodyCopy}>
-                    Amount due: {moneyText(activeStop?.balance_due || 0)}
+                    Amount due: {moneyText(activeBookingBalanceDue)}
                   </Text>
                   <View style={styles.paymentQrBox}>
                     <Image
@@ -3448,7 +3500,7 @@ useEffect(() => {
                   <Text style={styles.paymentMethodBodyTitle}>Venmo</Text>
                   <Text style={styles.paymentMethodBodyCopy}>@bouncepartyla · Fansounds Corp</Text>
                   <Text style={styles.paymentMethodBodyCopy}>
-                    Amount due: {moneyText(activeStop?.balance_due || 0)}
+                    Amount due: {moneyText(activeBookingBalanceDue)}
                   </Text>
                   <View style={styles.paymentQrBox}>
                     <Image
