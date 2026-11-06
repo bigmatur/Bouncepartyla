@@ -17,10 +17,11 @@ import { DriverLocationTracker } from "./src/features/location/DriverLocationTra
 import { HomeScreen } from "./src/screens/HomeScreen";
 import { MoreScreen } from "./src/screens/MoreScreen";
 import { ShiftScreen } from "./src/screens/ShiftScreen";
+import { SupportChatScreen } from "./src/screens/SupportChatScreen";
 import { loadMobileAccess, type MobileAccess } from "./src/lib/mobileAccess";
 import { supabase } from "./src/lib/supabase";
 
-type AppTab = "route" | "shift" | "more";
+type AppTab = "route" | "shift" | "chat" | "more";
 
 function AppShell() {
   const [tab, setTab] =
@@ -37,9 +38,14 @@ function AppShell() {
             onImmersiveChange={
               setImmersive
             }
+            onOpenMessenger={() =>
+              setTab("chat")
+            }
           />
         ) : tab === "shift" ? (
           <ShiftScreen />
+        ) : tab === "chat" ? (
+          <SupportChatScreen />
         ) : (
           <MoreScreen />
         )}
@@ -105,6 +111,21 @@ function AppShell() {
                 ]}
               >
                 Shift
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() =>
+                setTab("chat")
+              }
+              style={({ pressed }) => [
+                styles.tabButton,
+                tab === "chat" ? styles.tabButtonActive : null,
+                pressed ? styles.pressed : null,
+              ]}
+            >
+              <Text style={[styles.tabText, tab === "chat" ? styles.tabTextActive : null]}>
+                Chat
               </Text>
             </Pressable>
 

@@ -100,7 +100,20 @@ export async function replyToCrmConversationAction(
   ).trim().toLowerCase();
 
   try {
-    if (conversationScope === "internal") {
+    if (conversationScope === "staff_internal") {
+      if (attachments.length > 0) {
+        throw new Error("Staff support chat does not support attachments yet.");
+      }
+
+      const rpcResult = await supabase.rpc("admin_reply_staff_support_conversation", {
+        p_conversation_id: conversationId,
+        p_body: body,
+      });
+
+      if (rpcResult.error) {
+        throw new Error(rpcResult.error.message);
+      }
+    } else if (conversationScope === "internal") {
       if (!clientMessageId) {
         throw new Error("Missing client message id.");
       }
@@ -179,6 +192,20 @@ export async function markCrmConversationReadAction(
   const conversationScope = String(
     conversationResult.data.conversation_scope || "external",
   ).trim().toLowerCase();
+
+  if (conversationScope === "staff_internal") {
+    const rpcResult = await supabase.rpc("admin_mark_staff_support_conversation_read", {
+      p_conversation_id: safeConversationId,
+    });
+
+    if (rpcResult.error) {
+      throw new Error(rpcResult.error.message);
+    }
+
+    revalidatePath("/admin/crm/inbox");
+    revalidatePath(`/admin/crm/inbox/${safeConversationId}`);
+    return;
+  }
 
   if (conversationScope === "internal") {
     const rpcResult = await supabase.rpc("admin_mark_internal_conversation_read", {
