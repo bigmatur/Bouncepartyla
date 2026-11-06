@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect } from "react";
+import { useLayoutEffect } from "react";
 
 export function CrmConversationAutoScroll({
   messageKey,
 }: {
   messageKey: string;
 }) {
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
+  useLayoutEffect(() => {
+    let secondFrame: number | null = null;
+
+    const scrollToLatest = () => {
       const container = document.querySelector<HTMLElement>(
         "[data-crm-conversation-scroll]",
       );
@@ -17,9 +19,21 @@ export function CrmConversationAutoScroll({
         top: container.scrollHeight,
         behavior: "smooth",
       });
+    };
+
+    // The page receives server-rendered messages. A second animation frame
+    // waits for the conversation pane to receive its final layout height.
+    const firstFrame = window.requestAnimationFrame(() => {
+      scrollToLatest();
+      secondFrame = window.requestAnimationFrame(scrollToLatest);
     });
 
-    return () => window.cancelAnimationFrame(frame);
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame !== null) {
+        window.cancelAnimationFrame(secondFrame);
+      }
+    };
   }, [messageKey]);
 
   return null;
