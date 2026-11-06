@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import AdminSidebar from "@/components/admin/AdminSidebar";
 import AdminTopbar from "@/components/admin/AdminTopbar";
+import { CrmInboxLiveRefresh } from "@/app/admin/crm/inbox/CrmInboxLiveRefresh";
 import type {
   AppPermission,
   InterfaceKey,
@@ -39,6 +40,7 @@ export default function AdminShell({
   availableInterfaces,
   grantedPermissions,
   myNotificationsUnreadCount,
+  crmInboxUnreadCount,
 }: {
   children: ReactNode;
   displayName: string;
@@ -48,6 +50,7 @@ export default function AdminShell({
   availableInterfaces: InterfaceKey[];
   grantedPermissions: AppPermission[];
   myNotificationsUnreadCount?: number;
+  crmInboxUnreadCount?: number;
 }) {
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -113,6 +116,7 @@ export default function AdminShell({
 
   return (
     <div className="admin-shell flex min-h-screen min-w-0 overflow-x-hidden">
+      {grantedPermissions.includes("customers.view") ? <CrmInboxLiveRefresh /> : null}
       {!sidebarHidden && (
         <AdminSidebar
           displayName={displayName}
@@ -122,6 +126,7 @@ export default function AdminShell({
           availableInterfaces={availableInterfaces}
           grantedPermissions={grantedPermissions}
           myNotificationsUnreadCount={myNotificationsUnreadCount}
+          crmInboxUnreadCount={crmInboxUnreadCount}
         />
       )}
 
@@ -185,6 +190,7 @@ export default function AdminShell({
                 availableInterfaces={availableInterfaces}
                 grantedPermissions={grantedPermissions}
                 myNotificationsUnreadCount={myNotificationsUnreadCount}
+                crmInboxUnreadCount={crmInboxUnreadCount}
                 mobile
               />
             </div>
