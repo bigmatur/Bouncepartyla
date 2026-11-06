@@ -12,7 +12,11 @@ function clientMessageId() {
   });
 }
 
-export function SupportChatScreen() {
+export function SupportChatScreen({
+  onMessagesRead,
+}: {
+  onMessagesRead?: () => void;
+}) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -26,7 +30,8 @@ export function SupportChatScreen() {
     setMessages(Array.isArray(result.data) ? [...result.data].reverse() : []);
     setLoading(false);
     void supabase.rpc("mark_my_staff_support_read");
-  }, []);
+    onMessagesRead?.();
+  }, [onMessagesRead]);
 
   useEffect(() => {
     void refresh();
