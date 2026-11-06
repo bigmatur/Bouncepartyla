@@ -201,6 +201,8 @@ export async function getRouteWeatherForecast(params: {
   address: string;
   targetTime: Date;
 }): Promise<RouteWeatherForecast> {
+  // Reject unsupported dates before making a billable geocoding request.
+  const forecastHoursRequested = requestedForecastHours(params.targetTime);
   const apiKey = await getGoogleMapsServerKey();
   const coordinates = await geocodeAddress(params.address, apiKey);
 
@@ -214,7 +216,7 @@ export async function getRouteWeatherForecast(params: {
   url.searchParams.set("unitsSystem", "IMPERIAL");
   url.searchParams.set(
     "hours",
-    String(requestedForecastHours(params.targetTime)),
+    String(forecastHoursRequested),
   );
   url.searchParams.set("pageSize", "240");
 
