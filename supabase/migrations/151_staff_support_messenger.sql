@@ -46,26 +46,44 @@ begin
   if v_profile_id is null and exists (
     select 1
     from public.route_drivers d
-    where d.auth_user_id = auth.uid()
+    join auth.users u on u.id = auth.uid()
+    where (
+      d.auth_user_id = auth.uid()
+      or (
+        nullif(lower(btrim(coalesce(d.account_email, ''))), '') is not null
+        and lower(btrim(coalesce(d.account_email, ''))) = lower(btrim(coalesce(u.email, '')))
+      )
+    )
       and coalesce(d.active, true) = true
       and d.deleted_at is null
   ) then
-    insert into public.profiles (
-      auth_user_id,
-      role,
-      is_active,
-      updated_at
-    )
-    values (auth.uid(), 'driver', true, now())
-    on conflict do nothing;
-
+    -- A driver can legitimately use the same auth account as a customer.
+    -- The active route-driver link is the authorization boundary here; do not
+    -- overwrite the existing customer role just to enable staff support chat.
     select p.id into v_profile_id
     from public.profiles p
     where p.auth_user_id = auth.uid()
       and coalesce(p.is_active, true) = true
-      and coalesce(p.role::text, '') <> 'customer'
     order by p.created_at asc nulls last, p.id
     limit 1;
+
+    if v_profile_id is null then
+      insert into public.profiles (
+        auth_user_id,
+        role,
+        is_active,
+        updated_at
+      )
+      values (auth.uid(), 'driver', true, now())
+      on conflict do nothing;
+
+      select p.id into v_profile_id
+      from public.profiles p
+      where p.auth_user_id = auth.uid()
+        and coalesce(p.is_active, true) = true
+      order by p.created_at asc nulls last, p.id
+      limit 1;
+    end if;
   end if;
 
   if v_profile_id is null then raise exception 'staff_profile_required'; end if;
@@ -84,15 +102,34 @@ declare
   v_conversation_id uuid;
   v_name text;
 begin
+  select coalesce(
+    nullif(btrim(concat_ws(' ', p.first_name, p.last_name)), ''),
+    (
+      select nullif(btrim(d.name), '')
+      from public.route_drivers d
+      join auth.users u on u.id = auth.uid()
+      where (
+        d.auth_user_id = auth.uid()
+        or (
+          nullif(lower(btrim(coalesce(d.account_email, ''))), '') is not null
+          and lower(btrim(coalesce(d.account_email, ''))) = lower(btrim(coalesce(u.email, '')))
+        )
+      )
+        and coalesce(d.active, true) = true
+        and d.deleted_at is null
+      order by d.updated_at desc nulls last, d.created_at desc nulls last, d.id
+      limit 1
+    )
+  ) into v_name
+  from public.profiles p
+  where p.id = v_profile_id;
+
   select c.id into v_conversation_id
   from public.crm_conversations c
   where c.staff_profile_id = v_profile_id and c.conversation_scope = 'staff_internal'
   for update;
 
   if v_conversation_id is null then
-    select nullif(btrim(concat_ws(' ', p.first_name, p.last_name)), '') into v_name
-    from public.profiles p where p.id = v_profile_id;
-
     insert into public.crm_conversations (
       staff_profile_id, subject, status, priority, needs_reply, unread_count,
       customer_unread_count, last_channel, conversation_scope
@@ -100,6 +137,10 @@ begin
       v_profile_id, 'Staff support — ' || coalesce(v_name, 'Staff account'),
       'open', 'normal', false, 0, 0, 'internal', 'staff_internal'
     ) returning id into v_conversation_id;
+  else
+    update public.crm_conversations
+    set subject = 'Staff support — ' || coalesce(v_name, 'Staff account'), updated_at = now()
+    where id = v_conversation_id;
   end if;
   return v_conversation_id;
 end;
