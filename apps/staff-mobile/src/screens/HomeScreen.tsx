@@ -103,6 +103,10 @@ function formatTime(value: string | null) {
 }
 
 function stopLabel(stop: MobileRouteStop) {
+  if (isBreakStop(stop)) {
+    return "Break";
+  }
+
   const type = String(
     stop.stop_type || "",
   ).toLowerCase();
@@ -123,11 +127,15 @@ function isBreakStop(stop: MobileRouteStop) {
   const customerName = String(stop.customer_name || "").trim();
   const itemsSummary = String(stop.items_summary || "").trim();
   const setupNotes = String(stop.setup_notes || "").trim();
+  const isBreakLabel = (value: string) =>
+    /^break(?:\s*(?:\(\s*)?\d{1,3}\s*(?:min|mins|minutes)(?:\s*\))?)?$/i.test(
+      value,
+    );
 
   return (
     stopType === "break" ||
-    /^break$/i.test(customerName) ||
-    /^break\s*\(\d{1,3}\s*(?:min|mins|minutes)\)$/i.test(itemsSummary) ||
+    isBreakLabel(customerName) ||
+    isBreakLabel(itemsSummary) ||
     /(?:^|\s)break[_\s-]*minutes\s*[:=]\s*\d{1,3}(?:\s|$)/i.test(setupNotes)
   );
 }
@@ -354,10 +362,12 @@ function paidShiftMinutes(
 
 type HomeScreenProps = {
   onImmersiveChange?: (active: boolean) => void;
+  onOpenMessenger?: () => void;
 };
 
 export function HomeScreen({
   onImmersiveChange,
+  onOpenMessenger,
 }: HomeScreenProps = {}) {
   const today = localDateISO();
 
@@ -1184,14 +1194,17 @@ useEffect(() => {
 
   const messageCustomer =
     useCallback(async () => {
+      setError("");
+
+      if (onOpenMessenger) {
+        onOpenMessenger();
+        return;
+      }
+
       const phone = String(
-        activeStop?.customer_phone ||
-          "",
+        activeStop?.customer_phone || "",
       )
-        .replace(
-          /[^0-9+]/g,
-          "",
-        )
+        .replace(/[^0-9+]/g, "")
         .trim();
 
       if (!phone) {
@@ -1202,11 +1215,8 @@ useEffect(() => {
       }
 
       const url = `sms:${phone}`;
-
       const supported =
-        await Linking.canOpenURL(
-          url,
-        );
+        await Linking.canOpenURL(url);
 
       if (!supported) {
         setError(
@@ -1218,6 +1228,7 @@ useEffect(() => {
       await Linking.openURL(url);
     }, [
       activeStop?.customer_phone,
+      onOpenMessenger,
     ]);
 
   const uploadProofPhotoAsset =
@@ -1286,17 +1297,57 @@ useEffect(() => {
       setStopToolPending("photo");
 
       try {
-        const permission =
-          source === "camera"
-            ? await ImagePicker.requestCameraPermissionsAsync()
-            : await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (source === "camera") {
+          const cameraPermission =
+            await ImagePicker.requestCameraPermissionsAsync();
 
-        if (!permission.granted) {
-          throw new Error(
-            source === "camera"
-              ? "Camera permission is required to take a proof photo."
-              : "Photo library permission is required to upload a proof photo.",
-          );
+          if (!cameraPermission.granted) {
+            throw new Error(
+              "Camera permission is required to take a proof photo.",
+            );
+          }
+        } else {
+          const isLimitedLibraryAccess = (
+            permission: ImagePicker.MediaLibraryPermissionResponse,
+          ) =>
+            Platform.OS === "ios" &&
+            permission.accessPrivileges === "limited";
+
+          let libraryPermission =
+            await ImagePicker.getMediaLibraryPermissionsAsync();
+
+          if (
+            !libraryPermission.granted &&
+            !isLimitedLibraryAccess(libraryPermission)
+          ) {
+            libraryPermission =
+              await ImagePicker.requestMediaLibraryPermissionsAsync();
+          }
+
+          if (
+            !libraryPermission.granted &&
+            !isLimitedLibraryAccess(libraryPermission)
+          ) {
+            if (!libraryPermission.canAskAgain) {
+              Alert.alert(
+                "Photo library access is blocked",
+                "Allow photo access in iPhone Settings to upload proof photos.",
+                [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "Open Settings",
+                    onPress: () => {
+                      void Linking.openSettings();
+                    },
+                  },
+                ],
+              );
+            }
+
+            throw new Error(
+              "Photo library permission is required to upload a proof photo.",
+            );
+          }
         }
 
         const result =
@@ -2037,12 +2088,7 @@ useEffect(() => {
       <View style={styles.screen}>
     <ScrollView
       style={styles.scroll}
-      contentContainerStyle={[
-        styles.content,
-        activeStop
-          ? styles.contentWithStickyAction
-          : null,
-      ]}
+      contentContainerStyle={styles.content}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
@@ -2497,6 +2543,17 @@ useEffect(() => {
                 </Text>
               </View>
 
+              {isBreakStop(activeStop) ? (
+                <View style={styles.detailBlock}>
+                  <Text style={styles.currentTime}>
+                    {formatTime(activeStop.scheduled_start_time)}
+                  </Text>
+                  <Text style={styles.detailText}>
+                    Planned break · Use Start Break / End Break in Shift to track actual time.
+                  </Text>
+                </View>
+              ) : (
+                <>
               <Text
                 style={
                   styles.currentTime
@@ -3043,6 +3100,8 @@ useEffect(() => {
                   </>
                 ) : null}
               </View>
+                </>
+              )}
             </View>
           ) : (
             <View
@@ -3260,10 +3319,7 @@ useEffect(() => {
                               1
                             }
                           >
-                            {stop.customer_name ||
-                              stopLabel(
-                                stop,
-                              )}
+                            {isBreak ? "Break" : (stop.customer_name || stopLabel(stop))}
                           </Text>
 
                           <Text
@@ -3298,6 +3354,7 @@ useEffect(() => {
                             )}
                           </Text>
 
+                          {!isBreak ? (
                           <Text
                             style={
                               styles.stopAddressText
@@ -3312,9 +3369,10 @@ useEffect(() => {
                             ) ||
                               "No address"}
                           </Text>
+                          ) : null}
                         </View>
 
-                        {stop.weather ? (
+                        {!isBreak && stop.weather ? (
                           <Text
                             style={{ color: "#5f735c", fontSize: 11, fontWeight: "800", marginTop: 5 }}
                             numberOfLines={1}
@@ -4089,10 +4147,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingTop: 20,
     paddingBottom: 48,
-  },
-
-  contentWithStickyAction: {
-    paddingBottom: 168,
   },
 
   centered: {
@@ -4915,12 +4969,9 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
 
+  // Footer stays visible but participates in layout instead of covering content.
   stickyActionWrap: {
-    bottom: 8,
-    left: 0,
-    position: "absolute",
-    right: 0,
-    zIndex: 10,
+    paddingBottom: 8,
   },
 
   stickyActionCard: {
