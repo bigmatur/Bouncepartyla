@@ -4,9 +4,61 @@ import { NextResponse } from "next/server";
 import {
   getResolvedMetaIntegration,
   ingestCrmInstagramInbound,
+  updateCrmInstagramDeliveryStatus,
 } from "@/lib/crm/instagram";
 
 export const runtime = "nodejs";
+
+type ResolvedInstagramProfile = {
+  username: string | null;
+};
+
+function normalizeInstagramHandle(value: unknown) {
+  return String(value || "")
+    .trim()
+    .replace(/^@+/, "")
+    .toLowerCase();
+}
+
+function extractEventInstagramUsername(params: {
+  event: any;
+  message: any;
+  metadata: Record<string, unknown>;
+}) {
+  const metadataMessage =
+    params.metadata?.message &&
+    typeof params.metadata.message === "object"
+      ? (params.metadata.message as Record<string, unknown>)
+      : {};
+
+  const candidates = [
+    params.event?.sender?.username,
+    params.event?.sender?.name,
+    params.message?.from?.username,
+    params.message?.from?.name,
+    metadataMessage.username,
+    metadataMessage.sender_username,
+  ];
+
+  for (const candidate of candidates) {
+    const normalized =
+      normalizeInstagramHandle(
+        candidate,
+      );
+
+    if (!normalized) {
+      continue;
+    }
+
+    if (!/^[a-z0-9._]{2,64}$/i.test(normalized)) {
+      continue;
+    }
+
+    return normalized;
+  }
+
+  return "";
+}
 
 function verifyMetaWebhookSignature(params: {
   rawBody: string;
@@ -227,6 +279,7 @@ function extractInstagramMessages(
     senderId: string;
     recipientId?: string;
     body: string;
+    fallbackUsername?: string;
     metadata: Record<
       string,
       unknown
@@ -324,6 +377,81 @@ function extractInstagramMessages(
           message,
         );
 
+      const metadata: Record<
+        string,
+        unknown
+      > = {
+        source:
+          "meta_webhook",
+
+        object:
+          payload?.object ||
+          null,
+
+        entry_id:
+          entry?.id ||
+          null,
+
+        entry_time:
+          entry?.time ||
+          null,
+
+        timestamp:
+          event?.timestamp ||
+          null,
+
+        ...(referralContext.eventReferral
+          ? {
+              referral:
+                referralContext.eventReferral,
+            }
+          : {}),
+
+        ...(referralContext.messageReferral
+          ? {
+              message_referral:
+                referralContext.messageReferral,
+            }
+          : {}),
+
+        ...(referralContext.attribution
+          ? {
+              attribution:
+                referralContext.attribution,
+            }
+          : {}),
+
+        message: {
+          mid:
+            providerMessageId,
+
+          text:
+            stringValue(
+              message?.text,
+            ) || null,
+
+          is_echo:
+            message?.is_echo ===
+            true,
+
+          attachments,
+        },
+      };
+
+      const fallbackUsername =
+        extractEventInstagramUsername(
+          {
+            event,
+            message,
+            metadata,
+          },
+        );
+
+      if (fallbackUsername) {
+        metadata.sender_username =
+          fallbackUsername;
+      }
+
       messages.push({
         providerMessageId,
         senderId,
@@ -332,73 +460,297 @@ function extractInstagramMessages(
           recipientId ||
           undefined,
 
+        fallbackUsername:
+          fallbackUsername ||
+          undefined,
+
         body:
           getMessageBody(
             message,
           ),
 
-        metadata: {
-          source:
-            "meta_webhook",
-
-          object:
-            payload?.object ||
-            null,
-
-          entry_id:
-            entry?.id ||
-            null,
-
-          entry_time:
-            entry?.time ||
-            null,
-
-          timestamp:
-            event?.timestamp ||
-            null,
-
-          ...(referralContext.eventReferral
-            ? {
-                referral:
-                  referralContext.eventReferral,
-              }
-            : {}),
-
-          ...(referralContext.messageReferral
-            ? {
-                message_referral:
-                  referralContext.messageReferral,
-              }
-            : {}),
-
-          ...(referralContext.attribution
-            ? {
-                attribution:
-                  referralContext.attribution,
-              }
-            : {}),
-
-          message: {
-            mid:
-              providerMessageId,
-
-            text:
-              stringValue(
-                message?.text,
-              ) || null,
-
-            is_echo:
-              message?.is_echo ===
-              true,
-
-            attachments,
-          },
-        },
+        metadata,
       });
     }
   }
 
   return messages;
+}
+
+function extractInstagramStatusEvents(
+  payload: any,
+) {
+  const statusEvents: Array<{
+    type: "delivered" | "read";
+    providerMessageIds: string[];
+    providerThreadId?: string;
+    recipientId?: string;
+    watermark?: string;
+    metadata: Record<string, unknown>;
+  }> = [];
+
+  const entries = Array.isArray(
+    payload?.entry,
+  )
+    ? payload.entry
+    : [];
+
+  for (const entry of entries) {
+    const messagingEvents =
+      Array.isArray(
+        entry?.messaging,
+      )
+        ? entry.messaging
+        : [];
+
+    for (
+      const event of
+      messagingEvents
+    ) {
+      const senderId = stringValue(
+        event?.sender?.id,
+      );
+
+      const recipientId = stringValue(
+        event?.recipient?.id,
+      );
+
+      const delivery = event?.delivery;
+
+      if (
+        delivery &&
+        typeof delivery === "object"
+      ) {
+        const mids = Array.isArray(
+          delivery?.mids,
+        )
+          ? delivery.mids
+          : [];
+
+        const providerMessageIds = mids
+          .map((mid: unknown) =>
+            stringValue(mid),
+          )
+          .filter(Boolean);
+
+        statusEvents.push({
+          type: "delivered",
+          providerMessageIds,
+          providerThreadId:
+            senderId ||
+            undefined,
+          recipientId:
+            recipientId ||
+            undefined,
+          watermark:
+            delivery?.watermark
+              ? String(
+                  delivery.watermark,
+                )
+              : undefined,
+          metadata: {
+            source:
+              "meta_webhook",
+            event_type:
+              "delivery",
+            object:
+              payload?.object ||
+              null,
+            entry_id:
+              entry?.id ||
+              null,
+            entry_time:
+              entry?.time ||
+              null,
+            timestamp:
+              event?.timestamp ||
+              null,
+            sender_id:
+              senderId || null,
+            delivery,
+          },
+        });
+      }
+
+      const read = event?.read;
+
+      if (
+        read &&
+        typeof read === "object"
+      ) {
+        statusEvents.push({
+          type: "read",
+          providerMessageIds: [],
+          providerThreadId:
+            senderId ||
+            undefined,
+          recipientId:
+            recipientId ||
+            undefined,
+          watermark:
+            read?.watermark
+              ? String(
+                  read.watermark,
+                )
+              : undefined,
+          metadata: {
+            source:
+              "meta_webhook",
+            event_type: "read",
+            object:
+              payload?.object ||
+              null,
+            entry_id:
+              entry?.id ||
+              null,
+            entry_time:
+              entry?.time ||
+              null,
+            timestamp:
+              event?.timestamp ||
+              null,
+            sender_id:
+              senderId || null,
+            read,
+          },
+        });
+      }
+    }
+  }
+
+  return statusEvents;
+}
+
+async function resolveInstagramSenderProfile(params: {
+  senderId: string;
+  accessToken: string;
+  graphVersion: string;
+  instagramUserId?: string;
+  pageId?: string;
+}) {
+  const senderId = stringValue(params.senderId);
+
+  if (!senderId) {
+    return null;
+  }
+
+  const accessToken = stringValue(params.accessToken);
+
+  if (!accessToken) {
+    return null;
+  }
+
+  const graphVersion = stringValue(params.graphVersion) || "v24.0";
+  const endpoint = `https://graph.facebook.com/${encodeURIComponent(graphVersion)}/${encodeURIComponent(senderId)}?fields=username,name`;
+
+  const fetchUsername = async (
+    token: string,
+  ) => {
+    const response = await fetch(endpoint, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+    });
+
+    return response;
+  };
+
+  const resolvePageAccessToken = async () => {
+    try {
+      const pagesEndpoint = `https://graph.facebook.com/${encodeURIComponent(graphVersion)}/me/accounts?fields=id,name,access_token,instagram_business_account{id,username}`;
+      const pagesResponse = await fetch(pagesEndpoint, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        cache: "no-store",
+      });
+
+      if (!pagesResponse.ok) {
+        return "";
+      }
+
+      const payload = (await pagesResponse
+        .json()
+        .catch(() => ({}))) as Record<string, unknown>;
+
+      const rows = Array.isArray(payload.data)
+        ? payload.data
+        : [];
+
+      const preferred = rows.find((row: any) => {
+        const rowPageId = stringValue(
+          row?.id,
+        );
+
+        const rowInstagramId = stringValue(
+          row
+            ?.instagram_business_account
+            ?.id,
+        );
+
+        const pageMatches =
+          params.pageId &&
+          rowPageId ===
+            params.pageId;
+
+        const instagramMatches =
+          params.instagramUserId &&
+          rowInstagramId ===
+            params.instagramUserId;
+
+        return (
+          pageMatches ||
+          instagramMatches
+        );
+      });
+
+      return stringValue(
+        (preferred as any)
+          ?.access_token,
+      );
+    } catch {
+      return "";
+    }
+  };
+
+  try {
+    let response =
+      await fetchUsername(
+        accessToken,
+      );
+
+    if (!response.ok) {
+      const pageAccessToken =
+        await resolvePageAccessToken();
+
+      if (pageAccessToken) {
+        response =
+          await fetchUsername(
+            pageAccessToken,
+          );
+      }
+    }
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    const username = stringValue(payload?.username);
+
+    if (!username) {
+      return null;
+    }
+
+    return {
+      username,
+    } satisfies ResolvedInstagramProfile;
+  } catch {
+    return null;
+  }
 }
 
 export async function GET(
@@ -589,17 +941,24 @@ export async function POST(
       payload,
     );
 
+  const statusEvents =
+    extractInstagramStatusEvents(
+      payload,
+    );
+
   /*
    * A valid Meta notification may contain only read/delivery
    * events, so zero inbound messages is a valid result.
    */
   if (
-    messages.length === 0
+    messages.length === 0 &&
+    statusEvents.length === 0
   ) {
     return NextResponse.json(
       {
         received: true,
         processed: 0,
+        statusProcessed: 0,
       },
       {
         status: 200,
@@ -614,11 +973,62 @@ export async function POST(
 
   let processed = 0;
   let ignored = 0;
+  let statusProcessed = 0;
+  let statusIgnored = 0;
+  const senderProfileCache = new Map<string, Promise<ResolvedInstagramProfile | null>>();
 
   const failures: Array<{
     providerMessageId: string;
     error: string;
   }> = [];
+
+  for (const statusEvent of statusEvents) {
+    try {
+      if (
+        config.instagramUserId &&
+        statusEvent.recipientId &&
+        statusEvent.recipientId !==
+          config.instagramUserId
+      ) {
+        statusIgnored += 1;
+        continue;
+      }
+
+      const statusResult =
+        await updateCrmInstagramDeliveryStatus(
+          {
+            providerMessageIds:
+              statusEvent.providerMessageIds,
+            providerThreadId:
+              statusEvent.providerThreadId,
+            messageStatus:
+              statusEvent.type,
+            watermark:
+              statusEvent.watermark,
+            metadata:
+              statusEvent.metadata,
+          },
+        );
+
+      if (statusResult.ignored) {
+        statusIgnored += 1;
+      } else {
+        statusProcessed += 1;
+      }
+    } catch (error) {
+      const messageText =
+        error instanceof Error
+          ? error.message
+          : "Instagram CRM status processing failed.";
+
+      failures.push({
+        providerMessageId:
+          `status:${statusEvent.type}:${statusEvent.providerThreadId || "unknown"}`,
+        error:
+          messageText,
+      });
+    }
+  }
 
   for (
     const message of messages
@@ -655,12 +1065,30 @@ export async function POST(
         continue;
       }
 
+      if (!senderProfileCache.has(message.senderId)) {
+        senderProfileCache.set(
+          message.senderId,
+          resolveInstagramSenderProfile({
+            senderId: message.senderId,
+            accessToken: config.accessToken,
+            graphVersion: config.graphVersion,
+            instagramUserId: config.instagramUserId,
+            pageId: config.pageId,
+          }),
+        );
+      }
+
+      const senderProfile = await senderProfileCache.get(message.senderId)!;
+
       await ingestCrmInstagramInbound({
         providerMessageId:
           message.providerMessageId,
 
         senderId:
           message.senderId,
+
+        username:
+          senderProfile?.username || message.fallbackUsername || undefined,
 
         recipientId:
           message.recipientId,
@@ -710,6 +1138,7 @@ export async function POST(
    */
   if (
     processed === 0 &&
+    statusProcessed === 0 &&
     failures.length > 0
   ) {
     return NextResponse.json(
@@ -732,6 +1161,8 @@ export async function POST(
     {
       received: true,
       processed,
+      statusProcessed,
+      statusIgnored,
       ignored,
       failed:
         failures.length,

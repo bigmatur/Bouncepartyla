@@ -29,6 +29,95 @@ function normalizeInstagramIdentity(
     .toLowerCase();
 }
 
+function stringValue(value: unknown) {
+  return typeof value === "string"
+    ? value.trim()
+    : "";
+}
+
+function safeMetadataObject(
+  value: unknown,
+  maxSerializedLength = 20000,
+) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value)
+  ) {
+    return null;
+  }
+
+  try {
+    const serialized = JSON.stringify(value);
+
+    if (
+      !serialized ||
+      serialized.length > maxSerializedLength
+    ) {
+      return null;
+    }
+
+    const parsed = JSON.parse(serialized);
+
+    return parsed &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function successStatusRank(status: string | null | undefined) {
+  const normalized = String(status || "")
+    .trim()
+    .toLowerCase();
+
+  if (normalized === "sent") return 1;
+  if (normalized === "delivered") return 2;
+  if (normalized === "read") return 3;
+
+  return 0;
+}
+
+function successStatusFromRank(rank: number) {
+  if (rank >= 3) return "read";
+  if (rank >= 2) return "delivered";
+  if (rank >= 1) return "sent";
+  return null;
+}
+
+function parseMetaTimestamp(value: unknown) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  const rawNumber =
+    typeof value === "number"
+      ? value
+      : Number(String(value).trim());
+
+  if (!Number.isFinite(rawNumber)) {
+    const asDate = new Date(String(value));
+
+    return Number.isNaN(asDate.getTime())
+      ? ""
+      : asDate.toISOString();
+  }
+
+  const ms =
+    rawNumber > 1_000_000_000_000
+      ? rawNumber
+      : rawNumber * 1000;
+
+  const date = new Date(ms);
+
+  return Number.isNaN(date.getTime())
+    ? ""
+    : date.toISOString();
+}
+
 export function getCrmInstagramConfiguration() {
   const accessToken = env(
     "META_INSTAGRAM_ACCESS_TOKEN",
@@ -354,6 +443,318 @@ async function sendMetaMessage(params: {
   return String(
     payload.message_id || "",
   );
+}
+
+async function sendMetaSenderAction(params: {
+  endpoint: string;
+  accessToken: string;
+  recipientId: string;
+  senderAction: "mark_seen";
+}) {
+  const response = await fetch(
+    params.endpoint,
+    {
+      method: "POST",
+      headers: {
+        Authorization:
+          `Bearer ${params.accessToken}`,
+        "Content-Type":
+          "application/json",
+      },
+      body: JSON.stringify({
+        recipient: {
+          id: params.recipientId,
+        },
+        sender_action:
+          params.senderAction,
+      }),
+      cache: "no-store",
+    },
+  );
+
+  const payload =
+    (await response
+      .json()
+      .catch(() => ({}))) as Record<
+      string,
+      any
+    >;
+
+  if (!response.ok) {
+    throw new Error(
+      String(
+        payload?.error
+          ?.message ||
+          `Instagram API error ${response.status}`,
+      ),
+    );
+  }
+
+  return true;
+}
+
+export async function markCrmInstagramConversationSeen(
+  params: {
+    conversationId: string;
+  },
+) {
+  const conversationId = stringValue(
+    params.conversationId,
+  );
+
+  if (!conversationId) {
+    throw new Error(
+      "Instagram conversation id is missing.",
+    );
+  }
+
+  const config =
+    await getResolvedMetaIntegration();
+
+  if (!config.outboundConfigured) {
+    return {
+      synced: false,
+      simulated: Boolean(
+        config.simulatorEnabled,
+      ),
+    };
+  }
+
+  const recipient =
+    await resolveInstagramRecipient(
+      conversationId,
+    );
+
+  const endpoint =
+    `https://graph.instagram.com/` +
+    `${config.graphVersion}/` +
+    `${encodeURIComponent(
+      config.instagramUserId,
+    )}/messages`;
+
+  await sendMetaSenderAction({
+    endpoint,
+    accessToken:
+      config.accessToken,
+    recipientId:
+      recipient.recipientId,
+    senderAction:
+      "mark_seen",
+  });
+
+  return {
+    synced: true,
+    simulated: false,
+  };
+}
+
+export async function updateCrmInstagramDeliveryStatus(params: {
+  providerMessageIds?: string[];
+  providerThreadId?: string;
+  messageStatus: "delivered" | "read";
+  watermark?: string;
+  metadata?: Record<string, unknown>;
+}) {
+  const providerMessageIds = Array.from(
+    new Set(
+      (params.providerMessageIds || [])
+        .map((value) => stringValue(value))
+        .filter(Boolean),
+    ),
+  );
+
+  const providerThreadId = stringValue(
+    params.providerThreadId,
+  );
+
+  const messageStatus = stringValue(
+    params.messageStatus,
+  ) as "delivered" | "read";
+
+  if (
+    messageStatus !== "delivered" &&
+    messageStatus !== "read"
+  ) {
+    return {
+      updated: false,
+      ignored: true,
+      matchedCount: 0,
+    };
+  }
+
+  const supabase = createServiceClient();
+
+  if (
+    providerMessageIds.length === 0 &&
+    !providerThreadId
+  ) {
+    return {
+      updated: false,
+      ignored: true,
+      matchedCount: 0,
+    };
+  }
+
+  const watermarkIso = parseMetaTimestamp(
+    params.watermark,
+  );
+  const rows: Array<Record<string, any>> = [];
+  const pageSize = 500;
+
+  for (let from = 0; ; from += pageSize) {
+    let query = supabase
+      .from("crm_messages")
+      .select("id, status, sent_at, delivered_at, read_at, metadata")
+      .eq("channel", "instagram")
+      .eq("direction", "outbound")
+      .order("id", { ascending: true });
+
+    query = providerMessageIds.length > 0
+      ? query.in(
+          "provider_message_id",
+          providerMessageIds,
+        )
+      : query.eq(
+          "provider_thread_id",
+          providerThreadId,
+        );
+
+    if (
+      providerMessageIds.length === 0 &&
+      watermarkIso
+    ) {
+      query = query.lte(
+        "sent_at",
+        watermarkIso,
+      );
+    }
+
+    const page = await query.range(
+      from,
+      from + pageSize - 1,
+    );
+
+    if (page.error) {
+      throw new Error(
+        page.error.message,
+      );
+    }
+
+    rows.push(...(page.data || []));
+
+    if ((page.data || []).length < pageSize) {
+      break;
+    }
+  }
+
+  if (rows.length === 0) {
+    return {
+      updated: false,
+      ignored: true,
+      matchedCount: 0,
+    };
+  }
+
+  const now = new Date().toISOString();
+  const statusOccurredAt =
+    watermarkIso || now;
+  let updatedCount = 0;
+
+  for (const row of rows) {
+    const currentStatus = stringValue(
+      row.status || "",
+    ) || null;
+
+    const currentRank =
+      successStatusRank(
+        currentStatus,
+      );
+
+    const incomingRank =
+      successStatusRank(
+        messageStatus,
+      );
+
+    const patch: Record<string, unknown> = {};
+
+    const nextRank = Math.max(
+      currentRank,
+      incomingRank,
+    );
+
+    const nextStatus =
+      successStatusFromRank(
+        nextRank,
+      );
+
+    if (
+      nextStatus &&
+      nextStatus !== currentStatus
+    ) {
+      patch.status = nextStatus;
+    }
+
+    if (
+      messageStatus === "delivered" &&
+      !row.delivered_at
+    ) {
+      patch.delivered_at = statusOccurredAt;
+    }
+
+    if (messageStatus === "read") {
+      if (!row.delivered_at) {
+        patch.delivered_at = statusOccurredAt;
+      }
+
+      if (!row.read_at) {
+        patch.read_at = statusOccurredAt;
+      }
+    }
+
+    if (incomingRank >= currentRank) {
+      patch.metadata = {
+        ...((row.metadata || {}) as Record<
+          string,
+          unknown
+        >),
+        instagram_status:
+          nextStatus || messageStatus,
+        instagram_status_updated_at:
+          statusOccurredAt,
+        instagram_status_metadata:
+          safeMetadataObject(
+            params.metadata,
+          ) || null,
+      };
+    }
+
+    if (Object.keys(patch).length === 0) {
+      continue;
+    }
+
+    const updateResult = await supabase
+      .from("crm_messages")
+      .update(patch)
+      .eq("id", row.id);
+
+    if (updateResult.error) {
+      throw new Error(
+        updateResult.error.message,
+      );
+    }
+
+    updatedCount += 1;
+  }
+
+  return {
+    updated: updatedCount > 0,
+    ignored: updatedCount === 0,
+    matchedCount:
+      rows.length,
+    updatedCount,
+    status:
+      messageStatus,
+  };
 }
 
 export async function sendCrmInstagramReply(
