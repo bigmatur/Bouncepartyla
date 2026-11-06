@@ -2679,7 +2679,7 @@ useEffect(() => {
                       : null,
                   ]}
                 >
-                  <Text style={styles.primaryActionSecondaryText}>Message</Text>
+                  <Text style={styles.primaryActionSecondaryText}>SMS customer</Text>
                 </Pressable>
               </View>
 
