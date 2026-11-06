@@ -46,7 +46,14 @@ begin
   if v_profile_id is null and exists (
     select 1
     from public.route_drivers d
-    where d.auth_user_id = auth.uid()
+    join auth.users u on u.id = auth.uid()
+    where (
+      d.auth_user_id = auth.uid()
+      or (
+        nullif(lower(btrim(coalesce(d.account_email, ''))), '') is not null
+        and lower(btrim(coalesce(d.account_email, ''))) = lower(btrim(coalesce(u.email, '')))
+      )
+    )
       and coalesce(d.active, true) = true
       and d.deleted_at is null
   ) then
