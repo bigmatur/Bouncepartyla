@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import {
   getResolvedMetaIntegration,
   ingestCrmInstagramInbound,
+  ingestCrmInstagramNativeOutbound,
   updateCrmInstagramDeliveryStatus,
 } from "@/lib/crm/instagram";
 
@@ -276,8 +277,9 @@ function extractInstagramMessages(
 ) {
   const messages: Array<{
     providerMessageId: string;
-    senderId: string;
-    recipientId?: string;
+    direction: "inbound" | "outbound";
+    contactId: string;
+    businessAccountId?: string;
     body: string;
     fallbackUsername?: string;
     metadata: Record<
@@ -307,19 +309,10 @@ function extractInstagramMessages(
       const message =
         event?.message;
 
-      /*
-       * Delivery/read/echo events are not inbound customer messages.
-       * Only ingest actual message events.
-       */
+      /* Delivery/read events have no message payload. */
       if (
         !message ||
         typeof message !== "object"
-      ) {
-        continue;
-      }
-
-      if (
-        message?.is_echo === true
       ) {
         continue;
       }
@@ -334,7 +327,11 @@ function extractInstagramMessages(
           event?.recipient?.id,
         );
 
-      if (!senderId) {
+      const isEcho = message?.is_echo === true;
+      const contactId = isEcho ? recipientId : senderId;
+      const businessAccountId = isEcho ? senderId : recipientId;
+
+      if (!contactId) {
         continue;
       }
 
@@ -454,11 +451,9 @@ function extractInstagramMessages(
 
       messages.push({
         providerMessageId,
-        senderId,
-
-        recipientId:
-          recipientId ||
-          undefined,
+        direction: isEcho ? "outbound" : "inbound",
+        contactId,
+        businessAccountId: businessAccountId || undefined,
 
         fallbackUsername:
           fallbackUsername ||
@@ -1046,9 +1041,8 @@ export async function POST(
        */
       if (
         config.instagramUserId &&
-        message.recipientId &&
-        message.recipientId !==
-          config.instagramUserId
+        message.businessAccountId &&
+        message.businessAccountId !== config.instagramUserId
       ) {
         console.warn(
           "Instagram webhook message ignored because recipient does not match configured Instagram account.",
@@ -1056,8 +1050,7 @@ export async function POST(
             providerMessageId:
               message.providerMessageId,
 
-            recipientId:
-              message.recipientId,
+            businessAccountId: message.businessAccountId,
           },
         );
 
@@ -1065,11 +1058,11 @@ export async function POST(
         continue;
       }
 
-      if (!senderProfileCache.has(message.senderId)) {
+      if (!senderProfileCache.has(message.contactId)) {
         senderProfileCache.set(
-          message.senderId,
+          message.contactId,
           resolveInstagramSenderProfile({
-            senderId: message.senderId,
+            senderId: message.contactId,
             accessToken: config.accessToken,
             graphVersion: config.graphVersion,
             instagramUserId: config.instagramUserId,
@@ -1078,27 +1071,30 @@ export async function POST(
         );
       }
 
-      const senderProfile = await senderProfileCache.get(message.senderId)!;
+      const senderProfile = await senderProfileCache.get(message.contactId)!;
 
-      await ingestCrmInstagramInbound({
+      const payload = {
         providerMessageId:
           message.providerMessageId,
-
-        senderId:
-          message.senderId,
-
         username:
           senderProfile?.username || message.fallbackUsername || undefined,
+        body: message.body,
+        metadata: message.metadata,
+      };
 
-        recipientId:
-          message.recipientId,
-
-        body:
-          message.body,
-
-        metadata:
-          message.metadata,
-      });
+      if (message.direction === "outbound") {
+        await ingestCrmInstagramNativeOutbound({
+          ...payload,
+          recipientId: message.contactId,
+          senderId: message.businessAccountId,
+        });
+      } else {
+        await ingestCrmInstagramInbound({
+          ...payload,
+          senderId: message.contactId,
+          recipientId: message.businessAccountId,
+        });
+      }
 
       processed += 1;
     } catch (error) {

@@ -1,7 +1,10 @@
 import "server-only";
 
 import { createServiceClient } from "@/lib/supabase/service";
-import { ingestCrmInboundMessage } from "@/lib/communication/inbound";
+import {
+  ingestCrmInboundMessage,
+  ingestCrmOutboundMessage,
+} from "@/lib/communication/inbound";
 import { resolveIntegrationConnection } from "@/lib/integrations/connections";
 import type {
   CrmAttachmentWithUrl,
@@ -260,6 +263,46 @@ export async function ingestCrmInstagramInbound(
     metadata: {
       username:
         username || null,
+      ...(params.metadata || {}),
+    },
+  });
+}
+
+export async function ingestCrmInstagramNativeOutbound(
+  params: {
+    providerMessageId: string;
+    recipientId: string;
+    username?: string;
+    senderId?: string;
+    body?: string;
+    metadata?: Record<string, unknown>;
+  },
+) {
+  const recipientId = String(params.recipientId || "").trim();
+  const providerMessageId = String(params.providerMessageId || "").trim();
+  const username = String(params.username || "").trim();
+
+  if (!providerMessageId || !recipientId) {
+    throw new Error("Instagram native outbound message is missing providerMessageId or recipientId.");
+  }
+
+  return ingestCrmOutboundMessage({
+    channel: "instagram",
+    identityType: "instagram",
+    identityValue: recipientId,
+    normalizedIdentity: normalizeInstagramIdentity(username || recipientId),
+    displayIdentity: username ? `@${normalizeInstagramIdentity(username)}` : recipientId,
+    senderDisplayName: username ? `@${normalizeInstagramIdentity(username)}` : `Instagram ${recipientId}`,
+    messageSenderIdentity: String(params.senderId || "").trim() || null,
+    messageRecipientIdentity: recipientId,
+    providerMessageId,
+    providerThreadId: recipientId,
+    subject: username ? `Instagram @${normalizeInstagramIdentity(username)}` : "Instagram conversation",
+    bodyText: String(params.body || "").trim() || "(Instagram media message)",
+    metadata: {
+      source: "meta_webhook",
+      native_instagram_outbound: true,
+      username: username || null,
       ...(params.metadata || {}),
     },
   });

@@ -10,14 +10,17 @@ type IdentityType =
   | "phone"
   | "instagram";
 
-type InboundMessage = {
+type CrmMessageInput = {
   channel: CrmCommunicationChannel;
+  direction?: "inbound" | "outbound";
   identityType: IdentityType;
   identityValue: string;
   normalizedIdentity: string;
   displayIdentity?: string;
   senderDisplayName?: string;
   recipientIdentity?: string | null;
+  messageSenderIdentity?: string | null;
+  messageRecipientIdentity?: string | null;
   providerMessageId: string;
   providerThreadId?: string | null;
   subject?: string | null;
@@ -163,9 +166,28 @@ function normalizePhone(value: string) {
 
 async function findExistingIdentity(params: {
   identityType: IdentityType;
+  identityValue?: string;
   normalizedIdentity: string;
 }): Promise<Owner | null> {
   const supabase = createServiceClient();
+
+  /*
+   * Instagram usernames can change. The scoped ID from Meta is stable, so
+   * prefer it when it is available and retain legacy username matching only
+   * as a fallback for existing records.
+   */
+  if (params.identityType === "instagram" && params.identityValue) {
+    const byScopedId = await supabase
+      .from("crm_contact_identities")
+      .select("customer_id, lead_id")
+      .eq("identity_type", "instagram")
+      .eq("identity_value", params.identityValue)
+      .limit(1)
+      .maybeSingle();
+
+    if (byScopedId.error) throw new Error(byScopedId.error.message);
+    if (byScopedId.data) return byScopedId.data;
+  }
 
   const result = await supabase
     .from("crm_contact_identities")
@@ -191,7 +213,7 @@ async function findExistingIdentity(params: {
 }
 
 async function findCustomer(
-  params: InboundMessage,
+  params: CrmMessageInput,
 ): Promise<string | null> {
   const supabase =
     createServiceClient();
@@ -254,7 +276,7 @@ async function findCustomer(
 }
 
 async function findOrCreateLead(
-  params: InboundMessage,
+  params: CrmMessageInput,
 ): Promise<string> {
   const supabase =
     createServiceClient();
@@ -443,12 +465,15 @@ async function findOrCreateLead(
 }
 
 async function resolveOwner(
-  params: InboundMessage,
+  params: CrmMessageInput,
 ): Promise<Owner> {
   const existing =
     await findExistingIdentity({
       identityType:
         params.identityType,
+
+      identityValue:
+        params.identityValue,
 
       normalizedIdentity:
         params.normalizedIdentity,
@@ -555,7 +580,7 @@ async function resolveOwner(
 }
 
 async function resolveConversation(
-  params: InboundMessage,
+  params: CrmMessageInput,
   owner: Owner,
 ) {
   const supabase =
@@ -671,7 +696,7 @@ async function resolveConversation(
           "normal",
 
         needs_reply:
-          true,
+          params.direction !== "outbound",
 
         unread_count:
           0,
@@ -696,8 +721,8 @@ async function resolveConversation(
   );
 }
 
-export async function ingestCrmInboundMessage(
-  params: InboundMessage,
+async function ingestCrmMessage(
+  params: CrmMessageInput,
 ) {
   const channel =
     String(
@@ -743,7 +768,7 @@ export async function ingestCrmInboundMessage(
   }
 
   const normalized:
-    InboundMessage = {
+    CrmMessageInput = {
       ...params,
       channel,
       providerMessageId,
@@ -815,14 +840,15 @@ export async function ingestCrmInboundMessage(
           conversationId,
 
         direction:
-          "inbound",
+          normalized.direction || "inbound",
 
         channel,
 
         sender_identity:
-          identityValue,
+          normalized.messageSenderIdentity || identityValue,
 
         recipient_identity:
+          normalized.messageRecipientIdentity ||
           params.recipientIdentity ||
           null,
 
@@ -853,7 +879,9 @@ export async function ingestCrmInboundMessage(
           null,
 
         status:
-          "received",
+          normalized.direction === "outbound"
+            ? "sent"
+            : "received",
 
         sent_at:
           occurredAt,
@@ -879,6 +907,8 @@ export async function ingestCrmInboundMessage(
       inserted.error.message,
     );
   }
+
+  const isOutbound = normalized.direction === "outbound";
 
   /*
    * unread_count is intentionally
@@ -928,10 +958,12 @@ export async function ingestCrmInboundMessage(
           "open",
 
         needs_reply:
-          true,
+          !isOutbound,
 
         unread_count:
-          currentUnread + 1,
+          isOutbound
+            ? currentUnread
+            : currentUnread + 1,
 
         last_channel:
           channel,
@@ -939,8 +971,9 @@ export async function ingestCrmInboundMessage(
         last_message_at:
           occurredAt,
 
-        last_inbound_at:
-          occurredAt,
+        ...(isOutbound
+          ? { last_outbound_at: occurredAt }
+          : { last_inbound_at: occurredAt }),
 
         updated_at:
           new Date()
@@ -961,4 +994,22 @@ export async function ingestCrmInboundMessage(
     duplicate: false,
     conversationId,
   };
+}
+
+export async function ingestCrmInboundMessage(
+  params: CrmMessageInput,
+) {
+  return ingestCrmMessage({
+    ...params,
+    direction: "inbound",
+  });
+}
+
+export async function ingestCrmOutboundMessage(
+  params: CrmMessageInput,
+) {
+  return ingestCrmMessage({
+    ...params,
+    direction: "outbound",
+  });
 }
