@@ -4100,8 +4100,9 @@ export default function NewBookingWizard({
                                             }
                                           }}
                                           aria-disabled={optionDisabled}
+                                          aria-label={`${option.name}${selected ? ", selected" : ""}${optionUnavailable ? ", unavailable" : ""}`}
                                           className={[
-                                            "w-[68vw] max-w-[220px] shrink-0 snap-start overflow-hidden rounded-[16px] border text-left transition sm:w-[190px] sm:rounded-[18px]",
+                                            "relative w-[68vw] max-w-[260px] shrink-0 snap-start overflow-hidden rounded-[16px] border text-left transition sm:w-[220px] sm:rounded-[18px]",
                                             optionChecking
                                               ? "cursor-wait border-amber-200 bg-amber-50 opacity-80"
                                               : optionUnavailable
@@ -4114,7 +4115,7 @@ export default function NewBookingWizard({
                                                 : "border-[#eee5d9] bg-[#fcfaf7]",
                                           ].join(" ")}
                                         >
-                                          <div className="flex h-20 items-center justify-center bg-[#efe7dc] p-1.5 sm:h-24">
+                                          <div className="aspect-square w-full bg-[#efe7dc] p-1.5">
                                             {option.imageUrl ? (
                                               <img
                                                 src={option.imageUrl}
@@ -4122,157 +4123,78 @@ export default function NewBookingWizard({
                                                 className="h-full w-full object-contain"
                                               />
                                             ) : (
-                                              <div className="flex h-full items-center justify-center text-xs font-semibold text-[#9a7a49]">
-                                                No photo
-                                              </div>
+                                              <div className="h-full w-full bg-[#f7f1e8]" />
                                             )}
                                           </div>
 
-                                          <div className="p-3">
-                                            <div className="flex items-center gap-2">
-                                              <span
-                                                className={[
-                                                  "flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-bold",
-                                                  selected && !optionUnavailable
-                                                    ? "border-[#c9964f] bg-[#c9964f] text-white"
-                                                    : optionUnavailable
-                                                      ? "border-red-300 bg-red-100 text-red-700"
-                                                      : "border-[#d8cec0] bg-white text-transparent",
-                                                ].join(" ")}
-                                              >
-                                                ✓
-                                              </span>
+                                          {selected && !optionUnavailable && (
+                                            <span className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-[#c9964f] text-base font-bold text-white shadow-md">
+                                              ✓
+                                            </span>
+                                          )}
 
-                                              <div className="line-clamp-2 text-sm font-semibold text-[#1f1e1b]">
-                                                {option.name}
-                                              </div>
-                                            </div>
+                                          {optionUnavailable && (
+                                            <span className="absolute inset-0 flex items-center justify-center bg-white/55 text-5xl font-light text-red-600/80">
+                                              ×
+                                            </span>
+                                          )}
 
-                                            {option.description && (
-                                              <p className="mt-1 hidden line-clamp-2 text-[11px] leading-4 text-[#6c6258] sm:block">
-                                                {option.description}
-                                              </p>
-                                            )}
-
-                                            <div className="mt-2 flex flex-wrap gap-1.5">
-                                              <span className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-semibold text-[#9a723e] ring-1 ring-[#eee5d9]">
-                                                {option.priceDelta > 0
-                                                  ? `+ ${money(option.priceDelta)}`
-                                                  : "Included"}
-                                              </span>
-
-                                              {option.trackInventory ? (
-                                                optionChecking ? (
-                                                  <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200">
-                                                    Checking stock…
-                                                  </span>
-                                                ) : optionUnavailable ? (
-                                                  <span className="rounded-full bg-red-50 px-2.5 py-0.5 text-[11px] font-semibold text-red-700 ring-1 ring-red-200">
-                                                    Unavailable
-                                                  </span>
-                                                ) : (
-                                                  <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
-                                                    Stock
-                                                  </span>
-                                                )
-                                              ) : (
-                                                <span className="rounded-full bg-neutral-100 px-2.5 py-0.5 text-[11px] font-semibold text-neutral-600 ring-1 ring-neutral-200">
-                                                  No inventory check
-                                                </span>
-                                              )}
-                                            </div>
-
-                                            {option.trackInventory &&
-                                              !optionChecking &&
-                                              optionAvailability && (
-                                                <div
-                                                  className={[
-                                                    "mt-2 hidden rounded-xl px-2.5 py-2 text-[11px] font-medium leading-4 ring-1 sm:block",
-                                                    optionUnavailable
-                                                      ? "bg-red-50 text-red-700 ring-red-100"
-                                                      : "bg-emerald-50 text-emerald-700 ring-emerald-100",
-                                                  ].join(" ")}
-                                                >
-                                                  Need{" "}
-                                                  {
-                                                    quantityNeededForOneSelection
-                                                  }{" "}
-                                                  · Available now{" "}
-                                                  {remainingForThisOption}
-                                                  {demandFromOtherSelections > 0
-                                                    ? ` · Used by other selections ${demandFromOtherSelections}`
-                                                    : ""}
-                                                </div>
-                                              )}
-
-                                            {optionUnavailable &&
-                                              optionAvailability && (
-                                                <div className="mt-2 rounded-xl bg-white px-2.5 py-2 text-[11px] font-medium leading-4 text-red-700 ring-1 ring-red-100">
-                                                  Need{" "}
-                                                  {
-                                                    quantityNeededForOneSelection
-                                                  }
-                                                  , remaining after current
-                                                  selections{" "}
-                                                  {remainingForThisOption}
-                                                </div>
-                                              )}
-
-                                            {isMultiple && selected && (
-                                              <div
-                                                className="mt-3 flex items-center justify-between rounded-xl bg-white p-1.5 ring-1 ring-[#e7ddd0]"
-                                                onClick={(event) =>
-                                                  event.stopPropagation()
+                                          {isMultiple && selected && (
+                                            <div
+                                              className="absolute bottom-3 left-3 right-3 flex items-center justify-between rounded-xl bg-white/95 p-1.5 shadow-sm ring-1 ring-[#e7ddd0]"
+                                              onClick={(event) =>
+                                                event.stopPropagation()
+                                              }
+                                            >
+                                              <button
+                                                type="button"
+                                                aria-label={`Remove one ${option.name}`}
+                                                onClick={() =>
+                                                  setMultipleModifierQuantity(
+                                                    {
+                                                      productId:
+                                                        selectedProduct.productId,
+                                                      groupId:
+                                                        currentGroup.id,
+                                                      optionId: option.id,
+                                                      quantity:
+                                                        selectedQuantity - 1,
+                                                    },
+                                                  )
                                                 }
+                                                className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#d8cec0] bg-white text-lg font-semibold text-[#2b2a28] hover:bg-[#faf8f5]"
                                               >
-                                                <button
-                                                  type="button"
-                                                  onClick={() =>
-                                                    setMultipleModifierQuantity(
-                                                      {
-                                                        productId:
-                                                          selectedProduct.productId,
-                                                        groupId:
-                                                          currentGroup.id,
-                                                        optionId: option.id,
-                                                        quantity:
-                                                          selectedQuantity - 1,
-                                                      },
-                                                    )
-                                                  }
-                                                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#d8cec0] bg-white text-lg font-semibold text-[#2b2a28] hover:bg-[#faf8f5]"
-                                                >
-                                                  −
-                                                </button>
-                                                <span className="min-w-10 text-center text-sm font-semibold text-[#1f1e1b]">
-                                                  {selectedQuantity}
-                                                </span>
-                                                <button
-                                                  type="button"
-                                                  disabled={
-                                                    selectedQuantity >=
-                                                    optionMaximum
-                                                  }
-                                                  onClick={() =>
-                                                    setMultipleModifierQuantity(
-                                                      {
-                                                        productId:
-                                                          selectedProduct.productId,
-                                                        groupId:
-                                                          currentGroup.id,
-                                                        optionId: option.id,
-                                                        quantity:
-                                                          selectedQuantity + 1,
-                                                      },
-                                                    )
-                                                  }
-                                                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#d8cec0] bg-white text-lg font-semibold text-[#2b2a28] hover:bg-[#faf8f5] disabled:cursor-not-allowed disabled:opacity-40"
-                                                >
-                                                  +
-                                                </button>
-                                              </div>
-                                            )}
-                                          </div>
+                                                −
+                                              </button>
+                                              <span className="min-w-10 text-center text-sm font-semibold text-[#1f1e1b]">
+                                                {selectedQuantity}
+                                              </span>
+                                              <button
+                                                type="button"
+                                                aria-label={`Add one ${option.name}`}
+                                                disabled={
+                                                  selectedQuantity >=
+                                                  optionMaximum
+                                                }
+                                                onClick={() =>
+                                                  setMultipleModifierQuantity(
+                                                    {
+                                                      productId:
+                                                        selectedProduct.productId,
+                                                      groupId:
+                                                        currentGroup.id,
+                                                      optionId: option.id,
+                                                      quantity:
+                                                        selectedQuantity + 1,
+                                                    },
+                                                  )
+                                                }
+                                                className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#d8cec0] bg-white text-lg font-semibold text-[#2b2a28] hover:bg-[#faf8f5] disabled:cursor-not-allowed disabled:opacity-40"
+                                              >
+                                                +
+                                              </button>
+                                            </div>
+                                          )}
                                         </div>
                                       );
                                     })}
