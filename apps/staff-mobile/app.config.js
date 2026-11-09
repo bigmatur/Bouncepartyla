@@ -38,6 +38,12 @@ module.exports = ({ config }) => {
 
   return {
     ...config,
+    updates: {
+      url: "https://u.expo.dev/19be6ae1-98f7-4d57-a7c5-0107dbbf90e6",
+    },
+    runtimeVersion: {
+      policy: "appVersion",
+    },
     plugins,
     extra: {
       ...(config.extra || {}),
