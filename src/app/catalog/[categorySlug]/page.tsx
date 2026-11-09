@@ -37,6 +37,9 @@ export async function generateMetadata({
     description:
       category?.description ||
       "Browse Bounce Party LA rentals and continue into booking.",
+    alternates: {
+      canonical: `/catalog/${encodeURIComponent(categorySlug)}`,
+    },
   };
 }
 

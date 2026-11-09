@@ -2,13 +2,29 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://bouncepartyla.com"),
+  metadataBase: new URL("https://bounceparty.us"),
   title: {
     default: "Bounce Party LA | Modern Party Rentals",
     template: "%s | Bounce Party LA",
   },
   description:
     "Modern bounce houses, soft play, bubble houses and party rentals in Los Angeles.",
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    siteName: "Bounce Party LA",
+    title: "Bounce Party LA | Modern Party Rentals",
+    description:
+      "Modern bounce houses, soft play, bubble houses and party rentals in Los Angeles.",
+  },
+  twitter: {
+    card: "summary",
+    title: "Bounce Party LA | Modern Party Rentals",
+    description:
+      "Modern bounce houses, soft play, bubble houses and party rentals in Los Angeles.",
+  },
   verification: {
     google: "wnVQFap2MOkILLPhsuryVzyLTUnBiXL4e61MaAWM0TE",
   },

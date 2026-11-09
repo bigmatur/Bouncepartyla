@@ -12,6 +12,9 @@ export const metadata: Metadata = {
   title: "Party Rentals",
   description:
     "Browse modern bounce houses, soft play, bubble houses and party rentals from Bounce Party LA.",
+  alternates: {
+    canonical: "/catalog",
+  },
 };
 
 type SearchParams = Promise<{ date?: string }>;

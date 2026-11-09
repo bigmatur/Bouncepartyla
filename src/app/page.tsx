@@ -13,6 +13,51 @@ export const metadata: Metadata = {
   title: "Modern Bounce House Rentals in Los Angeles | Bounce Party LA",
   description:
     "Modern bounce houses, soft play, bubble houses and party rentals delivered across Los Angeles. Browse rentals and book your event online.",
+  alternates: {
+    canonical: "/",
+  },
+};
+
+const homepageStructuredData = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://bounceparty.us/#website",
+      name: "Bounce Party LA",
+      url: "https://bounceparty.us",
+      description:
+        "Modern bounce houses, soft play, bubble houses and party rentals in Los Angeles.",
+    },
+    {
+      "@type": "LocalBusiness",
+      "@id": "https://bounceparty.us/#localbusiness",
+      name: "Bounce Party LA",
+      url: "https://bounceparty.us",
+      telephone: "+1-747-272-2603",
+      email: "bouncepartyla@gmail.com",
+      priceRange: "$$",
+      description:
+        "Modern bounce houses, soft play, bubble houses and party rentals delivered across Los Angeles and surrounding areas.",
+      areaServed: [
+        {
+          "@type": "City",
+          name: "Los Angeles",
+          containedInPlace: {
+            "@type": "State",
+            name: "California",
+          },
+        },
+      ],
+      contactPoint: {
+        "@type": "ContactPoint",
+        telephone: "+1-747-272-2603",
+        contactType: "customer service",
+        areaServed: "US",
+        availableLanguage: ["en"],
+      },
+    },
+  ],
 };
 
 export default async function HomePage() {
@@ -80,6 +125,12 @@ export default async function HomePage() {
 
   return (
     <PublicBookingShell>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify(homepageStructuredData),
+        }}
+      />
       <main className="overflow-hidden">
         <section className="border-b border-black/[0.06]">
           <div className="lg:hidden">

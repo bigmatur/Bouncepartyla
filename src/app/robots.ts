@@ -7,6 +7,6 @@ export default function robots(): MetadataRoute.Robots {
       allow: "/",
       disallow: ["/admin/", "/account/", "/driver/", "/api/", "/book/", "/booking/"],
     },
-    sitemap: "https://bouncepartyla.com/sitemap.xml",
+    sitemap: "https://bounceparty.us/sitemap.xml",
   };
 }

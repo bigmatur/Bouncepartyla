@@ -51,6 +51,19 @@ export async function generateMetadata({
       product?.short_description ||
       product?.description ||
       "Bounce Party LA rental details.",
+    alternates: {
+      canonical: `/product/${encodeURIComponent(slug)}`,
+    },
+    openGraph: product?.image_url
+      ? {
+          images: [
+            {
+              url: product.image_url,
+              alt: product.public_title || product.name,
+            },
+          ],
+        }
+      : undefined,
   };
 }
 
@@ -76,6 +89,23 @@ export default async function PublicProductPage({
     categories.find((item) => item.id === product.category_id) || null;
 
   const title = product.public_title || product.name;
+  const productStructuredData = {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    name: title,
+    description:
+      product.short_description ||
+      product.description ||
+      "Bounce Party LA rental.",
+    url: `https://bounceparty.us/product/${encodeURIComponent(slug)}`,
+    ...(product.image_url ? { image: [product.image_url] } : {}),
+    offers: {
+      "@type": "Offer",
+      priceCurrency: "USD",
+      price: Number(product.base_price || 0).toFixed(2),
+      url: `https://bounceparty.us/product/${encodeURIComponent(slug)}`,
+    },
+  };
 
   const details = [
     product.setup_width_ft || product.setup_length_ft
@@ -119,6 +149,12 @@ export default async function PublicProductPage({
 
   return (
     <PublicBookingShell>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify(productStructuredData),
+        }}
+      />
       <main className="mx-auto w-full max-w-7xl px-4 pb-28 pt-6 sm:px-6 sm:pb-10 sm:pt-10">
         <div className="flex flex-wrap items-center gap-2 text-sm text-black/50">
           <Link href="/catalog" className="font-semibold text-[#6f5936]">
