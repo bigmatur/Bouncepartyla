@@ -92,9 +92,11 @@ export async function signTemporaryBookingContractAction(formData: FormData) {
   const bookingId = text(formData, "bookingId");
   const signerName = text(formData, "signerName");
   const accepted = formData.get("accepted") === "on";
+  const noFacePaintAck = text(formData, "noFacePaintAck") === "true";
+  const adultSupervisionAck = text(formData, "adultSupervisionAck") === "true";
   const signatureDataUrl = text(formData, "signatureDataUrl");
 
-  if (!bookingId || !signerName || !accepted || !/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(signatureDataUrl)) {
+  if (!bookingId || !signerName || !accepted || !noFacePaintAck || !adultSupervisionAck || !/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(signatureDataUrl)) {
     redirect(`/account/bookings/${bookingId}?complete=1&error=signature_required`);
   }
 
@@ -275,13 +277,15 @@ export async function signTemporaryBookingContractAction(formData: FormData) {
   const documentHash = createHash("sha256").update(renderedHtml).digest("hex");
 
   const { data: signResult, error: signError } = await supabase.rpc(
-    "sign_temporary_booking_contract",
+    "sign_temporary_booking_contract_with_safety_ack",
     {
       p_booking_id: bookingId,
       p_signer_name: signerName,
       p_rendered_html: renderedHtml,
       p_document_hash: documentHash,
       p_signature_image_data_url: signatureDataUrl,
+      p_no_face_paint_ack: noFacePaintAck,
+      p_adult_supervision_ack: adultSupervisionAck,
     },
   );
 

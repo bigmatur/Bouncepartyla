@@ -742,10 +742,9 @@ export async function createCustomerBookingAction(formData: FormData) {
         });
       }
 
-      await processNotificationQueueBestEffort({
-        bookingId: result.booking.id,
-        limit: 20,
-      });
+      // Do not wait for email/SMS delivery before opening Stripe Checkout.
+      // SMTP and SMS providers can be slow or temporarily unavailable; the
+      // queued deliveries are processed after a successful Stripe webhook.
     }
 
     provisionalBookingId = String(result.booking?.id || "").trim() || null;

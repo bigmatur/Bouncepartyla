@@ -117,22 +117,23 @@ export default function CustomerDepositPos({
       {open && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/35 p-3 sm:items-center sm:p-4">
           <div className="flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-[28px] border border-black/5 bg-white shadow-[0_18px_50px_rgba(0,0,0,0.22)]">
-            {/* Header */}
             <div className="border-b border-[#eee5d9] px-6 py-5">
-              <h3 className="text-xl font-semibold text-[#1f1e1b]">Deposit payment</h3>
-              <p className="mt-1 text-sm text-[#6c6258]">Review your booking breakdown and complete the required deposit by card.</p>
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#9a7a49]">
+                Deposit checkout
+              </div>
+              <h3 className="mt-1 text-xl font-semibold text-[#1f1e1b]">Payment</h3>
+              <p className="mt-1 text-sm text-[#6c6258]">Complete the required deposit securely by card.</p>
             </div>
 
             <form action={recordTemporaryBookingDepositAction} className="space-y-4 overflow-y-auto p-4 sm:p-6">
               <input type="hidden" name="bookingId" value={bookingId} />
               <input type="hidden" name="tipAmount" value={(tipSettings.tipsEnabled ? tipAmount : 0).toFixed(2)} />
 
-              {/* POS checkout summary card */}
               <div className="rounded-[20px] bg-[#23313f] p-4 text-white">
-                <div className="text-xs uppercase tracking-[0.14em] text-white/65">POS checkout</div>
+                <div className="text-xs uppercase tracking-[0.14em] text-white/65">Payment due now</div>
                 <div className="mt-2 grid grid-cols-2 gap-4 text-sm">
                   <div>
-                    <div className="text-white/65">Required deposit due</div>
+                    <div className="text-white/65">Deposit</div>
                     <div className="text-lg font-semibold">{money(normalizedBalance)}</div>
                   </div>
                   <div>
@@ -145,19 +146,31 @@ export default function CustomerDepositPos({
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-[#d8cec0] bg-[#fcfaf7] p-4">
+              <div>
                 <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#9a7a49]">Payment method</div>
-                <div className="mt-2 text-sm font-semibold text-[#1f1e1b]">{cardLabel}</div>
-                <div className="mt-3 flex items-center justify-between gap-3 text-sm">
-                  <span className="text-[#6c6258]">Required deposit due</span>
-                  <span className="font-semibold text-[#1f1e1b]">{money(normalizedBalance)}</span>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <div className="inline-flex items-center rounded-full border border-[#23313f] bg-[#23313f] px-4 py-2 text-xs font-semibold text-white">
+                    {cardLabel}
+                  </div>
                 </div>
               </div>
 
-              {/* Tip section */}
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.12em] text-[#9a7a49]">
+                  Amount to pay now
+                </span>
+                <input
+                  value={money(normalizedBalance)}
+                  readOnly
+                  className="min-h-12 w-full rounded-xl border border-[#d8cec0] bg-[#faf8f5] px-4 text-sm font-semibold text-[#1f1e1b] outline-none"
+                />
+              </label>
+
               {tipSettings.tipsEnabled && (
                 <div className="space-y-3 rounded-2xl border border-[#eee5d9] bg-[#fcfaf7] p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#9a7a49]">Tip</div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#9a7a49]">
+                    Tip ({tipMode === "percent" ? "%" : "$"} mode from settings)
+                  </div>
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     {/* No tip button */}
                     <button
@@ -250,7 +263,6 @@ export default function CustomerDepositPos({
                 </div>
               )}
 
-              {/* Summary */}
               <div className="rounded-2xl bg-[#fcfaf7] p-4 text-sm text-[#6c6258] ring-1 ring-[#eee5d9]">
                 <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#9a7a49]">Summary</div>
                 <div className="mt-3 space-y-2">
@@ -274,7 +286,6 @@ export default function CustomerDepositPos({
                 </div>
               </div>
 
-              {/* Stripe note for card payments */}
               <p className="rounded-xl bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">
                 You will be redirected to Stripe secure checkout.
               </p>
@@ -293,7 +304,6 @@ export default function CustomerDepositPos({
                 agreement.
               </p>
 
-              {/* Actions */}
               <div className="flex items-center justify-end gap-3 border-t border-[#eee5d9] pt-4">
                 <button
                   type="button"

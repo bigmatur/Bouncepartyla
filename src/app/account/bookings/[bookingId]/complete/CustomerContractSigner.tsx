@@ -22,8 +22,11 @@ export default function CustomerContractSigner({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawingRef = useRef(false);
   const [name, setName] = useState(signerName);
+  const [noFacePaintAck, setNoFacePaintAck] = useState(false);
+  const [adultSupervisionAck, setAdultSupervisionAck] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [signatureDataUrl, setSignatureDataUrl] = useState("");
+  const contractPreviewRef = useRef<HTMLDivElement | null>(null);
 
   function prepareCanvas() {
     const canvas = canvasRef.current;
@@ -48,6 +51,19 @@ export default function CustomerContractSigner({
   useEffect(() => {
     prepareCanvas();
   }, []);
+
+  useEffect(() => {
+    const preview = contractPreviewRef.current;
+    if (!preview) return;
+
+    // The browser may restore a nested scroll position after navigation. Start
+    // the preview at the agreement heading, matching the admin signing flow.
+    const heading = Array.from(
+      preview.querySelectorAll<HTMLElement>("h1, h2, h3, h4"),
+    ).find((item) => /rental agreement|important terms/i.test(item.textContent || ""));
+
+    preview.scrollTop = heading ? Math.max(0, heading.offsetTop - 12) : 0;
+  }, [contractHtml]);
 
   function point(event: React.PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current!;
@@ -92,8 +108,10 @@ export default function CustomerContractSigner({
     <form action={signTemporaryBookingContractAction} className="space-y-5">
       <input type="hidden" name="bookingId" value={bookingId} />
       <input type="hidden" name="signatureDataUrl" value={signatureDataUrl} />
+      <input type="hidden" name="noFacePaintAck" value={noFacePaintAck ? "true" : ""} />
+      <input type="hidden" name="adultSupervisionAck" value={adultSupervisionAck ? "true" : ""} />
 
-      <div className="max-h-[420px] overflow-y-auto rounded-2xl border border-black/10 bg-[#faf8f5] p-5 text-sm leading-6">
+      <div ref={contractPreviewRef} className="max-h-[420px] overflow-y-auto rounded-2xl border border-[#e7dccd] bg-white p-5 text-sm leading-6 text-[#4b4339] ring-2 ring-[#e1d0b2]">
         <div dangerouslySetInnerHTML={{ __html: contractHtml }} />
       </div>
 
@@ -130,10 +148,39 @@ export default function CustomerContractSigner({
         </div>
       </div>
 
-      <label className="flex items-start gap-3 text-sm leading-5 text-black/65">
-        <input name="accepted" type="checkbox" required checked={accepted} onChange={(e) => setAccepted(e.target.checked)} className="mt-1 h-4 w-4" />
-        <span>I have reviewed the complete rental agreement and agree to its terms.</span>
-      </label>
+      <div className="space-y-2 rounded-2xl border border-[#d8cec0] bg-white px-3 py-2.5">
+        <label className="flex items-start gap-2 text-sm font-semibold leading-5 text-[#1f1e1b]">
+          <input
+            type="checkbox"
+            checked={noFacePaintAck}
+            onChange={(event) => setNoFacePaintAck(event.target.checked)}
+            className="mt-0.5 h-5 w-5 shrink-0"
+          />
+          <span>No face paint, glitter, or silly string on equipment.</span>
+        </label>
+
+        <label className="flex items-start gap-2 text-sm font-semibold leading-5 text-[#1f1e1b]">
+          <input
+            type="checkbox"
+            checked={adultSupervisionAck}
+            onChange={(event) => setAdultSupervisionAck(event.target.checked)}
+            className="mt-0.5 h-5 w-5 shrink-0"
+          />
+          <span>Adult supervision is required at all times.</span>
+        </label>
+
+        <label className="flex items-start gap-2 text-sm font-semibold leading-5 text-[#1f1e1b]">
+          <input
+            name="accepted"
+            type="checkbox"
+            required
+            checked={accepted}
+            onChange={(event) => setAccepted(event.target.checked)}
+            className="mt-0.5 h-5 w-5 shrink-0"
+          />
+          <span>I have reviewed the complete rental agreement and agree to its terms.</span>
+        </label>
+      </div>
 
       <p className="rounded-xl bg-[#faf8f4] px-3 py-2 text-xs leading-5 text-[#6c6258] ring-1 ring-[#eee5d9]">
         Account and website use are also governed by our{" "}
@@ -147,7 +194,7 @@ export default function CustomerContractSigner({
         .
       </p>
 
-      <button disabled={!accepted || !name.trim() || !signatureDataUrl} className="min-h-12 w-full rounded-xl bg-black px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">
+      <button disabled={!noFacePaintAck || !adultSupervisionAck || !accepted || !name.trim() || !signatureDataUrl} className="min-h-12 w-full rounded-xl bg-black px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">
         Sign contract and continue to payment
       </button>
     </form>
