@@ -281,42 +281,29 @@ export async function POST(request: Request) {
 
     if (!alreadyReported) {
       try {
-        await Promise.all([
-          enqueueStaffBookingNotification({
-            eventCode: "payment_received",
-            bookingId,
-            recipientRole: "admin",
-            dedupeSuffix: `driver-${stopId}`,
-            payload: {
-              payment_amount: amountForNotification,
-              payment_method: paymentMethodDisplay,
-              payment_collected_method: paymentMethodLabel,
-              payment_collected_by: "driver",
-              route_stop_id: stopId,
-              reported_at: reportedAt,
-              action_url: `/admin/bookings/${bookingId}`,
-            },
-          }),
-          enqueueStaffBookingNotification({
-            eventCode: "payment_received",
-            bookingId,
-            recipientRole: "manager",
-            dedupeSuffix: `driver-${stopId}`,
-            payload: {
-              payment_amount: amountForNotification,
-              payment_method: paymentMethodDisplay,
-              payment_collected_method: paymentMethodLabel,
-              payment_collected_by: "driver",
-              route_stop_id: stopId,
-              reported_at: reportedAt,
-              action_url: `/admin/bookings/${bookingId}`,
-            },
-          }),
-        ]);
+        await enqueueStaffBookingNotification({
+          eventCode: "payment_received",
+          bookingId,
+          recipientRole: "admin",
+          dedupeSuffix: `driver-${stopId}`,
+          payload: {
+            payment_amount: amountForNotification,
+            payment_method: paymentMethodDisplay,
+            payment_collected_method: paymentMethodLabel,
+            payment_collected_by: "driver",
+            route_stop_id: stopId,
+            reported_at: reportedAt,
+            action_url: `/admin/bookings/${bookingId}`,
+          },
+        });
 
         await processNotificationQueueBestEffort({
           bookingId,
-          limit: 20,
+          limit: 5,
+          // A driver collection must not flush unrelated queued emails for
+          // the booking. Deliver only this new internal payment alert.
+          eventCodes: ["payment_received"],
+          channels: ["in_app"],
         });
       } catch (notificationError) {
         console.error("Driver payment notification enqueue failed", {

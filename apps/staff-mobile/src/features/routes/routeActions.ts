@@ -449,14 +449,13 @@ export async function uploadMyRouteStopProofPhoto({
       throw new Error(insertResult.error.message);
     }
 
-    const proofResult = await supabase
-      .from("route_stops")
-      .update({
-        proof_photo_uploaded: true,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", stopId)
-      .eq("booking_id", bookingId);
+    const proofResult = await supabase.rpc(
+      "sync_my_route_stop_proof_photo_status",
+      {
+        p_stop_id: stopId,
+        p_booking_id: bookingId,
+      },
+    );
 
     if (proofResult.error) {
       throw new Error(proofResult.error.message);
@@ -587,14 +586,13 @@ export async function deleteMyRouteStopProofPhoto({
   const remainingCount = Number(remainingCountResult.count || 0);
 
   if (remainingCount <= 0) {
-    const proofResetResult = await supabase
-      .from("route_stops")
-      .update({
-        proof_photo_uploaded: false,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", stopId)
-      .eq("booking_id", bookingId);
+    const proofResetResult = await supabase.rpc(
+      "sync_my_route_stop_proof_photo_status",
+      {
+        p_stop_id: stopId,
+        p_booking_id: bookingId,
+      },
+    );
 
     if (proofResetResult.error) {
       throw new Error(proofResetResult.error.message);

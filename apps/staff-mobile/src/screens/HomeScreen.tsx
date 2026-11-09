@@ -959,10 +959,10 @@ useEffect(() => {
   const activeIsPickup =
     activeStopType === "pickup";
 
-  // Authoritative booking-wide status is applied only for pickup completion.
-  // Delivery completion keeps its own stop-level payment / PNC checks.
+  // Delivery creates the report; pickup verifies that booking-wide report.
+  // Either marker prevents asking the driver to collect the same balance twice.
   const paymentReportedOnRoute =
-    activeIsPickup &&
+    Boolean(activeStop?.payment_collected) ||
     Boolean(activeStop?.booking_payment_reported);
 
   const hasInsufficientPaymentReport =
@@ -1397,11 +1397,11 @@ useEffect(() => {
 
         setProofPhotos(photos);
       } catch (photoError) {
-        setError(
-          photoError instanceof Error
-            ? photoError.message
-            : "Could not upload the proof photo.",
-        );
+        const message = photoError instanceof Error
+          ? photoError.message
+          : "Could not upload the proof photo.";
+        setError(message);
+        Alert.alert("Could not upload photo", message);
       } finally {
         setStopToolPending(null);
       }
@@ -1429,17 +1429,13 @@ useEffect(() => {
           {
             text: "Take Photo",
             onPress: () => {
-              void pickProofPhoto(
-                "camera",
-              );
+              void pickProofPhoto("camera");
             },
           },
           {
             text: "Upload Photo",
             onPress: () => {
-              void pickProofPhoto(
-                "library",
-              );
+              void pickProofPhoto("library");
             },
           },
           {

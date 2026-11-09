@@ -410,6 +410,8 @@ async function processOneDelivery(delivery: any) {
 export async function processNotificationQueue(params?: {
   bookingId?: string | null;
   limit?: number;
+  eventCodes?: string[];
+  channels?: Array<"in_app" | "email" | "sms">;
 }) {
   const supabase = createServiceClient();
   const limit = Math.min(50, Math.max(1, Number(params?.limit || 20)));
@@ -424,6 +426,8 @@ export async function processNotificationQueue(params?: {
     .limit(limit);
 
   if (params?.bookingId) query = query.eq("booking_id", params.bookingId);
+  if (params?.eventCodes?.length) query = query.in("event_code", params.eventCodes);
+  if (params?.channels?.length) query = query.in("channel", params.channels);
 
   const result = await query;
   if (result.error) throw new Error(result.error.message);
@@ -455,6 +459,8 @@ export async function processNotificationQueue(params?: {
 export async function processNotificationQueueBestEffort(params?: {
   bookingId?: string | null;
   limit?: number;
+  eventCodes?: string[];
+  channels?: Array<"in_app" | "email" | "sms">;
 }) {
   try {
     return await processNotificationQueue(params);
