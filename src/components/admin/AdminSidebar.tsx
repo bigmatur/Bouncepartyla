@@ -144,10 +144,13 @@ export default function AdminSidebar({
     ? filterDriverNavItems(grantedPermissions)
     : filterAdminNavItems(grantedPermissions);
   const initials = getInitials(displayName || userEmail || "Bounce Party");
+  const [liveMyNotificationsUnreadCount, setLiveMyNotificationsUnreadCount] = useState(
+    Math.max(0, myNotificationsUnreadCount),
+  );
   const myNotificationsBadgeLabel =
-    myNotificationsUnreadCount > 9
+    liveMyNotificationsUnreadCount > 9
       ? "9+"
-      : String(Math.max(0, myNotificationsUnreadCount));
+      : String(liveMyNotificationsUnreadCount);
   const crmInboxBadgeLabel =
     crmInboxUnreadCount > 99 ? "99+" : String(Math.max(0, crmInboxUnreadCount));
   const [switcherOpen, setSwitcherOpen] = useState(false);
@@ -155,6 +158,47 @@ export default function AdminSidebar({
   const [expandedNavHrefs, setExpandedNavHrefs] = useState<string[]>([]);
   const switcherRef = useRef<HTMLDivElement | null>(null);
   const previousPathnameRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    setLiveMyNotificationsUnreadCount(Math.max(0, myNotificationsUnreadCount));
+  }, [myNotificationsUnreadCount]);
+
+  useEffect(() => {
+    let disposed = false;
+
+    const refreshUnreadNotifications = async () => {
+      try {
+        const response = await fetch("/api/admin/notifications/unread-count", {
+          cache: "no-store",
+        });
+
+        if (!response.ok) return;
+
+        const payload = (await response.json()) as { unreadCount?: unknown };
+        const unreadCount = Number(payload.unreadCount);
+
+        if (!disposed && Number.isFinite(unreadCount)) {
+          setLiveMyNotificationsUnreadCount(Math.max(0, Math.floor(unreadCount)));
+        }
+      } catch {
+        // Keep the last known badge value if the network is temporarily unavailable.
+      }
+    };
+
+    const handleWindowFocus = () => {
+      void refreshUnreadNotifications();
+    };
+
+    void refreshUnreadNotifications();
+    const intervalId = window.setInterval(refreshUnreadNotifications, 15_000);
+    window.addEventListener("focus", handleWindowFocus);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleWindowFocus);
+    };
+  }, []);
 
   useEffect(() => {
     setSwitcherOpen(false);
@@ -323,7 +367,7 @@ export default function AdminSidebar({
                         </span>
                         <span className="flex min-w-0 items-center gap-2">
                           <span>{item.label}</span>
-                          {item.href === "/admin/my-notifications" && myNotificationsUnreadCount > 0 ? (
+                          {item.href === "/admin/my-notifications" && liveMyNotificationsUnreadCount > 0 ? (
                             <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#c9964f] px-1.5 text-[11px] font-bold text-white">
                               {myNotificationsBadgeLabel}
                             </span>

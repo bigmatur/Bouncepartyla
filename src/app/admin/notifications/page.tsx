@@ -186,7 +186,7 @@ export default async function NotificationsAdminPage({
           </div>
         </div>
         <div className="mt-4 rounded-2xl bg-[#f8f5f0] p-4 text-xs leading-6 text-black/55">
-          Available variables: <code>{"{{customer_first_name}}"}</code>, <code>{"{{booking_number}}"}</code>, <code>{"{{event_date}}"}</code>, <code>{"{{total}}"}</code>, <code>{"{{deposit_amount}}"}</code>, <code>{"{{amount_paid}}"}</code>, <code>{"{{balance_due}}"}</code>, <code>{"{{payment_amount}}"}</code>, <code>{"{{tip_amount}}"}</code>, <code>{"{{booking_url}}"}</code>, <code>{"{{action_url}}"}</code>, <code>{"{{expires_at}}"}</code>, <code>{"{{preferences_url}}"}</code>.
+          Available variables: <code>{"{{customer_first_name}}"}</code>, <code>{"{{booking_number}}"}</code>, <code>{"{{event_date}}"}</code>, <code>{"{{total}}"}</code>, <code>{"{{deposit_amount}}"}</code>, <code>{"{{amount_paid}}"}</code>, <code>{"{{balance_due}}"}</code>, <code>{"{{payment_amount}}"}</code>, <code>{"{{payment_method}}"}</code>, <code>{"{{tip_amount}}"}</code>, <code>{"{{booking_url}}"}</code>, <code>{"{{action_url}}"}</code>, <code>{"{{expires_at}}"}</code>, <code>{"{{preferences_url}}"}</code>.
         </div>
         <div className="mt-5 space-y-3">
           {templates.map((template: any) => {

@@ -24,6 +24,7 @@ const TEMPLATE_VARIABLES = new Set([
   "amount_paid",
   "balance_due",
   "payment_amount",
+  "payment_method",
   "tip_amount",
   "booking_url",
   "action_url",

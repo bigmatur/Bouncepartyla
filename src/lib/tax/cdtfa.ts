@@ -47,12 +47,20 @@ export async function getCdtfaTaxRateByAddress({
   const components = Array.isArray(match.address_components) ? match.address_components : [];
   const component = (type: string) => components.find((c: any) => c.types?.includes(type))?.short_name;
   const inputNumber = cleanAddress.match(/^\s*(\d+[A-Za-z]?(?:-\d+)?)/)?.[1];
-  if (match.partial_match || match.geometry?.location_type !== "ROOFTOP" ||
-      component("country") !== "US" || component("administrative_area_level_1") !== "CA" ||
-      component("postal_code") !== cleanZip.slice(0, 5) ||
-      !inputNumber || String(component("street_number") || "").toLowerCase() !== inputNumber.toLowerCase() ||
-      !component("route")) {
-    throw new Error("Tax address needs verification: a complete rooftop match with matching street number and ZIP is required.");
+  const verifiedRooftopMatch = !match.partial_match &&
+    match.geometry?.location_type === "ROOFTOP" &&
+    component("country") === "US" &&
+    component("administrative_area_level_1") === "CA" &&
+    component("postal_code") === cleanZip.slice(0, 5) &&
+    !!inputNumber &&
+    String(component("street_number") || "").toLowerCase() === inputNumber.toLowerCase() &&
+    !!component("route");
+
+  // Parks and venues without a postal street address often geocode to a
+  // valid California point but not to a rooftop. The official CDTFA polygon
+  // lookup can still return the rate for that actual map point.
+  if (component("country") !== "US" || component("administrative_area_level_1") !== "CA") {
+    throw new Error("Tax address needs a California location.");
   }
   const lat = match.geometry?.location?.lat;
   const lng = match.geometry?.location?.lng;
@@ -96,6 +104,7 @@ export async function getCdtfaTaxRateByAddress({
       provider: "cdtfa_arcgis", checked_at: new Date(now).toISOString(),
       requested_address: { address: cleanAddress, city: cleanCity, zip: cleanZip },
       matched_address: match.formatted_address, location_type: match.geometry.location_type,
+      lookup_method: verifiedRooftopMatch ? "verified_address" : "mapped_coordinates_fallback",
       coordinates: { lat, lng }, tax_area: current, response,
     },
   };

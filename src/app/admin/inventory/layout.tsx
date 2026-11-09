@@ -56,7 +56,35 @@ export default function InventoryLayout({ children }: { children: ReactNode }) {
   return (
     <div className="admin-ipad-page admin-ipad-inventory space-y-4 sm:space-y-5">
       <section className="rounded-[22px] border border-black/5 bg-white p-3.5 shadow-[0_8px_28px_rgba(0,0,0,0.035)] sm:rounded-[28px] sm:p-4 sm:shadow-[0_10px_35px_rgba(0,0,0,0.035)]">
-        <div className="flex min-w-0 flex-col gap-3 sm:gap-4 xl:flex-row xl:items-center xl:justify-between">
+        <details className="group sm:hidden">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#9a723e]">
+                Warehouse module
+              </div>
+              <h1 className="mt-0.5 text-xl font-bold tracking-tight text-[#1f1e1b]">
+                Inventory Management
+              </h1>
+            </div>
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#f4ede2] text-lg font-bold text-[#23313f] transition group-open:rotate-45">
+              +
+            </span>
+          </summary>
+
+          <nav className="mt-3 grid grid-cols-3 gap-1.5 border-t border-[#eee5d9] pt-3">
+            {inventoryTabs.map((tab) => (
+              <Link
+                key={tab.href}
+                href={tab.href}
+                className="flex min-h-10 min-w-0 items-center justify-center rounded-xl bg-[#f4ede2] px-2 py-2 text-center text-[11px] font-bold leading-tight text-[#6c6258] transition hover:bg-[#eadfce] hover:text-[#23313f]"
+              >
+                {tab.label}
+              </Link>
+            ))}
+          </nav>
+        </details>
+
+        <div className="hidden min-w-0 flex-col gap-4 sm:flex xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-0">
             <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#9a723e] sm:text-xs sm:font-semibold">
               Warehouse module

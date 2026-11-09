@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { getAvailabilitySnapshotAction } from "./actions";
+import { getAvailabilitySnapshotAction, getZipTaxEstimateAction } from "./actions";
 
 type SnapshotItem = {
   productId: string;
@@ -36,6 +36,7 @@ type SnapshotPayload = {
 
 type StatusKind = "available" | "unavailable" | "failed";
 type StatusFilter = "all" | "available" | "unavailable";
+type ZipTaxEstimate = { ok: boolean; taxRate?: number; message: string };
 
 function shiftIsoDate(date: string, deltaDays: number) {
   const [yearRaw, monthRaw, dayRaw] = date.split("-");
@@ -247,6 +248,9 @@ export default function AvailabilityQuickCheckClient({
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
+  const [taxZip, setTaxZip] = useState("");
+  const [taxEstimate, setTaxEstimate] = useState<ZipTaxEstimate | null>(null);
+  const [taxEstimateLoading, setTaxEstimateLoading] = useState(false);
 
   const normalizedStartTime = normalizeTimeInput(eventStartTime, "09:00");
   const normalizedEndTime = normalizeTimeInput(eventEndTime, "21:00");
@@ -414,6 +418,30 @@ export default function AvailabilityQuickCheckClient({
     }
   }
 
+  async function checkZipTaxEstimate() {
+    setTaxEstimateLoading(true);
+    const formData = new FormData();
+    formData.set("zip", taxZip);
+
+    try {
+      setTaxEstimate(await getZipTaxEstimateAction(formData) as ZipTaxEstimate);
+    } catch {
+      setTaxEstimate({ ok: false, message: "Could not check the ZIP tax rate. Try again." });
+    } finally {
+      setTaxEstimateLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (taxZip.length !== 5) return;
+
+    const timer = window.setTimeout(() => {
+      void checkZipTaxEstimate();
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [taxZip]);
+
   function markInputsChanged() {
     requestCounterRef.current += 1;
     setLoading(false);
@@ -486,7 +514,7 @@ export default function AvailabilityQuickCheckClient({
           </a>
         </div>
 
-        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-4">
+        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-5">
           <div className="sm:col-span-2">
             <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-[#8f7651]">Date</span>
             <div className="grid grid-cols-[auto,1fr,auto] gap-1.5">
@@ -548,7 +576,38 @@ export default function AvailabilityQuickCheckClient({
             />
           </label>
 
-          <div className="sm:col-span-4 flex items-center gap-2">
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-[0.12em] text-[#8f7651]">Tax ZIP</span>
+            <div className="flex gap-1.5">
+              <input
+                inputMode="numeric"
+                maxLength={5}
+                value={taxZip}
+                onChange={(event) => {
+                  setTaxZip(event.target.value.replace(/\D/g, "").slice(0, 5));
+                  setTaxEstimate(null);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void checkZipTaxEstimate();
+                  }
+                }}
+                placeholder="ZIP"
+                className="h-10 min-w-0 flex-1 rounded-xl border border-[#d9cdbf] bg-white px-3 text-sm text-[#1f1e1b] outline-none focus:border-[#1f6f5f] focus:ring-2 focus:ring-[#d4ede6]"
+              />
+              <button
+                type="button"
+                onClick={() => void checkZipTaxEstimate()}
+                disabled={taxEstimateLoading || taxZip.length !== 5}
+                className="h-10 rounded-xl border border-[#d8ccb8] bg-white px-2.5 text-xs font-semibold text-[#4c4032] transition hover:bg-[#faf5ed] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {taxEstimateLoading ? "…" : "Refresh"}
+              </button>
+            </div>
+          </label>
+
+          <div className="sm:col-span-5 flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={refreshSnapshot}
@@ -566,6 +625,16 @@ export default function AvailabilityQuickCheckClient({
               </span>
             )}
           </div>
+
+          {taxEstimate ? (
+            <div className={[
+              "sm:col-span-5 text-xs",
+              taxEstimate.ok ? "text-emerald-700" : "text-[#8a5a24]",
+            ].join(" ")}>
+              {taxEstimate.ok ? `Tax estimate: ${taxEstimate.taxRate?.toFixed(3)}%. ` : ""}
+              {taxEstimate.message}
+            </div>
+          ) : null}
         </div>
 
         {!snapshotIsValid && !showCheckingIndicator && snapshot.message ? (

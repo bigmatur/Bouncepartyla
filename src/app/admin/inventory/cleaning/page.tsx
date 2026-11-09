@@ -47,6 +47,10 @@ function getOne(value: any) {
   return value || null;
 }
 
+function taskActivityDate(task: any) {
+  return task.completed_at || task.problem_at || task.started_at || task.created_at;
+}
+
 function statusClass(status: string) {
   if (status === "completed") {
     return "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200";
@@ -125,7 +129,9 @@ export default async function CleaningQueuePage({ searchParams }: PageProps) {
         last_name
       )
     `)
-    .order("created_at", { ascending: true })
+    // Fetch the newest tasks first so the visible history cap never hides
+    // recent orders. Display grouping below is driven by booking.event_date.
+    .order("created_at", { ascending: false })
     .limit(300);
 
   if (selectedStatus === "open") {
@@ -179,44 +185,10 @@ export default async function CleaningQueuePage({ searchParams }: PageProps) {
   const categories = categoriesResult.data || [];
 
   const categoryOrder = new Map<string, number>(
-    categories.map((category: any, index: number) => [
-      String(category.id),
-      index,
-    ])
+    categories.map((category: any, index: number) => [String(category.id), index]),
   );
 
-  const sortedTasks = [...tasks].sort((a: any, b: any) => {
-    const aItem = getOne(a.inventory_items);
-    const bItem = getOne(b.inventory_items);
-    const aCategory = getOne(aItem?.inventory_categories);
-    const bCategory = getOne(bItem?.inventory_categories);
-
-    const aOrder =
-      categoryOrder.get(String(aCategory?.id || "")) ??
-      Number.MAX_SAFE_INTEGER;
-    const bOrder =
-      categoryOrder.get(String(bCategory?.id || "")) ??
-      Number.MAX_SAFE_INTEGER;
-
-    if (aOrder !== bOrder) {
-      return aOrder - bOrder;
-    }
-
-    const categoryNameCompare = String(
-      aCategory?.name || ""
-    ).localeCompare(String(bCategory?.name || ""));
-
-    if (categoryNameCompare !== 0) {
-      return categoryNameCompare;
-    }
-
-    return (
-      new Date(a.created_at).getTime() -
-      new Date(b.created_at).getTime()
-    );
-  });
-
-  const groupedWeeks = sortedTasks.reduce(
+  const groupedWeeks = tasks.reduce(
     (
       weeks: Array<{
         id: string;
@@ -226,7 +198,9 @@ export default async function CleaningQueuePage({ searchParams }: PageProps) {
       task: any,
     ) => {
       const booking = getOne(task.bookings);
-      const routeDate = String(task.created_at || booking?.event_date || "");
+      // Cleaning history follows the customer's order week. Tasks created
+      // manually without an order use their activity date as a safe fallback.
+      const routeDate = String(booking?.event_date || taskActivityDate(task) || "");
       const weekId = weekStartISO(routeDate);
       const existing = weeks.find((week) => week.id === weekId);
 
@@ -244,6 +218,26 @@ export default async function CleaningQueuePage({ searchParams }: PageProps) {
     },
     [],
   );
+
+  for (const week of groupedWeeks) {
+    week.tasks.sort((a: any, b: any) => {
+      const aItem = getOne(a.inventory_items);
+      const bItem = getOne(b.inventory_items);
+      const aCategory = getOne(aItem?.inventory_categories);
+      const bCategory = getOne(bItem?.inventory_categories);
+      const aOrder = categoryOrder.get(String(aCategory?.id || "")) ?? Number.MAX_SAFE_INTEGER;
+      const bOrder = categoryOrder.get(String(bCategory?.id || "")) ?? Number.MAX_SAFE_INTEGER;
+
+      if (aOrder !== bOrder) return aOrder - bOrder;
+
+      const categoryCompare = String(aCategory?.name || "").localeCompare(String(bCategory?.name || ""));
+      if (categoryCompare !== 0) return categoryCompare;
+
+      return new Date(taskActivityDate(b)).getTime() - new Date(taskActivityDate(a)).getTime();
+    });
+  }
+
+  groupedWeeks.sort((a, b) => b.id.localeCompare(a.id));
 
   const waitingCount = tasks.filter(
     (task: any) => task.status === "waiting"
@@ -422,7 +416,7 @@ export default async function CleaningQueuePage({ searchParams }: PageProps) {
                     <span>Item</span>
                     <span>Status</span>
                     <span>Booking</span>
-                    <span>When</span>
+                    <span>Activity</span>
                     <span className="text-right">Actions</span>
                   </div>
 
@@ -469,7 +463,7 @@ export default async function CleaningQueuePage({ searchParams }: PageProps) {
                                 {String(task.status).replace(/_/g, " ")}
                               </span>
                               <span>{booking?.booking_number || "—"}</span>
-                              <span>{formatDate(task.created_at)}</span>
+                              <span>{formatDate(taskActivityDate(task))}</span>
                             </div>
 
                             <div className="mt-2 flex flex-wrap items-center gap-1.5 sm:hidden">
@@ -516,7 +510,7 @@ export default async function CleaningQueuePage({ searchParams }: PageProps) {
                           </span>
 
                           <span className="hidden text-xs text-[#6c6258] sm:inline">
-                            {formatDate(task.created_at)}
+                            {formatDate(taskActivityDate(task))}
                           </span>
 
                           <div className="hidden min-w-[220px] items-center justify-end gap-1.5 sm:flex">

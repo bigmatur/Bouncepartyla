@@ -218,6 +218,7 @@ async function processOneDelivery(delivery: any) {
     amount_paid: money(booking?.amount_paid),
     balance_due: money(booking?.balance_due),
     payment_amount: money(payload.payment_amount),
+    payment_method: String(payload.payment_method || "Payment").trim() || "Payment",
     tip_amount: money(payload.tip_amount),
     booking_url: bookingId ? `${origin}/account/bookings/${bookingId}` : `${origin}/account`,
     action_url: String(payload.action_url || (bookingId ? `${origin}/account/bookings/${bookingId}` : `${origin}/account`)),
