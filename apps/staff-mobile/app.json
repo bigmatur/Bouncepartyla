@@ -3,6 +3,10 @@
     "name": "Bounce Party LA Staff",
     "slug": "bounce-party-la-staff",
     "version": "0.1.0",
+    "platforms": [
+      "ios",
+      "android"
+    ],
     "orientation": "portrait",
     "scheme": "bouncepartyla-staff",
     "userInterfaceStyle": "light",
