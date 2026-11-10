@@ -215,8 +215,10 @@ function isInactiveStatus(value: string | null | undefined) {
 
 export function AdminBookingsScreen({
   grantedPermissions = [],
+  initialBookingId,
 }: {
   grantedPermissions?: string[];
+  initialBookingId?: string | null;
 }) {
   const can = (permission: string) =>
     grantedPermissions.length === 0 || grantedPermissions.includes(permission);
@@ -298,6 +300,12 @@ export function AdminBookingsScreen({
       })
       .finally(() => setLoading(false));
   }, [loadBookings]);
+
+  useEffect(() => {
+    if (!initialBookingId || selectedBooking) return;
+    const match = bookings.find((booking) => booking.id === initialBookingId);
+    if (match) setSelectedBooking(match);
+  }, [bookings, initialBookingId, selectedBooking]);
 
   const refresh = useCallback(() => {
     setRefreshing(true);

@@ -184,7 +184,7 @@ function statusTone(status: string | null | undefined) {
   return "neutral";
 }
 
-export function AdminHandoversScreen({ onBack }: { onBack: () => void }) {
+export function AdminHandoversScreen({ onBack, onOpenBooking }: { onBack: () => void; onOpenBooking?: (bookingId: string) => void }) {
   const [rows, setRows] = useState<Handover[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
@@ -480,7 +480,7 @@ export function AdminHandoversScreen({ onBack }: { onBack: () => void }) {
         )}
       </ScrollView>
 
-      <HandoverDetails row={selected} onClose={() => setSelected(null)} />
+      <HandoverDetails row={selected} onClose={() => setSelected(null)} onOpenBooking={onOpenBooking} />
     </View>
   );
 }
@@ -488,9 +488,11 @@ export function AdminHandoversScreen({ onBack }: { onBack: () => void }) {
 function HandoverDetails({
   row,
   onClose,
+  onOpenBooking,
 }: {
   row: Handover | null;
   onClose: () => void;
+  onOpenBooking?: (bookingId: string) => void;
 }) {
   if (!row) return null;
 
@@ -572,6 +574,18 @@ function HandoverDetails({
               ) : null}
             </View>
 
+            {row.booking_id && onOpenBooking ? (
+              <Pressable
+                onPress={() => {
+                  onClose();
+                  onOpenBooking(row.booking_id as string);
+                }}
+                style={styles.primaryAction}
+              >
+                <Text style={styles.primaryActionText}>OPEN BOOKING</Text>
+              </Pressable>
+            ) : null}
+
             {row.delivery_notes ? (
               <View style={styles.section}>
                 <Text style={styles.sectionLabel}>DELIVERY NOTES</Text>
@@ -626,11 +640,8 @@ function HandoverDetails({
             </View>
 
             <View style={styles.readOnlyNotice}>
-              <Text style={styles.readOnlyTitle}>Admin view</Text>
-              <Text style={styles.readOnlyText}>
-                Signing remains in the existing Driver handover flow. Mobile
-                Admin is read-only here to avoid duplicating signature logic.
-              </Text>
+              <Text style={styles.readOnlyTitle}>Signature workflow</Text>
+              <Text style={styles.readOnlyText}>Customer signing remains in the Driver handover flow.</Text>
             </View>
           </ScrollView>
         </View>

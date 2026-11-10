@@ -41,6 +41,8 @@ import {
 
 type Props = {
   onClose?: () => void;
+  initialEvent?: Partial<EventDraft>;
+  initialProductIds?: string[];
 };
 
 type CustomerMode = "existing" | "new";
@@ -295,6 +297,8 @@ function formatTimeLabel(
 
 export function AdminNewBookingScreen({
   onClose,
+  initialEvent,
+  initialProductIds = [],
 }: Props) {
   const [bootstrap, setBootstrap] =
     useState<MobileNewBookingBootstrap | null>(
@@ -327,12 +331,15 @@ export function AdminNewBookingScreen({
     );
 
   const [event, setEvent] =
-    useState<EventDraft>(EMPTY_EVENT);
+    useState<EventDraft>(() => ({
+      ...EMPTY_EVENT,
+      ...(initialEvent || {}),
+    }));
 
   const [
   selectedProductIds,
   setSelectedProductIds,
-] = useState<string[]>([]);
+] = useState<string[]>(initialProductIds);
 
 const [
   availabilityByProductId,

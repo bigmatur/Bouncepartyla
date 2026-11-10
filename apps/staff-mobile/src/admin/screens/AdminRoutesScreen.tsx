@@ -46,6 +46,21 @@ type AdminRouteStop = {
 
 type RouteFilter = "all" | "delivery" | "pickup" | "unassigned";
 
+type RouteDriver = {
+  id: string;
+  name: string;
+  color?: string | null;
+};
+
+const ROUTE_STATUSES = [
+  "scheduled",
+  "on_the_way",
+  "arrived",
+  "installed",
+  "picked_up",
+  "completed",
+];
+
 function localDateISO(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -147,6 +162,7 @@ export function AdminRoutesScreen() {
   const [filter, setFilter] = useState<RouteFilter>("all");
   const [stops, setStops] = useState<AdminRouteStop[]>([]);
   const [selectedStop, setSelectedStop] = useState<AdminRouteStop | null>(null);
+  const [drivers, setDrivers] = useState<RouteDriver[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -154,9 +170,10 @@ export function AdminRoutesScreen() {
   const loadStops = useCallback(async () => {
     setError("");
 
-    const result = await supabase
-      .from("route_stops")
-      .select(`
+    const [result, driversResult] = await Promise.all([
+      supabase
+        .from("route_stops")
+        .select(`
         id,
         booking_id,
         stop_date,
@@ -182,18 +199,28 @@ export function AdminRoutesScreen() {
           booking_number,
           status
         )
-      `)
-      .eq("stop_date", date)
-      .in("stop_type", ["delivery", "pickup"])
-      .order("sort_order", { ascending: true, nullsFirst: false })
-      .order("scheduled_start_time", { ascending: true })
-      .order("created_at", { ascending: true });
+        `)
+        .eq("stop_date", date)
+        .in("stop_type", ["delivery", "pickup"])
+        .order("sort_order", { ascending: true, nullsFirst: false })
+        .order("scheduled_start_time", { ascending: true })
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("route_drivers")
+        .select("id, name, color")
+        .eq("active", true)
+        .order("sort_order", { ascending: true })
+        .order("name", { ascending: true }),
+    ]);
 
     if (result.error) {
       throw new Error(result.error.message);
     }
 
     setStops((result.data || []) as AdminRouteStop[]);
+    if (!driversResult.error) {
+      setDrivers((driversResult.data || []) as RouteDriver[]);
+    }
   }, [date]);
 
   useEffect(() => {
@@ -509,6 +536,11 @@ export function AdminRoutesScreen() {
 
       <RouteStopDetails
         stop={selectedStop}
+        drivers={drivers}
+        onUpdated={async () => {
+          await loadStops();
+          setSelectedStop(null);
+        }}
         onClose={() => setSelectedStop(null)}
       />
     </View>
@@ -536,15 +568,57 @@ function StatCard({
 
 function RouteStopDetails({
   stop,
+  drivers,
+  onUpdated,
   onClose,
 }: {
   stop: AdminRouteStop | null;
+  drivers: RouteDriver[];
+  onUpdated: () => Promise<void>;
   onClose: () => void;
 }) {
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+
   if (!stop) return null;
 
   const address = addressText(stop);
   const phone = String(stop.customer_phone || "").trim();
+
+  const updateStop = async (values: Record<string, unknown>) => {
+    setSaving(true);
+    setSaveError("");
+
+    const payload: Record<string, unknown> = {
+      ...values,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (values.status === "arrived") payload.arrived_at = new Date().toISOString();
+    if (["installed", "picked_up", "completed"].includes(String(values.status || ""))) {
+      payload.completed_at = new Date().toISOString();
+    }
+
+    let query = supabase.from("route_stops").update(payload);
+    if (stop.booking_id && stop.stop_type) {
+      query = query
+        .eq("booking_id", stop.booking_id)
+        .eq("stop_type", stop.stop_type)
+        .eq("stop_date", stop.stop_date || null);
+    } else {
+      query = query.eq("id", stop.id);
+    }
+
+    const result = await query;
+    if (result.error) {
+      setSaveError(result.error.message);
+      setSaving(false);
+      return;
+    }
+
+    await onUpdated();
+    setSaving(false);
+  };
 
   return (
     <Modal
@@ -593,6 +667,35 @@ function RouteStopDetails({
                 {isUnassigned(stop) ? "Unassigned" : String(stop.driver_name)}
               </Detail>
               <Detail label="Truck">{stop.truck_name || "—"}</Detail>
+            </View>
+
+            <View style={styles.modalSection}>
+              <Text style={styles.sectionLabel}>UPDATE STATUS</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionChips}>
+                {ROUTE_STATUSES.map((status) => (
+                  <Pressable
+                    key={status}
+                    disabled={saving}
+                    onPress={() => void updateStop({ status })}
+                    style={[styles.actionChip, String(stop.status || "") === status ? styles.actionChipActive : null]}
+                  >
+                    <Text style={[styles.actionChipText, String(stop.status || "") === status ? styles.actionChipTextActive : null]}>{titleCase(status)}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+
+            <View style={styles.modalSection}>
+              <Text style={styles.sectionLabel}>ASSIGN DRIVER</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionChips}>
+                <Pressable disabled={saving} onPress={() => void updateStop({ driver_name: null })} style={[styles.actionChip, isUnassigned(stop) ? styles.actionChipActive : null]}><Text style={[styles.actionChipText, isUnassigned(stop) ? styles.actionChipTextActive : null]}>Unassigned</Text></Pressable>
+                {drivers.map((driver) => {
+                  const active = String(stop.driver_name || "") === driver.name;
+                  return <Pressable key={driver.id} disabled={saving} onPress={() => void updateStop({ driver_name: driver.name })} style={[styles.actionChip, active ? styles.actionChipActive : null]}><Text style={[styles.actionChipText, active ? styles.actionChipTextActive : null]}>{driver.name}</Text></Pressable>;
+                })}
+              </ScrollView>
+              {saving ? <View style={styles.savingRow}><ActivityIndicator size="small" color="#23313f" /><Text style={styles.savingText}>Saving route…</Text></View> : null}
+              {saveError ? <Text style={styles.saveError}>{saveError}</Text> : null}
             </View>
 
             <View style={styles.modalSection}>
@@ -1133,5 +1236,13 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     marginTop: 8,
   },
+  actionChips: { gap: 8, paddingVertical: 7 },
+  actionChip: { backgroundColor: "#f4efe7", borderColor: "#ded6c8", borderRadius: 17, borderWidth: 1, minHeight: 38, justifyContent: "center", paddingHorizontal: 13 },
+  actionChipActive: { backgroundColor: "#23313f", borderColor: "#23313f" },
+  actionChipText: { color: "#6c6258", fontSize: 11, fontWeight: "800" },
+  actionChipTextActive: { color: "#ffffff" },
+  savingRow: { alignItems: "center", flexDirection: "row", gap: 8, marginTop: 6 },
+  savingText: { color: "#81766a", fontSize: 11 },
+  saveError: { color: "#8c2e2a", fontSize: 11, lineHeight: 16, marginTop: 6 },
   pressed: { opacity: 0.7 },
 });

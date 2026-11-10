@@ -28,11 +28,13 @@ type Task = {
     | null;
   bookings?:
     | {
+        id?: string | null;
         booking_number?: string | null;
         event_date?: string | null;
         setup_city?: string | null;
       }
     | {
+        id?: string | null;
         booking_number?: string | null;
         event_date?: string | null;
         setup_city?: string | null;
@@ -77,7 +79,7 @@ function dueLabel(value: string | null | undefined) {
   }).format(date);
 }
 
-export function AdminTasksScreen({ onBack }: { onBack: () => void }) {
+export function AdminTasksScreen({ onBack, onOpenBooking }: { onBack: () => void; onOpenBooking?: (bookingId: string) => void }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [filter, setFilter] = useState<Filter>("open");
   const [refreshing, setRefreshing] = useState(false);
@@ -99,6 +101,7 @@ export function AdminTasksScreen({ onBack }: { onBack: () => void }) {
         completed_at,
         created_at,
         bookings (
+          id,
           booking_number,
           event_date,
           setup_city
@@ -341,6 +344,14 @@ export function AdminTasksScreen({ onBack }: { onBack: () => void }) {
               ) : null}
 
               <View style={styles.actionRow}>
+                {booking?.id && onOpenBooking ? (
+                  <Pressable
+                    onPress={() => onOpenBooking(booking.id as string)}
+                    style={styles.openBookingButton}
+                  >
+                    <Text style={styles.openBookingText}>OPEN BOOKING</Text>
+                  </Pressable>
+                ) : null}
                 {completed ? (
                   <Pressable
                     disabled={saving}
@@ -579,6 +590,8 @@ const styles = StyleSheet.create({
     marginTop: 11,
     paddingTop: 11,
   },
+  openBookingButton: { alignItems: "center", borderColor: "#cbbfaf", borderRadius: 13, borderWidth: 1, justifyContent: "center", marginBottom: 8, minHeight: 43 },
+  openBookingText: { color: "#23313f", fontSize: 9, fontWeight: "900", letterSpacing: 0.4 },
   completeButton: {
     minHeight: 43,
     backgroundColor: "#23313f",

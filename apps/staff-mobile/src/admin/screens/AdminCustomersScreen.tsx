@@ -34,7 +34,7 @@ function money(value: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
 }
 
-export function AdminCustomersScreen({ onBack }: { onBack: () => void }) {
+export function AdminCustomersScreen({ onBack, onOpenBooking }: { onBack: () => void; onOpenBooking?: (bookingId: string) => void }) {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [query, setQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
@@ -163,6 +163,11 @@ export function AdminCustomersScreen({ onBack }: { onBack: () => void }) {
             ) : null}
 
             <View style={styles.actions}>
+              {last && onOpenBooking ? (
+                <Pressable onPress={() => onOpenBooking(last.id)} style={[styles.actionButton, styles.primaryAction]}>
+                  <Text style={[styles.actionText, styles.primaryActionText]}>OPEN LAST BOOKING</Text>
+                </Pressable>
+              ) : null}
               {customer.phone ? (
                 <Pressable
                   onPress={() => void Linking.openURL(`tel:${customer.phone}`)}
@@ -222,4 +227,6 @@ const styles = StyleSheet.create({
   actions: { flexDirection: "row", gap: 8, marginTop: 10 },
   actionButton: { backgroundColor: "#f7ead0", borderRadius: 11, paddingHorizontal: 11, paddingVertical: 8 },
   actionText: { color: "#8a6437", fontSize: 8, fontWeight: "900" },
+  primaryAction: { backgroundColor: "#23313f" },
+  primaryActionText: { color: "#ffffff" },
 });

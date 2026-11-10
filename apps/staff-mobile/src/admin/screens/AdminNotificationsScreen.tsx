@@ -34,7 +34,7 @@ function dateLabel(value: string | null | undefined) {
   }).format(date);
 }
 
-export function AdminNotificationsScreen({ onBack }: { onBack: () => void }) {
+export function AdminNotificationsScreen({ onBack, onOpenBooking }: { onBack: () => void; onOpenBooking?: (bookingId: string) => void }) {
   const [notifications, setNotifications] = useState<MobileNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -63,7 +63,13 @@ export function AdminNotificationsScreen({ onBack }: { onBack: () => void }) {
   );
 
   async function markOne(notification: MobileNotification) {
-    if (notification.read_at || marking) return;
+    if (notification.read_at) {
+      if (notification.booking_id && onOpenBooking) {
+        onOpenBooking(notification.booking_id);
+      }
+      return;
+    }
+    if (marking) return;
     setMarking(true);
     const result = await markMobileNotificationsRead({ deliveryId: notification.id });
     if (!result.success) {
@@ -74,6 +80,9 @@ export function AdminNotificationsScreen({ onBack }: { onBack: () => void }) {
       )));
     }
     setMarking(false);
+    if (notification.booking_id && onOpenBooking) {
+      onOpenBooking(notification.booking_id);
+    }
   }
 
   async function markAll() {
@@ -147,6 +156,7 @@ export function AdminNotificationsScreen({ onBack }: { onBack: () => void }) {
             </View>
             <Text style={styles.eventCode}>{prettyEvent(notification.event_code)}</Text>
             {notification.rendered_body ? <Text style={[styles.body, unread ? null : styles.bodyRead]}>{notification.rendered_body}</Text> : null}
+            {notification.booking_id && onOpenBooking ? <Text style={styles.openHint}>OPEN BOOKING ›</Text> : null}
           </Pressable>
         );
       })}
@@ -188,4 +198,5 @@ const styles = StyleSheet.create({
   eventCode: { color: "#a29686", fontSize: 9, fontWeight: "900", letterSpacing: 0.5, marginTop: 7, textTransform: "uppercase" },
   body: { color: "#4f4941", fontSize: 12, lineHeight: 18, marginTop: 6 },
   bodyRead: { color: "#81766a" },
+  openHint: { color: "#8a6437", fontSize: 9, fontWeight: "900", marginTop: 9 },
 });

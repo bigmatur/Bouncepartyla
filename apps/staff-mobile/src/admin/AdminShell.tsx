@@ -13,15 +13,15 @@ import type { MobileAccess } from "../lib/mobileAccess";
 import { AdminDashboardScreen } from "./screens/AdminDashboardScreen";
 import { AdminBookingsScreen } from "./screens/AdminBookingsScreen";
 import { AdminRoutesScreen } from "./screens/AdminRoutesScreen";
-import { AdminInventoryScreen } from "./screens/AdminInventoryScreen";
 import { AdminMoreScreen } from "./screens/AdminMoreScreen";
 import { AdminNewBookingScreen } from "./screens/AdminNewBookingScreen";
+import { AdminAvailabilityScreen } from "./screens/AdminAvailabilityScreen";
 
 type AdminTab =
   | "dashboard"
   | "bookings"
+  | "availability"
   | "routes"
-  | "inventory"
   | "more";
 
 const TABS: Array<{
@@ -40,14 +40,14 @@ const TABS: Array<{
     permission: "bookings.view",
   },
   {
+    key: "availability",
+    label: "Available",
+    permission: "bookings.view",
+  },
+  {
     key: "routes",
     label: "Routes",
     permission: "routes.view",
-  },
-  {
-    key: "inventory",
-    label: "Inventory",
-    permission: "inventory.view",
   },
   {
     key: "more",
@@ -76,6 +76,14 @@ export function AdminShell({
 
   const [newBookingOpen, setNewBookingOpen] =
     useState(false);
+  const [newBookingDefaults, setNewBookingDefaults] = useState<{
+    eventDate?: string;
+    eventStartTime?: string;
+    eventEndTime?: string;
+    productIds?: string[];
+  }>({});
+  const [moreTarget, setMoreTarget] = useState<"menu" | "notifications">("menu");
+  const [bookingTarget, setBookingTarget] = useState<string | null>(null);
 
   useEffect(() => {
     if (!visibleTabs.some((item) => item.key === tab)) {
@@ -87,6 +95,12 @@ export function AdminShell({
     return (
       <View style={styles.shell}>
         <AdminNewBookingScreen
+          initialEvent={{
+            eventDate: newBookingDefaults.eventDate || "",
+            eventStartTime: newBookingDefaults.eventStartTime || "",
+            eventEndTime: newBookingDefaults.eventEndTime || "",
+          }}
+          initialProductIds={newBookingDefaults.productIds || []}
           onClose={() =>
             setNewBookingOpen(false)
           }
@@ -106,19 +120,41 @@ export function AdminShell({
           <AdminDashboardScreen
             displayName={access.displayName}
             grantedPermissions={access.grantedPermissions}
+            onOpenBookings={() => setTab("bookings")}
+            onOpenAvailability={() => setTab("availability")}
+            onOpenRoutes={() => setTab("routes")}
+            onOpenNotifications={() => {
+              setMoreTarget("notifications");
+              setTab("more");
+            }}
           />
         ) : tab === "bookings" ? (
           <AdminBookingsScreen
+            key={bookingTarget || "bookings"}
             grantedPermissions={access.grantedPermissions}
+            initialBookingId={bookingTarget}
+          />
+        ) : tab === "availability" ? (
+          <AdminAvailabilityScreen
+            onCreateBooking={can("bookings.create")
+              ? (params) => {
+                  setNewBookingDefaults(params);
+                  setNewBookingOpen(true);
+                }
+              : undefined}
           />
         ) : tab === "routes" ? (
           <AdminRoutesScreen />
-        ) : tab === "inventory" ? (
-          <AdminInventoryScreen />
         ) : tab === "more" ? (
           <AdminMoreScreen
+            key={moreTarget}
             role={access.role}
             grantedPermissions={access.grantedPermissions}
+            initialSection={moreTarget}
+            onOpenBooking={(bookingId) => {
+              setBookingTarget(bookingId);
+              setTab("bookings");
+            }}
           />
         ) : (
           <ComingSoon
@@ -133,9 +169,10 @@ export function AdminShell({
 
         {showNewBookingButton ? (
           <Pressable
-            onPress={() =>
-              setNewBookingOpen(true)
-            }
+            onPress={() => {
+              setNewBookingDefaults({});
+              setNewBookingOpen(true);
+            }}
             style={({ pressed }) => [
               styles.newBookingButton,
               pressed
@@ -170,7 +207,11 @@ export function AdminShell({
             <Pressable
               key={item.key}
               onPress={() =>
-                setTab(item.key)
+                {
+                  if (item.key === "more") setMoreTarget("menu");
+                  if (item.key === "bookings") setBookingTarget(null);
+                  setTab(item.key);
+                }
               }
               style={({ pressed }) => [
                 styles.tabButton,

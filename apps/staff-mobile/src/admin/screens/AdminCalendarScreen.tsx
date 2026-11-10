@@ -100,7 +100,7 @@ function titleFor(view: CalendarView, anchorDate: string, range: { start: string
   return parseDate(anchorDate).toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
 
-export function AdminCalendarScreen({ onBack }: { onBack: () => void }) {
+export function AdminCalendarScreen({ onBack, onOpenBooking }: { onBack: () => void; onOpenBooking?: (bookingId: string) => void }) {
   const today = localDateISO();
   const [view, setView] = useState<CalendarView>("month");
   const [anchorDate, setAnchorDate] = useState(today);
@@ -264,7 +264,7 @@ export function AdminCalendarScreen({ onBack }: { onBack: () => void }) {
         const customer = first(booking.customers)?.full_name || "Customer";
         const products = (booking.booking_items || []).map((item) => first(item.products)?.name).filter(Boolean).join(", ");
         return (
-          <View key={booking.id} style={styles.card}>
+          <Pressable key={booking.id} onPress={() => onOpenBooking?.(booking.id)} style={styles.card}>
             <View style={styles.timeColumn}>
               <Text style={styles.startTime}>{time(booking.event_start_time)}</Text>
               <Text style={styles.endTime}>{time(booking.event_end_time)}</Text>
@@ -275,7 +275,8 @@ export function AdminCalendarScreen({ onBack }: { onBack: () => void }) {
               <Text style={styles.product} numberOfLines={2}>{products || "No products"}</Text>
               <Text style={styles.city}>{booking.setup_city || "City not set"} · {String(booking.status || "").replace(/_/g, " ")}</Text>
             </View>
-          </View>
+            <Text style={styles.openChevron}>›</Text>
+          </Pressable>
         );
       })}
     </ScrollView>
@@ -330,4 +331,5 @@ const styles = StyleSheet.create({
   bookingNumber: { color: "#b88645", fontSize: 9, fontWeight: "900", marginTop: 2 },
   product: { color: "#6c6258", fontSize: 10, lineHeight: 15, marginTop: 5 },
   city: { color: "#81766a", fontSize: 9, marginTop: 6, textTransform: "capitalize" },
+  openChevron: { alignSelf: "center", color: "#b88645", fontSize: 26, marginLeft: 8 },
 });

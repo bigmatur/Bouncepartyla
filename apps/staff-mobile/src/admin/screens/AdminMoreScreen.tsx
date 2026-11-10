@@ -16,6 +16,7 @@ import { AdminCustomersScreen } from "./AdminCustomersScreen";
 import { AdminCrmScreen } from "./AdminCrmScreen";
 import { AdminHandoversScreen } from "./AdminHandoversScreen";
 import { AdminInventorySetupScreen } from "./AdminInventorySetupScreen";
+import { AdminInventoryScreen } from "./AdminInventoryScreen";
 import { AdminMovementsScreen } from "./AdminMovementsScreen";
 import { AdminNotificationsScreen } from "./AdminNotificationsScreen";
 import { AdminReceiveScreen } from "./AdminReceiveScreen";
@@ -25,15 +26,17 @@ import { AdminSuppliesScreen } from "./AdminSuppliesScreen";
 import { AdminTasksScreen } from "./AdminTasksScreen";
 import { AdminWarehouseOperationsScreen } from "./AdminWarehouseOperationsScreen";
 
-type MoreSection = "menu" | "staff" | "customers" | "calendar" | "tasks" | "handovers" | "notifications" | "counts" | "movements" | "warehouse_operations" | "inventory_setup" | "supplies" | "cleaning" | "receive" | "returns" | "damages" | "crm";
+type MoreSection = "menu" | "staff" | "customers" | "calendar" | "tasks" | "handovers" | "notifications" | "inventory" | "counts" | "movements" | "warehouse_operations" | "inventory_setup" | "supplies" | "cleaning" | "receive" | "returns" | "damages" | "crm";
 
 type Props = {
   role: string;
   grantedPermissions: string[];
+  initialSection?: "menu" | "notifications";
+  onOpenBooking?: (bookingId: string) => void;
 };
 
-export function AdminMoreScreen({ role, grantedPermissions }: Props) {
-  const [section, setSection] = useState<MoreSection>("menu");
+export function AdminMoreScreen({ role, grantedPermissions, initialSection = "menu", onOpenBooking }: Props) {
+  const [section, setSection] = useState<MoreSection>(initialSection);
   const can = (permission: string) =>
     grantedPermissions.length === 0 ||
     grantedPermissions.includes(permission);
@@ -43,23 +46,27 @@ export function AdminMoreScreen({ role, grantedPermissions }: Props) {
   }
 
   if (section === "customers") {
-    return <AdminCustomersScreen onBack={() => setSection("menu")} />;
+    return <AdminCustomersScreen onBack={() => setSection("menu")} onOpenBooking={onOpenBooking} />;
   }
 
   if (section === "calendar") {
-    return <AdminCalendarScreen onBack={() => setSection("menu")} />;
+    return <AdminCalendarScreen onBack={() => setSection("menu")} onOpenBooking={onOpenBooking} />;
   }
 
   if (section === "tasks") {
-    return <AdminTasksScreen onBack={() => setSection("menu")} />;
+    return <AdminTasksScreen onBack={() => setSection("menu")} onOpenBooking={onOpenBooking} />;
   }
 
   if (section === "handovers") {
-    return <AdminHandoversScreen onBack={() => setSection("menu")} />;
+    return <AdminHandoversScreen onBack={() => setSection("menu")} onOpenBooking={onOpenBooking} />;
   }
 
   if (section === "notifications") {
-    return <AdminNotificationsScreen onBack={() => setSection("menu")} />;
+    return <AdminNotificationsScreen onBack={() => setSection("menu")} onOpenBooking={onOpenBooking} />;
+  }
+
+  if (section === "inventory") {
+    return <AdminInventoryScreen onBack={() => setSection("menu")} />;
   }
 
   if (section === "cleaning") {
@@ -182,6 +189,14 @@ export function AdminMoreScreen({ role, grantedPermissions }: Props) {
       ) : null}
       {can("inventory.view") ? (
         <MenuCard
+          title="Inventory overview"
+          description="Live stock, equipment condition and warehouse location"
+          badge="STOCK"
+          onPress={() => setSection("inventory")}
+        />
+      ) : null}
+      {can("inventory.view") ? (
+        <MenuCard
           title="Inventory movements"
           description="Audit receiving, rentals, returns and stock counts"
           badge="LOG"
@@ -252,13 +267,6 @@ export function AdminMoreScreen({ role, grantedPermissions }: Props) {
           onPress={() => setSection("inventory_setup")}
         />
       ) : null}
-
-      <View style={styles.futureCard}>
-        <Text style={styles.futureTitle}>Next in More</Text>
-        <Text style={styles.futureText}>
-          Analytics and settings will plug into this same mobile hub.
-        </Text>
-      </View>
 
       <Pressable
         onPress={() => void supabase.auth.signOut()}

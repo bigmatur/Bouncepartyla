@@ -171,7 +171,7 @@ function shortDate(value: string | null | undefined) {
   }).format(date);
 }
 
-export function AdminInventoryScreen() {
+export function AdminInventoryScreen({ onBack }: { onBack?: () => void } = {}) {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [categories, setCategories] = useState<InventoryCategory[]>([]);
   const [query, setQuery] = useState("");
@@ -347,6 +347,11 @@ export function AdminInventoryScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={refresh} />
         }
       >
+        {onBack ? (
+          <Pressable onPress={onBack} style={styles.backButton}>
+            <Text style={styles.backText}>‹ BACK</Text>
+          </Pressable>
+        ) : null}
         <Text style={styles.eyebrow}>BOUNCE PARTY LA</Text>
 
         <View style={styles.titleRow}>
@@ -856,6 +861,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingBottom: 120,
   },
+  backButton: { alignSelf: "flex-start", paddingBottom: 8, paddingRight: 14, paddingTop: 2 },
+  backText: { color: "#b88645", fontSize: 10, fontWeight: "900" },
   eyebrow: {
     color: "#b88645",
     fontSize: 11,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Linking,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -160,6 +161,34 @@ export function AdminStaffScreen({ onBack }: { onBack: () => void }) {
                     <Text style={styles.roleText}>{pretty(role)}</Text>
                   </View>
                 </View>
+                {member.phone || member.account_email ? (
+                  <View style={styles.actions}>
+                    {member.phone ? (
+                      <Pressable
+                        onPress={() => void Linking.openURL(`tel:${member.phone}`)}
+                        style={styles.actionButton}
+                      >
+                        <Text style={styles.actionText}>CALL</Text>
+                      </Pressable>
+                    ) : null}
+                    {member.phone ? (
+                      <Pressable
+                        onPress={() => void Linking.openURL(`sms:${member.phone}`)}
+                        style={styles.actionButton}
+                      >
+                        <Text style={styles.actionText}>TEXT</Text>
+                      </Pressable>
+                    ) : null}
+                    {member.account_email ? (
+                      <Pressable
+                        onPress={() => void Linking.openURL(`mailto:${member.account_email}`)}
+                        style={styles.actionButton}
+                      >
+                        <Text style={styles.actionText}>EMAIL</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ) : null}
               </View>
             );
           })
@@ -214,6 +243,9 @@ const styles = StyleSheet.create({
   meta: { color: "#81766a", fontSize: 10, marginTop: 3 },
   roleBadge: { backgroundColor: "#f7ead0", borderRadius: 999, paddingHorizontal: 9, paddingVertical: 6 },
   roleText: { color: "#8a6437", fontSize: 8, fontWeight: "900" },
+  actions: { borderTopColor: "#e5ddd1", borderTopWidth: StyleSheet.hairlineWidth, flexDirection: "row", gap: 8, marginTop: 12, paddingTop: 11 },
+  actionButton: { alignItems: "center", borderColor: "#cbbfaf", borderRadius: 12, borderWidth: 1, flex: 1, justifyContent: "center", minHeight: 40 },
+  actionText: { color: "#23313f", fontSize: 9, fontWeight: "900" },
   state: { backgroundColor: "#ffffff", borderRadius: 20, alignItems: "center", marginTop: 10, padding: 24 },
   stateText: { color: "#81766a", fontSize: 12, marginTop: 8 },
   errorText: { color: "#8c2e2a", fontSize: 12, textAlign: "center" },

@@ -300,6 +300,67 @@ export type MobileNewBookingAvailabilitySnapshot = {
   >;
 };
 
+export type MobileQuickAvailabilityCategory = {
+  id: string;
+  name: string;
+  count: number;
+};
+
+export type MobileQuickAvailabilityItem = {
+  productId: string;
+  productName: string;
+  imageUrl: string | null;
+  categoryId: string | null;
+  categoryName: string;
+  available: boolean;
+  remainingQuantity: number;
+  message: string | null;
+  checkFailed: boolean;
+};
+
+export type MobileQuickAvailabilitySnapshot = {
+  ok: boolean;
+  message: string | null;
+  selectedDate: string;
+  eventStartTime: string;
+  eventEndTime: string;
+  categories: MobileQuickAvailabilityCategory[];
+  items: MobileQuickAvailabilityItem[];
+};
+
+export async function loadQuickAvailabilityFromMobile(params: {
+  eventDate: string;
+  eventStartTime: string;
+  eventEndTime: string;
+}) {
+  const query = new URLSearchParams({
+    date: params.eventDate,
+    start: params.eventStartTime,
+    end: params.eventEndTime,
+  }).toString();
+
+  const result = await authenticatedFetch<{
+    success: true;
+    data: MobileQuickAvailabilitySnapshot;
+  }>(`/api/admin/mobile/availability?${query}`, { method: "GET" });
+
+  if (!result.success) {
+    return {
+      success: false as const,
+      error: result.error || "Could not check availability.",
+    };
+  }
+
+  if (!result.data?.data) {
+    return {
+      success: false as const,
+      error: "Availability was not returned by the server.",
+    };
+  }
+
+  return { success: true as const, data: result.data.data };
+}
+
 export type MobileNewBookingPricingProductLine = {
   productId: string;
   name: string;
