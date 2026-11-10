@@ -9,6 +9,7 @@ import {
   View,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import * as Updates from "expo-updates";
 import type { Session } from "@supabase/supabase-js";
 
 import { AdminShell } from "./src/admin/AdminShell";
@@ -262,6 +263,26 @@ export default function App() {
     useState("");
 
   const bootAttemptRef = useRef(0);
+
+  useEffect(() => {
+    if (!Updates.isEnabled) return;
+
+    let active = true;
+
+    void Updates.checkForUpdateAsync()
+      .then(async (result) => {
+        if (!active || !result.isAvailable) return;
+        await Updates.fetchUpdateAsync();
+        if (active) await Updates.reloadAsync();
+      })
+      .catch((updateError) => {
+        console.warn("[App] OTA update check failed:", updateError);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const applySession = useCallback(
     async (
