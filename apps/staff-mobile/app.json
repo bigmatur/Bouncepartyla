@@ -24,14 +24,16 @@
         "LSApplicationQueriesSchemes": [
           "comgooglemaps"
         ]
-      }
+      },
+      "buildNumber": "2"
     },
     "android": {
       "package": "com.bouncepartyla.staff",
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION"
-      ]
+      ],
+      "versionCode": 2
     },
     "extra": {
       "supabaseUrl": "${EXPO_PUBLIC_SUPABASE_URL}",
