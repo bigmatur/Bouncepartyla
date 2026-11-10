@@ -955,3 +955,367 @@ export async function reportDriverPaymentNotCollectedFromMobile(params: {
     data: result.data.data,
   };
 }
+
+export type MobileNotification = {
+  id: string;
+  event_code?: string | null;
+  subject?: string | null;
+  rendered_body?: string | null;
+  booking_id?: string | null;
+  status?: string | null;
+  created_at?: string | null;
+  delivered_at?: string | null;
+  read_at?: string | null;
+};
+
+export async function loadMobileNotifications() {
+  const result = await authenticatedFetch<{
+    success: true;
+    data: { unreadCount: number; deliveries: MobileNotification[] };
+  }>("/api/admin/mobile/notifications", { method: "GET" });
+
+  if (!result.success || !result.data?.data) {
+    return {
+      success: false as const,
+      error: result.error || "Could not load notifications.",
+    };
+  }
+
+  return { success: true as const, data: result.data.data };
+}
+
+export async function markMobileNotificationsRead(params: {
+  deliveryId?: string;
+  markAll?: boolean;
+}) {
+  const result = await authenticatedFetch<{ success: true }>(
+    "/api/admin/mobile/notifications",
+    { method: "POST", body: JSON.stringify(params) },
+  );
+
+  if (!result.success) {
+    return {
+      success: false as const,
+      error: result.error || "Could not mark notifications as read.",
+    };
+  }
+
+  return { success: true as const };
+}
+
+export type MobileCleaningTask = {
+  id: string;
+  status?: "waiting" | "in_progress" | "problem" | string | null;
+  quantity?: number | null;
+  notes?: string | null;
+  created_at?: string | null;
+  started_at?: string | null;
+  inventory_items?: { name?: string | null; sku?: string | null } | Array<{ name?: string | null; sku?: string | null }> | null;
+  inventory_units?: { unit_code?: string | null } | Array<{ unit_code?: string | null }> | null;
+  bookings?: { booking_number?: string | null; event_date?: string | null } | Array<{ booking_number?: string | null; event_date?: string | null }> | null;
+};
+
+export async function loadMobileCleaningTasks() {
+  const result = await authenticatedFetch<{
+    success: true;
+    data: { tasks: MobileCleaningTask[] };
+  }>("/api/admin/mobile/inventory/cleaning", { method: "GET" });
+  if (!result.success || !result.data?.data) {
+    return { success: false as const, error: result.error || "Could not load the cleaning queue." };
+  }
+  return { success: true as const, data: result.data.data };
+}
+
+export async function updateMobileCleaningTask(params: {
+  taskId: string;
+  action: "start" | "complete" | "problem";
+  notes?: string;
+}) {
+  const result = await authenticatedFetch<{ success: true }>(
+    "/api/admin/mobile/inventory/cleaning",
+    { method: "POST", body: JSON.stringify(params) },
+  );
+  if (!result.success) {
+    return { success: false as const, error: result.error || "Could not update the cleaning task." };
+  }
+  return { success: true as const };
+}
+
+export type MobileReturnReservation = {
+  id: string;
+  status: string | null;
+  quantity: number | null;
+  reserved_until: string | null;
+  picked_up_at: string | null;
+  inventory_items?: { id: string; name: string | null; sku: string | null } | Array<{ id: string; name: string | null; sku: string | null }> | null;
+  inventory_units?: { id: string; unit_code: string | null; status: string | null } | Array<{ id: string; unit_code: string | null; status: string | null }> | null;
+  bookings?: { id: string; booking_number: string | null; event_date: string | null; customers?: { id: string; full_name: string | null } | Array<{ id: string; full_name: string | null }> | null } | Array<{ id: string; booking_number: string | null; event_date: string | null; customers?: { id: string; full_name: string | null } | Array<{ id: string; full_name: string | null }> | null }> | null;
+};
+
+export async function loadMobileReturns() {
+  const result = await authenticatedFetch<{
+    success: true;
+    data: { reservations: MobileReturnReservation[]; defaultLocationId: string | null };
+  }>("/api/admin/mobile/inventory/returns", { method: "GET" });
+  if (!result.success || !result.data?.data) {
+    return { success: false as const, error: result.error || "Could not load returns." };
+  }
+  return { success: true as const, data: result.data.data };
+}
+
+export async function processMobileReturn(params: {
+  reservationId: string;
+  itemId: string;
+  unitId?: string | null;
+  bookingId?: string | null;
+  currentStatus?: string | null;
+  resultStatus: "available" | "returned" | "cleaning" | "maintenance" | "damaged";
+  locationId?: string | null;
+  notes?: string;
+}) {
+  const result = await authenticatedFetch<{ success: true }>("/api/admin/mobile/inventory/returns", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+  return result.success
+    ? { success: true as const }
+    : { success: false as const, error: result.error || "Could not process return." };
+}
+
+export type MobileDamageReport = {
+  id: string;
+  title: string | null;
+  severity: string | null;
+  status: string | null;
+  repair_cost: number | string | null;
+  description: string | null;
+  reported_at: string | null;
+  resolved_at: string | null;
+  inventory_items?: { id: string; name: string | null; sku: string | null } | Array<{ id: string; name: string | null; sku: string | null }> | null;
+  inventory_units?: { id: string; unit_code: string | null; serial_number: string | null; status: string | null } | Array<{ id: string; unit_code: string | null; serial_number: string | null; status: string | null }> | null;
+  bookings?: { id: string; booking_number: string | null; event_date: string | null } | Array<{ id: string; booking_number: string | null; event_date: string | null }> | null;
+};
+
+export async function loadMobileDamageReports() {
+  const result = await authenticatedFetch<{
+    success: true;
+    data: { reports: MobileDamageReport[] };
+  }>("/api/admin/mobile/inventory/damages", { method: "GET" });
+  if (!result.success || !result.data?.data) {
+    return { success: false as const, error: result.error || "Could not load damage reports." };
+  }
+  return { success: true as const, data: result.data.data };
+}
+
+export async function updateMobileDamageReport(params: {
+  reportId: string;
+  status: "open" | "in_repair" | "resolved" | "closed";
+  unitStatus?: "maintenance" | "damaged" | "available" | "retired";
+  notes?: string;
+}) {
+  const result = await authenticatedFetch<{ success: true }>("/api/admin/mobile/inventory/damages", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+  return result.success
+    ? { success: true as const }
+    : { success: false as const, error: result.error || "Could not update damage report." };
+}
+
+export type MobileReceiveItem = {
+  id: string;
+  name: string | null;
+  sku: string | null;
+  category_id: string | null;
+  tracking_type: string | null;
+  default_purchase_price: number | string | null;
+  quantity_available: number | string | null;
+  image_url: string | null;
+};
+
+export type MobileReceiveOption = {
+  id: string;
+  name: string | null;
+  slug?: string | null;
+  location_type?: string | null;
+};
+
+export async function loadMobileReceiveStock() {
+  const result = await authenticatedFetch<{
+    success: true;
+    data: {
+      items: MobileReceiveItem[];
+      categories: MobileReceiveOption[];
+      locations: MobileReceiveOption[];
+      defaultLocationId: string | null;
+    };
+  }>("/api/admin/mobile/inventory/receive", { method: "GET" });
+  if (!result.success || !result.data?.data) {
+    return { success: false as const, error: result.error || "Could not load inventory receiving." };
+  }
+  return { success: true as const, data: result.data.data };
+}
+
+export async function receiveMobileInventoryStock(params: {
+  itemId: string;
+  locationId?: string | null;
+  quantity: number;
+  purchasePrice: number;
+  serialPrefix?: string;
+  condition?: string;
+  notes?: string;
+}) {
+  const result = await authenticatedFetch<{
+    success: true;
+    data: { itemId: string; received: number; unitCodes: string[] };
+  }>("/api/admin/mobile/inventory/receive", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+  if (!result.success || !result.data?.data) {
+    return { success: false as const, error: result.error || "Could not receive inventory stock." };
+  }
+  return { success: true as const, data: result.data.data };
+}
+
+export type MobileInventoryCountLine = {
+  id: string; inventory_item_id: string | null; inventory_unit_id: string | null;
+  expected_quantity: number | string | null; counted_quantity: number | string | null;
+  difference_quantity: number | string | null; expected_status: string | null;
+  counted_status: string | null; notes: string | null;
+  inventory_items?: { id: string; name: string | null; sku: string | null; tracking_type: string | null } | Array<{ id: string; name: string | null; sku: string | null; tracking_type: string | null }> | null;
+  inventory_units?: { id: string; unit_code: string | null; status: string | null } | Array<{ id: string; unit_code: string | null; status: string | null }> | null;
+};
+
+export type MobileInventoryCount = {
+  id: string; count_number: string | null; status: string | null; warehouse_location_id: string | null;
+  started_at: string | null; completed_at: string | null; notes: string | null;
+  warehouse_locations?: { id: string; name: string | null; location_type: string | null } | Array<{ id: string; name: string | null; location_type: string | null }> | null;
+  inventory_count_lines?: MobileInventoryCountLine[] | null;
+};
+
+export async function loadMobileInventoryCounts() {
+  const result = await authenticatedFetch<{ success: true; data: {
+    locations: MobileReceiveOption[]; counts: MobileInventoryCount[]; statuses: string[];
+  } }>("/api/admin/mobile/inventory/counts", { method: "GET" });
+  if (!result.success || !result.data?.data) return { success: false as const, error: result.error || "Could not load inventory counts." };
+  return { success: true as const, data: result.data.data };
+}
+
+export async function updateMobileInventoryCount(params: {
+  action: "start" | "update_line" | "complete" | "cancel";
+  countId?: string; lineId?: string; locationId?: string | null; expectedQuantity?: number;
+  countedQuantity?: number; countedStatus?: string | null; notes?: string;
+}) {
+  const result = await authenticatedFetch<{ success: true; data?: unknown }>("/api/admin/mobile/inventory/counts", { method: "POST", body: JSON.stringify(params) });
+  return result.success ? { success: true as const, data: result.data?.data } : { success: false as const, error: result.error || "Could not update inventory count." };
+}
+
+export type MobileInventoryMovement = {
+  id: string; movement_type: string | null; quantity: number | string | null;
+  from_status: string | null; to_status: string | null; reason: string | null; notes: string | null; created_at: string | null;
+  inventory_items?: { id: string; name: string | null; sku: string | null } | Array<{ id: string; name: string | null; sku: string | null }> | null;
+  inventory_units?: { id: string; unit_code: string | null; status: string | null } | Array<{ id: string; unit_code: string | null; status: string | null }> | null;
+  bookings?: { id: string; booking_number: string | null; event_date: string | null; customers?: { id: string; full_name: string | null } | Array<{ id: string; full_name: string | null }> | null } | Array<{ id: string; booking_number: string | null; event_date: string | null; customers?: { id: string; full_name: string | null } | Array<{ id: string; full_name: string | null }> | null }> | null;
+  from_location?: { id: string; name: string | null; location_type: string | null } | Array<{ id: string; name: string | null; location_type: string | null }> | null;
+  to_location?: { id: string; name: string | null; location_type: string | null } | Array<{ id: string; name: string | null; location_type: string | null }> | null;
+};
+
+export async function loadMobileInventoryMovements() {
+  const result = await authenticatedFetch<{ success: true; data: { movements: MobileInventoryMovement[] } }>("/api/admin/mobile/inventory/movements", { method: "GET" });
+  if (!result.success || !result.data?.data) return { success: false as const, error: result.error || "Could not load inventory movements." };
+  return { success: true as const, data: result.data.data };
+}
+
+export type MobileWarehouseUnit = {
+  id: string; unit_code: string | null; status: string | null; condition: string | null; warehouse_location_id: string | null;
+  inventory_items?: { id: string; name: string | null; sku: string | null; tracking_type: string | null } | Array<{ id: string; name: string | null; sku: string | null; tracking_type: string | null }> | null;
+  warehouse_locations?: { id: string; name: string | null; location_type: string | null } | Array<{ id: string; name: string | null; location_type: string | null }> | null;
+};
+export type MobileInventoryAdjustment = {
+  id: string; adjustment_type: string | null; quantity_change: number | string | null; from_status: string | null; to_status: string | null;
+  reason: string | null; notes: string | null; created_at: string | null;
+  inventory_items?: { id: string; name: string | null; sku: string | null } | Array<{ id: string; name: string | null; sku: string | null }> | null;
+  inventory_units?: { id: string; unit_code: string | null } | Array<{ id: string; unit_code: string | null }> | null;
+};
+
+export async function loadMobileWarehouseOperations() {
+  const result = await authenticatedFetch<{ success: true; data: { units: MobileWarehouseUnit[]; locations: MobileReceiveOption[]; adjustments: MobileInventoryAdjustment[] } }>("/api/admin/mobile/inventory/operations", { method: "GET" });
+  if (!result.success || !result.data?.data) return { success: false as const, error: result.error || "Could not load warehouse operations." };
+  return { success: true as const, data: result.data.data };
+}
+
+export async function updateMobileWarehouseOperation(params: {
+  action: "transfer" | "write_off"; unitId: string; locationId?: string | null;
+  toStatus?: "retired" | "lost" | "damaged" | "maintenance"; reason?: string; notes?: string;
+}) {
+  const result = await authenticatedFetch<{ success: true }>("/api/admin/mobile/inventory/operations", { method: "POST", body: JSON.stringify(params) });
+  return result.success ? { success: true as const } : { success: false as const, error: result.error || "Could not update warehouse unit." };
+}
+
+export type MobileSupplyItem = {
+  id: string; name: string | null; sku: string | null; tracking_type: string | null; default_purchase_price: number | string | null;
+};
+export type MobileSupplyLine = {
+  id: string; inventory_item_id: string | null; quantity: number | string | null; unit_cost: number | string | null;
+  total_cost: number | string | null; condition: string | null; notes: string | null; received_at: string | null;
+  inventory_items?: MobileSupplyItem | MobileSupplyItem[] | null;
+};
+export type MobileSupply = {
+  id: string; supply_number: string | null; supplier_name: string | null; warehouse_location_id: string | null;
+  received_by: string | null; currency: string | null; status: string | null; supply_date: string | null; received_at: string | null;
+  notes: string | null; created_at: string | null;
+  warehouse_locations?: MobileReceiveOption | MobileReceiveOption[] | null;
+  inventory_supply_lines?: MobileSupplyLine[] | null;
+};
+
+export async function loadMobileSupplies() {
+  const result = await authenticatedFetch<{ success: true; data: { supplies: MobileSupply[]; items: MobileSupplyItem[]; locations: MobileReceiveOption[] } }>("/api/admin/mobile/inventory/supplies", { method: "GET" });
+  if (!result.success || !result.data?.data) return { success: false as const, error: result.error || "Could not load supplies." };
+  return { success: true as const, data: result.data.data };
+}
+
+export async function updateMobileSupply(params: {
+  action: "create" | "add_line" | "cancel" | "receive"; supplyId?: string; supplierName?: string; locationId?: string;
+  receivedBy?: string; currency?: string; notes?: string; itemId?: string; quantity?: number; unitCost?: number; condition?: string;
+}) {
+  const result = await authenticatedFetch<{ success: true; data?: { supplyId?: string } }>("/api/admin/mobile/inventory/supplies", { method: "POST", body: JSON.stringify(params) });
+  return result.success ? { success: true as const, data: result.data?.data } : { success: false as const, error: result.error || "Could not update supply." };
+}
+
+export type MobileInventorySetupRecord = {
+  id: string; name: string | null; slug: string | null; parent_id: string | null; description: string | null;
+  sort_order: number | string | null; active: boolean | null; location_type?: string | null;
+};
+export async function loadMobileInventorySetup() {
+  const result = await authenticatedFetch<{ success: true; data: { categories: MobileInventorySetupRecord[]; locations: MobileInventorySetupRecord[]; categoryCounts: Record<string, number>; locationCounts: Record<string, number> } }>("/api/admin/mobile/inventory/setup", { method: "GET" });
+  if (!result.success || !result.data?.data) return { success: false as const, error: result.error || "Could not load warehouse setup." };
+  return { success: true as const, data: result.data.data };
+}
+export async function updateMobileInventorySetup(params: { action: "create" | "toggle"; kind: "category" | "location"; id?: string; active?: boolean; name?: string; parentId?: string | null; description?: string; sortOrder?: number; locationType?: string }) {
+  const result = await authenticatedFetch<{ success: true }>("/api/admin/mobile/inventory/setup", { method: "POST", body: JSON.stringify(params) });
+  return result.success ? { success: true as const } : { success: false as const, error: result.error || "Could not update warehouse setup." };
+}
+
+export type MobileCrmConversation = {
+  id: string; display_name?: string; subject?: string | null; status?: string | null;
+  conversation_scope?: string | null; last_channel?: string | null; last_message?: string | null;
+  last_message_at?: string | null; unread_count?: number | null; needs_reply?: boolean | null;
+};
+export type MobileCrmMessage = {
+  id: string; direction?: string | null; channel?: string | null; sender_identity?: string | null;
+  body_text?: string | null; sent_at?: string | null; created_at?: string | null;
+};
+
+export async function loadMobileCrmInbox(conversationId?: string) {
+  const suffix = conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : "";
+  const result = await authenticatedFetch<{ success: true; data: { conversations?: MobileCrmConversation[]; conversation?: MobileCrmConversation; messages?: MobileCrmMessage[] } }>(`/api/admin/mobile/crm/inbox${suffix}`, { method: "GET" });
+  if (!result.success || !result.data?.data) return { success: false as const, error: result.error || "Could not load CRM Inbox." };
+  return { success: true as const, data: result.data.data };
+}
+
+export async function updateMobileCrmConversation(params: { action: "read" | "reply"; conversationId: string; body?: string }) {
+  const result = await authenticatedFetch<{ success: true }>("/api/admin/mobile/crm/inbox", { method: "POST", body: JSON.stringify(params) });
+  if (!result.success) return { success: false as const, error: result.error || "Could not update CRM conversation." };
+  return { success: true as const };
+}

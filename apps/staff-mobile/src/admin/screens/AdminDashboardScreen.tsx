@@ -33,24 +33,45 @@ function money(value: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
 }
 
-export function AdminDashboardScreen({ displayName }: { displayName: string }) {
+export function AdminDashboardScreen({
+  displayName,
+  grantedPermissions,
+}: {
+  displayName: string;
+  grantedPermissions: string[];
+}) {
   const [stats, setStats] = useState(EMPTY);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const today = useMemo(localDate, []);
+  const can = useCallback(
+    (permission: string) =>
+      grantedPermissions.length === 0 || grantedPermissions.includes(permission),
+    [grantedPermissions],
+  );
+  const canViewBookings = can("bookings.view");
+  const canViewFinancials = can("bookings.view_financials");
+  const canViewRoutes = can("routes.view");
+  const canViewInventory = can("inventory.view");
 
   const load = useCallback(async () => {
     setError(null);
 
     const [bookingsResult, routesResult, inventoryResult] = await Promise.all([
-      supabase
+      canViewBookings
+        ? supabase
         .from("bookings")
         .select("id, event_date, status, balance_due, archived_at")
         .order("event_date", { ascending: false })
-        .limit(500),
-      supabase.from("route_stops").select("id, stop_type, stop_date, status").eq("stop_date", today),
-      supabase.from("inventory_units").select("id, status"),
+        .limit(500)
+        : Promise.resolve({ data: [], error: null }),
+      canViewRoutes
+        ? supabase.from("route_stops").select("id, stop_type, stop_date, status").eq("stop_date", today)
+        : Promise.resolve({ data: [], error: null }),
+      canViewInventory
+        ? supabase.from("inventory_units").select("id, status")
+        : Promise.resolve({ data: [], error: null }),
     ]);
 
     const firstError = bookingsResult.error || routesResult.error || inventoryResult.error;
@@ -71,11 +92,13 @@ export function AdminDashboardScreen({ displayName }: { displayName: string }) {
       bookingsToday: active.filter((booking) => booking.event_date === today).length,
       deliveriesToday: routes.filter((stop) => String(stop.stop_type).toLowerCase() === "delivery").length,
       pickupsToday: routes.filter((stop) => String(stop.stop_type).toLowerCase() === "pickup").length,
-      balanceDue: active.reduce((sum, booking) => sum + Number(booking.balance_due || 0), 0),
+      balanceDue: canViewFinancials
+        ? active.reduce((sum, booking) => sum + Number(booking.balance_due || 0), 0)
+        : 0,
       activeBookings: active.length,
       inventoryAvailable: inventory.filter((unit) => String(unit.status).toLowerCase() === "available").length,
     });
-  }, [today]);
+  }, [canViewBookings, canViewFinancials, canViewInventory, canViewRoutes, today]);
 
   useEffect(() => {
     void load().finally(() => setLoading(false));
@@ -107,19 +130,19 @@ export function AdminDashboardScreen({ displayName }: { displayName: string }) {
       ) : (
         <>
           <View style={styles.grid}>
-            <Metric label="Bookings today" value={String(stats.bookingsToday)} />
-            <Metric label="Deliveries today" value={String(stats.deliveriesToday)} />
-            <Metric label="Pickups today" value={String(stats.pickupsToday)} />
-            <Metric label="Balance due" value={money(stats.balanceDue)} />
+            {canViewBookings ? <Metric label="Bookings today" value={String(stats.bookingsToday)} /> : null}
+            {canViewRoutes ? <Metric label="Deliveries today" value={String(stats.deliveriesToday)} /> : null}
+            {canViewRoutes ? <Metric label="Pickups today" value={String(stats.pickupsToday)} /> : null}
+            {canViewFinancials ? <Metric label="Balance due" value={money(stats.balanceDue)} /> : null}
           </View>
 
           <Text style={styles.sectionTitle}>Overview</Text>
           <View style={styles.card}>
-            <OverviewRow label="Active bookings" value={String(stats.activeBookings)} />
-            <View style={styles.divider} />
-            <OverviewRow label="Available inventory units" value={String(stats.inventoryAvailable)} />
-            <View style={styles.divider} />
-            <OverviewRow label="Route stops today" value={String(stats.deliveriesToday + stats.pickupsToday)} />
+            {canViewBookings ? <OverviewRow label="Active bookings" value={String(stats.activeBookings)} /> : null}
+            {canViewBookings && (canViewInventory || canViewRoutes) ? <View style={styles.divider} /> : null}
+            {canViewInventory ? <OverviewRow label="Available inventory units" value={String(stats.inventoryAvailable)} /> : null}
+            {canViewInventory && canViewRoutes ? <View style={styles.divider} /> : null}
+            {canViewRoutes ? <OverviewRow label="Route stops today" value={String(stats.deliveriesToday + stats.pickupsToday)} /> : null}
           </View>
         </>
       )}

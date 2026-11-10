@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Pressable,
   SafeAreaView,
@@ -27,22 +27,27 @@ type AdminTab =
 const TABS: Array<{
   key: AdminTab;
   label: string;
+  permission?: string;
 }> = [
   {
     key: "dashboard",
     label: "Home",
+    permission: "dashboard.view",
   },
   {
     key: "bookings",
     label: "Bookings",
+    permission: "bookings.view",
   },
   {
     key: "routes",
     label: "Routes",
+    permission: "routes.view",
   },
   {
     key: "inventory",
     label: "Inventory",
+    permission: "inventory.view",
   },
   {
     key: "more",
@@ -55,11 +60,28 @@ export function AdminShell({
 }: {
   access: MobileAccess;
 }) {
-  const [tab, setTab] =
-    useState<AdminTab>("dashboard");
+  const can = (permission?: string) =>
+    !permission ||
+    access.grantedPermissions.length === 0 ||
+    access.grantedPermissions.includes(permission);
+
+  const visibleTabs = useMemo(
+    () => TABS.filter((item) => can(item.permission)),
+    [access.grantedPermissions],
+  );
+
+  const [tab, setTab] = useState<AdminTab>(
+    () => visibleTabs[0]?.key || "more",
+  );
 
   const [newBookingOpen, setNewBookingOpen] =
     useState(false);
+
+  useEffect(() => {
+    if (!visibleTabs.some((item) => item.key === tab)) {
+      setTab(visibleTabs[0]?.key || "more");
+    }
+  }, [tab, visibleTabs]);
 
   if (newBookingOpen) {
     return (
@@ -74,8 +96,8 @@ export function AdminShell({
   }
 
   const showNewBookingButton =
-    tab === "dashboard" ||
-    tab === "bookings";
+    can("bookings.create") &&
+    (tab === "dashboard" || tab === "bookings");
 
   return (
     <View style={styles.shell}>
@@ -83,9 +105,12 @@ export function AdminShell({
         {tab === "dashboard" ? (
           <AdminDashboardScreen
             displayName={access.displayName}
+            grantedPermissions={access.grantedPermissions}
           />
         ) : tab === "bookings" ? (
-          <AdminBookingsScreen />
+          <AdminBookingsScreen
+            grantedPermissions={access.grantedPermissions}
+          />
         ) : tab === "routes" ? (
           <AdminRoutesScreen />
         ) : tab === "inventory" ? (
@@ -93,6 +118,7 @@ export function AdminShell({
         ) : tab === "more" ? (
           <AdminMoreScreen
             role={access.role}
+            grantedPermissions={access.grantedPermissions}
           />
         ) : (
           <ComingSoon
@@ -140,7 +166,7 @@ export function AdminShell({
         style={styles.tabSafeArea}
       >
         <View style={styles.tabBar}>
-          {TABS.map((item) => (
+          {visibleTabs.map((item) => (
             <Pressable
               key={item.key}
               onPress={() =>

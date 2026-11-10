@@ -9,19 +9,34 @@ import {
 
 import { supabase } from "../../lib/supabase";
 import { AdminCalendarScreen } from "./AdminCalendarScreen";
+import { AdminCleaningScreen } from "./AdminCleaningScreen";
+import { AdminCountsScreen } from "./AdminCountsScreen";
+import { AdminDamageReportsScreen } from "./AdminDamageReportsScreen";
 import { AdminCustomersScreen } from "./AdminCustomersScreen";
+import { AdminCrmScreen } from "./AdminCrmScreen";
 import { AdminHandoversScreen } from "./AdminHandoversScreen";
+import { AdminInventorySetupScreen } from "./AdminInventorySetupScreen";
+import { AdminMovementsScreen } from "./AdminMovementsScreen";
+import { AdminNotificationsScreen } from "./AdminNotificationsScreen";
+import { AdminReceiveScreen } from "./AdminReceiveScreen";
+import { AdminReturnsScreen } from "./AdminReturnsScreen";
 import { AdminStaffScreen } from "./AdminStaffScreen";
+import { AdminSuppliesScreen } from "./AdminSuppliesScreen";
 import { AdminTasksScreen } from "./AdminTasksScreen";
+import { AdminWarehouseOperationsScreen } from "./AdminWarehouseOperationsScreen";
 
-type MoreSection = "menu" | "staff" | "customers" | "calendar" | "tasks" | "handovers";
+type MoreSection = "menu" | "staff" | "customers" | "calendar" | "tasks" | "handovers" | "notifications" | "counts" | "movements" | "warehouse_operations" | "inventory_setup" | "supplies" | "cleaning" | "receive" | "returns" | "damages" | "crm";
 
 type Props = {
   role: string;
+  grantedPermissions: string[];
 };
 
-export function AdminMoreScreen({ role }: Props) {
+export function AdminMoreScreen({ role, grantedPermissions }: Props) {
   const [section, setSection] = useState<MoreSection>("menu");
+  const can = (permission: string) =>
+    grantedPermissions.length === 0 ||
+    grantedPermissions.includes(permission);
 
   if (section === "staff") {
     return <AdminStaffScreen onBack={() => setSection("menu")} />;
@@ -43,6 +58,50 @@ export function AdminMoreScreen({ role }: Props) {
     return <AdminHandoversScreen onBack={() => setSection("menu")} />;
   }
 
+  if (section === "notifications") {
+    return <AdminNotificationsScreen onBack={() => setSection("menu")} />;
+  }
+
+  if (section === "cleaning") {
+    return <AdminCleaningScreen grantedPermissions={grantedPermissions} onBack={() => setSection("menu")} />;
+  }
+
+  if (section === "returns") {
+    return <AdminReturnsScreen grantedPermissions={grantedPermissions} onBack={() => setSection("menu")} />;
+  }
+
+  if (section === "receive") {
+    return <AdminReceiveScreen onBack={() => setSection("menu")} />;
+  }
+
+  if (section === "counts") {
+    return <AdminCountsScreen grantedPermissions={grantedPermissions} onBack={() => setSection("menu")} />;
+  }
+
+  if (section === "movements") {
+    return <AdminMovementsScreen onBack={() => setSection("menu")} />;
+  }
+
+  if (section === "warehouse_operations") {
+    return <AdminWarehouseOperationsScreen grantedPermissions={grantedPermissions} onBack={() => setSection("menu")} />;
+  }
+
+  if (section === "supplies") {
+    return <AdminSuppliesScreen grantedPermissions={grantedPermissions} onBack={() => setSection("menu")} />;
+  }
+
+  if (section === "inventory_setup") {
+    return <AdminInventorySetupScreen grantedPermissions={grantedPermissions} onBack={() => setSection("menu")} />;
+  }
+
+  if (section === "damages") {
+    return <AdminDamageReportsScreen grantedPermissions={grantedPermissions} onBack={() => setSection("menu")} />;
+  }
+
+  if (section === "crm") {
+    return <AdminCrmScreen onBack={() => setSection("menu")} canReply={can("customers.edit")} />;
+  }
+
   return (
     <ScrollView
       style={styles.screen}
@@ -51,9 +110,7 @@ export function AdminMoreScreen({ role }: Props) {
     >
       <Text style={styles.eyebrow}>BOUNCE PARTY LA</Text>
       <Text style={styles.title}>More</Text>
-      <Text style={styles.subtitle}>
-        Team, customers and daily operations
-      </Text>
+      <Text style={styles.subtitle}>Tools available to your role</Text>
 
       <View style={styles.accountCard}>
         <View>
@@ -61,42 +118,140 @@ export function AdminMoreScreen({ role }: Props) {
           <Text style={styles.accountRole}>{pretty(role)}</Text>
         </View>
         <View style={styles.accountBadge}>
-          <Text style={styles.accountBadgeText}>ADMIN</Text>
+          <Text style={styles.accountBadgeText}>MOBILE ACCESS</Text>
         </View>
       </View>
 
       <Text style={styles.sectionTitle}>Operations</Text>
 
-      <MenuCard
-        title="Staff"
-        description="Drivers, staff contacts and access roles"
-        badge="TEAM"
-        onPress={() => setSection("staff")}
-      />
-      <MenuCard
-        title="Customers / CRM"
-        description="Customer records, booking history and balances"
-        badge="CRM"
-        onPress={() => setSection("customers")}
-      />
-      <MenuCard
-        title="Calendar"
-        description="Day schedule and booking timeline"
-        badge="DATE"
-        onPress={() => setSection("calendar")}
-      />
-      <MenuCard
-        title="Tasks"
-        description="Deposits, contracts, COI and follow-ups"
-        badge="TODO"
-        onPress={() => setSection("tasks")}
-      />
-      <MenuCard
-        title="Handovers"
-        description="Packing slips, delivery acknowledgements and signatures"
-        badge="SIGN"
-        onPress={() => setSection("handovers")}
-      />
+      {can("staff.view") ? (
+        <MenuCard
+          title="Staff"
+          description="Drivers, staff contacts and access roles"
+          badge="TEAM"
+          onPress={() => setSection("staff")}
+        />
+      ) : null}
+      {can("customers.view") ? (
+        <MenuCard
+          title="CRM Inbox"
+          description="Live customer conversations and replies"
+          badge="CHAT"
+          onPress={() => setSection("crm")}
+        />
+      ) : null}
+      {can("customers.view") ? (
+        <MenuCard
+          title="Customers / CRM"
+          description="Customer records, booking history and balances"
+          badge="CRM"
+          onPress={() => setSection("customers")}
+        />
+      ) : null}
+      {can("bookings.view") ? (
+        <MenuCard
+          title="Calendar"
+          description="Day, week and month booking schedule"
+          badge="DATE"
+          onPress={() => setSection("calendar")}
+        />
+      ) : null}
+      {can("dashboard.view") ? (
+        <MenuCard
+          title="Notifications"
+          description="Payments, bookings and operational updates"
+          badge="ALERT"
+          onPress={() => setSection("notifications")}
+        />
+      ) : null}
+      {can("dashboard.view") ? (
+        <MenuCard
+          title="Tasks"
+          description="Deposits, contracts, COI and follow-ups"
+          badge="TODO"
+          onPress={() => setSection("tasks")}
+        />
+      ) : null}
+      {can("routes.view") ? (
+        <MenuCard
+          title="Handovers"
+          description="Packing slips, delivery acknowledgements and signatures"
+          badge="SIGN"
+          onPress={() => setSection("handovers")}
+        />
+      ) : null}
+      {can("inventory.view") ? (
+        <MenuCard
+          title="Inventory movements"
+          description="Audit receiving, rentals, returns and stock counts"
+          badge="LOG"
+          onPress={() => setSection("movements")}
+        />
+      ) : null}
+      {can("inventory.view") ? (
+        <MenuCard
+          title="Transfers & write-offs"
+          description="Move tracked equipment, report damage or retire a unit"
+          badge="MOVE"
+          onPress={() => setSection("warehouse_operations")}
+        />
+      ) : null}
+      {can("inventory.view") ? (
+        <MenuCard
+          title="Inventory count"
+          description="Count physical stock and review differences"
+          badge="COUNT"
+          onPress={() => setSection("counts")}
+        />
+      ) : null}
+      {can("inventory.view") ? (
+        <MenuCard
+          title="Receive stock"
+          description="Add delivered equipment to existing inventory"
+          badge="IN"
+          onPress={() => setSection("receive")}
+        />
+      ) : null}
+      {can("inventory.view") ? (
+        <MenuCard
+          title="Supplies"
+          description="Create itemized delivery documents and receive them to stock"
+          badge="SUP"
+          onPress={() => setSection("supplies")}
+        />
+      ) : null}
+      {can("inventory.view") ? (
+        <MenuCard
+          title="Returns"
+          description="Receive equipment and send it to cleaning, repair or ready stock"
+          badge="RETURN"
+          onPress={() => setSection("returns")}
+        />
+      ) : null}
+      {can("inventory.view") ? (
+        <MenuCard
+          title="Cleaning queue"
+          description="Start, complete or report returned equipment"
+          badge="CLEAN"
+          onPress={() => setSection("cleaning")}
+        />
+      ) : null}
+      {can("inventory.view") ? (
+        <MenuCard
+          title="Damage reports"
+          description="Open damage, repair status and resolved equipment"
+          badge="RISK"
+          onPress={() => setSection("damages")}
+        />
+      ) : null}
+      {can("inventory.view") ? (
+        <MenuCard
+          title="Categories & locations"
+          description="Maintain item groups and warehouse storage zones"
+          badge="SETUP"
+          onPress={() => setSection("inventory_setup")}
+        />
+      ) : null}
 
       <View style={styles.futureCard}>
         <Text style={styles.futureTitle}>Next in More</Text>

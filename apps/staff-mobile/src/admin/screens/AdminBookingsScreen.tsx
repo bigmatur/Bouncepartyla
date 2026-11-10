@@ -85,7 +85,13 @@ type MobilePayment = {
   created_at?: string | null;
 };
 
-type BookingFilter = "active" | "today" | "upcoming" | "archived" | "all";
+type BookingFilter =
+  | "active"
+  | "payment_due"
+  | "today"
+  | "upcoming"
+  | "archived"
+  | "all";
 
 function firstRelation<T>(value: T | T[] | null | undefined): T | null {
   if (Array.isArray(value)) {
@@ -207,7 +213,13 @@ function isInactiveStatus(value: string | null | undefined) {
   );
 }
 
-export function AdminBookingsScreen() {
+export function AdminBookingsScreen({
+  grantedPermissions = [],
+}: {
+  grantedPermissions?: string[];
+}) {
+  const can = (permission: string) =>
+    grantedPermissions.length === 0 || grantedPermissions.includes(permission);
   const today = useMemo(localDateISO, []);
   const [bookings, setBookings] = useState<MobileAdminBooking[]>([]);
   const [selectedBooking, setSelectedBooking] =
@@ -309,6 +321,12 @@ export function AdminBookingsScreen() {
       const date = String(booking.event_date || "");
 
       if (filter === "active" && (archived || inactive)) return false;
+      if (
+        filter === "payment_due" &&
+        (archived || inactive || Number(booking.balance_due || 0) <= 0)
+      ) {
+        return false;
+      }
       if (filter === "today" && date !== today) return false;
       if (filter === "upcoming" && (date < today || archived || inactive)) {
         return false;
@@ -375,13 +393,15 @@ export function AdminBookingsScreen() {
           </View>
         </View>
 
-        <View style={styles.summaryCard}>
-          <View>
-            <Text style={styles.summaryLabel}>BALANCE DUE</Text>
-            <Text style={styles.summaryValue}>{money(totalBalance)}</Text>
+        {can("bookings.view_financials") ? (
+          <View style={styles.summaryCard}>
+            <View>
+              <Text style={styles.summaryLabel}>BALANCE DUE</Text>
+              <Text style={styles.summaryValue}>{money(totalBalance)}</Text>
+            </View>
+            <Text style={styles.summaryMeta}>{bookings.length} loaded</Text>
           </View>
-          <Text style={styles.summaryMeta}>{bookings.length} loaded</Text>
-        </View>
+        ) : null}
 
         <View style={styles.searchBox}>
           <Text style={styles.searchIcon}>⌕</Text>
@@ -418,6 +438,13 @@ export function AdminBookingsScreen() {
             selected={filter === "active"}
             onPress={() => setFilter("active")}
           />
+          {can("bookings.view_financials") ? (
+            <FilterChip
+              label="Payment due"
+              selected={filter === "payment_due"}
+              onPress={() => setFilter("payment_due")}
+            />
+          ) : null}
           <FilterChip
             label="Today"
             selected={filter === "today"}
@@ -472,6 +499,7 @@ export function AdminBookingsScreen() {
               <BookingRow
                 key={booking.id}
                 booking={booking}
+                showFinancials={can("bookings.view_financials")}
                 onPress={() => setSelectedBooking(booking)}
               />
             ))}
@@ -481,6 +509,7 @@ export function AdminBookingsScreen() {
 
       <BookingDetailsModal
         booking={selectedBooking}
+        grantedPermissions={grantedPermissions}
         onClose={() => setSelectedBooking(null)}
         onBookingChanged={(nextBooking) => {
           setSelectedBooking(nextBooking);
@@ -527,9 +556,11 @@ function FilterChip({
 
 function BookingRow({
   booking,
+  showFinancials,
   onPress,
 }: {
   booking: MobileAdminBooking;
+  showFinancials: boolean;
   onPress: () => void;
 }) {
   const customer = firstRelation(booking.customers);
@@ -583,14 +614,16 @@ function BookingRow({
             </Text>
           </View>
 
-          <View style={styles.balanceCopy}>
-            <Text style={styles.totalText}>{money(booking.total_amount)}</Text>
-            {balanceDue > 0 ? (
-              <Text style={styles.balanceText}>Balance {money(balanceDue)}</Text>
-            ) : (
-              <Text style={styles.paidText}>Paid</Text>
-            )}
-          </View>
+          {showFinancials ? (
+            <View style={styles.balanceCopy}>
+              <Text style={styles.totalText}>{money(booking.total_amount)}</Text>
+              {balanceDue > 0 ? (
+                <Text style={styles.balanceText}>Balance {money(balanceDue)}</Text>
+              ) : (
+                <Text style={styles.paidText}>Paid</Text>
+              )}
+            </View>
+          ) : null}
         </View>
       </View>
 
@@ -634,10 +667,12 @@ function StatusBadge({ status }: { status: string }) {
 
 function BookingDetailsModal({
   booking,
+  grantedPermissions,
   onClose,
   onBookingChanged,
 }: {
   booking: MobileAdminBooking | null;
+  grantedPermissions: string[];
   onClose: () => void;
   onBookingChanged: (booking: MobileAdminBooking) => void;
 }) {
@@ -727,6 +762,15 @@ function BookingDetailsModal({
   }, [booking?.id]);
 
   if (!booking) return null;
+
+  const can = (permission: string) =>
+    grantedPermissions.length === 0 || grantedPermissions.includes(permission);
+  const canViewFinancials = can("bookings.view_financials");
+  const canViewPayments = can("payments.view");
+  const canCreatePayments = can("payments.create");
+  const canEditBooking = can("bookings.edit");
+  const canCancelBooking = can("bookings.cancel");
+  const canViewInternalNotes = can("bookings.view_internal_notes");
 
   const customer = firstRelation(booking.customers);
   const balanceDue = Number(booking.balance_due || 0);
@@ -1277,6 +1321,8 @@ function BookingDetailsModal({
               )}
             </View>
 
+            {canViewFinancials ? (
+              <>
             <Text style={styles.detailSectionTitle}>Payment</Text>
             <View style={styles.detailCard}>
               <DetailRow label="Subtotal" value={money(booking.subtotal)} />
@@ -1289,7 +1335,7 @@ function BookingDetailsModal({
                     -{money(booking.discount_amount)}
                   </Text>
 
-                  {!discountEditorOpen ? (
+                  {canEditBooking && !discountEditorOpen ? (
                     <Pressable
                       disabled={savingDiscount}
                       onPress={() => void openDiscountEditor()}
@@ -1448,16 +1494,16 @@ function BookingDetailsModal({
                 strong
               />
 
-              {balanceDue > 0 ? (
+              {canViewPayments && balanceDue > 0 ? (
                 <>
                   <View style={styles.detailDivider} />
 
                   <Pressable
-                    disabled={savingPayment}
+                    disabled={savingPayment || !canCreatePayments}
                     onPress={() => void openPaymentEditor()}
                     style={({ pressed }) => [
                       styles.mobilePaymentPrimaryButton,
-                      savingPayment ? styles.disabledButton : null,
+                      savingPayment || !canCreatePayments ? styles.disabledButton : null,
                       pressed ? styles.pressed : null,
                     ]}
                   >
@@ -1470,7 +1516,7 @@ function BookingDetailsModal({
                     )}
                   </Pressable>
 
-                  {paymentEditorOpen ? (
+                  {canCreatePayments && paymentEditorOpen ? (
                     <View style={styles.mobilePaymentEditor}>
                       <Text style={styles.mobilePaymentEditorTitle}>
                         Add payment
@@ -1620,21 +1666,21 @@ function BookingDetailsModal({
                 </>
               ) : null}
 
-              {paymentsError ? (
+              {canViewPayments && paymentsError ? (
                 <>
                   <View style={styles.detailDivider} />
                   <Text style={styles.notesText}>Payment history unavailable: {paymentsError}</Text>
                 </>
               ) : null}
 
-              {!paymentsLoading && !paymentsError && payments.length === 0 ? (
+              {canViewPayments && !paymentsLoading && !paymentsError && payments.length === 0 ? (
                 <>
                   <View style={styles.detailDivider} />
                   <Text style={styles.notesText}>No payment records yet.</Text>
                 </>
               ) : null}
 
-              {!paymentsLoading && !paymentsError && payments.length > 0 ? (
+              {canViewPayments && !paymentsLoading && !paymentsError && payments.length > 0 ? (
                 <>
                   <View style={styles.detailDivider} />
                   <Text style={styles.detailSectionTitle}>Payment history</Text>
@@ -1650,7 +1696,11 @@ function BookingDetailsModal({
                 </>
               ) : null}
             </View>
+              </>
+            ) : null}
 
+            {canEditBooking ? (
+              <>
             <Text style={styles.detailSectionTitle}>Booking actions</Text>
             <View style={styles.actionCard}>
               <Text style={styles.actionCardTitle}>
@@ -1694,6 +1744,7 @@ function BookingDetailsModal({
               </Pressable>
             </View>
 
+            {canCancelBooking ? (
             <View style={styles.cancelCard}>
               <Text style={styles.cancelCardTitle}>Cancel booking</Text>
               <Text style={styles.cancelCardText}>
@@ -1743,8 +1794,11 @@ function BookingDetailsModal({
                 </>
               )}
             </View>
+            ) : null}
+              </>
+            ) : null}
 
-            {booking.internal_notes ? (
+            {canViewInternalNotes && booking.internal_notes ? (
               <>
                 <Text style={styles.detailSectionTitle}>Internal notes</Text>
                 <View style={styles.notesCard}>

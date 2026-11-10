@@ -8,6 +8,8 @@ export type MobileAccess = {
   interface: MobileInterface;
   role: string;
   displayName: string;
+  grantedPermissions: string[];
+  availableInterfaces: MobileInterface[];
 };
 
 const ADMIN_ROLES = new Set([
@@ -26,7 +28,59 @@ type ProfileRow = {
   last_name?: string | null;
 };
 
+const DEFAULT_APP_URL = "https://bounceparty.us";
+
+function appUrl() {
+  return String(process.env.EXPO_PUBLIC_APP_URL || DEFAULT_APP_URL)
+    .trim()
+    .replace(/\/+$/, "");
+}
+
+async function loadServerAccess(): Promise<MobileAccess | null> {
+  const sessionResult = await supabase.auth.getSession();
+  const token = sessionResult.data.session?.access_token;
+  if (!token) return null;
+
+  try {
+    const response = await fetch(`${appUrl()}/api/admin/mobile/access`, {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) return null;
+
+    const body = await response.json() as {
+      success?: boolean;
+      data?: Partial<MobileAccess>;
+    };
+    const data = body.data;
+    const interfaceKey = data?.interface === "admin" ? "admin" : data?.interface === "driver" ? "driver" : null;
+    if (!body.success || !interfaceKey) return null;
+
+    return {
+      interface: interfaceKey,
+      role: String(data?.role || "driver"),
+      displayName: String(data?.displayName || "Staff account"),
+      grantedPermissions: Array.isArray(data?.grantedPermissions)
+        ? data.grantedPermissions.map((permission) => String(permission || "")).filter(Boolean)
+        : [],
+      availableInterfaces: Array.isArray(data?.availableInterfaces)
+        ? data.availableInterfaces.filter(
+            (value): value is MobileInterface => value === "admin" || value === "driver",
+          )
+        : [interfaceKey],
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function loadMobileAccess(user: User): Promise<MobileAccess> {
+  const serverAccess = await loadServerAccess();
+  if (serverAccess) return serverAccess;
+
   const profileResult = await supabase
     .from("profiles")
     .select("role, first_name, last_name")
@@ -64,5 +118,9 @@ export async function loadMobileAccess(user: User): Promise<MobileAccess> {
     interface: hasAdminRole ? "admin" : "driver",
     role: role || "driver",
     displayName,
+    // Backwards-compatible fallback for an older deployed server. The server
+    // response above is always preferred because it includes custom roles.
+    grantedPermissions: [],
+    availableInterfaces: [hasAdminRole ? "admin" : "driver"],
   };
 }
