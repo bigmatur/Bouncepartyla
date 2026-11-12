@@ -19,6 +19,7 @@ import { AdminInventorySetupScreen } from "./AdminInventorySetupScreen";
 import { AdminInventoryScreen } from "./AdminInventoryScreen";
 import { AdminMovementsScreen } from "./AdminMovementsScreen";
 import { AdminNotificationsScreen } from "./AdminNotificationsScreen";
+import { AdminPickingScreen } from "./AdminPickingScreen";
 import { AdminReceiveScreen } from "./AdminReceiveScreen";
 import { AdminReturnsScreen } from "./AdminReturnsScreen";
 import { AdminStaffScreen } from "./AdminStaffScreen";
@@ -26,7 +27,7 @@ import { AdminSuppliesScreen } from "./AdminSuppliesScreen";
 import { AdminTasksScreen } from "./AdminTasksScreen";
 import { AdminWarehouseOperationsScreen } from "./AdminWarehouseOperationsScreen";
 
-type MoreSection = "menu" | "staff" | "customers" | "calendar" | "tasks" | "handovers" | "notifications" | "inventory" | "counts" | "movements" | "warehouse_operations" | "inventory_setup" | "supplies" | "cleaning" | "receive" | "returns" | "damages" | "crm";
+type MoreSection = "menu" | "staff" | "customers" | "calendar" | "tasks" | "handovers" | "notifications" | "inventory" | "picking" | "counts" | "movements" | "warehouse_operations" | "inventory_setup" | "supplies" | "cleaning" | "receive" | "returns" | "damages" | "crm";
 
 type Props = {
   role: string;
@@ -67,6 +68,10 @@ export function AdminMoreScreen({ role, grantedPermissions, initialSection = "me
 
   if (section === "inventory") {
     return <AdminInventoryScreen onBack={() => setSection("menu")} />;
+  }
+
+  if (section === "picking") {
+    return <AdminPickingScreen onBack={() => setSection("menu")} />;
   }
 
   if (section === "cleaning") {
@@ -193,6 +198,14 @@ export function AdminMoreScreen({ role, grantedPermissions, initialSection = "me
           description="Live stock, equipment condition and warehouse location"
           badge="STOCK"
           onPress={() => setSection("inventory")}
+        />
+      ) : null}
+      {can("inventory.view") ? (
+        <MenuCard
+          title="Order picking"
+          description="Load each vehicle in route order with the driver's shared checklist"
+          badge="PICK"
+          onPress={() => setSection("picking")}
         />
       ) : null}
       {can("inventory.view") ? (
