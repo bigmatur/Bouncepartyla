@@ -480,6 +480,7 @@ export default function BookingItemsEditForm({
   return (
     <form action={updateBookingItemsAction} className="space-y-6">
       <input type="hidden" name="bookingId" value={bookingId} />
+      <input type="hidden" name="originalEventDate" value={initialBooking.eventDate} />
       <input type="hidden" name="editedBy" value="admin_cashier" />
       <input type="hidden" name="hasMaterialChanges" value={hasMaterialChanges ? "true" : "false"} />
       <input type="hidden" name="eventDate" value={eventDate} />

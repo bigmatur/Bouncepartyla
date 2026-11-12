@@ -1016,6 +1016,7 @@ export default async function BookingDetailsPage(props: PageProps) {
 
         <form action={updateBookingScheduleQuickAction} className="mt-3 grid grid-cols-2 gap-2.5 sm:mt-4 sm:gap-3 md:grid-cols-4">
           <input type="hidden" name="bookingId" value={booking.id} />
+          <input type="hidden" name="originalEventDate" value={booking.event_date || ""} />
 
           <label className="block">
             <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.12em] text-[#9a7a49]">

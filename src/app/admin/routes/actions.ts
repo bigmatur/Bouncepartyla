@@ -458,6 +458,20 @@ async function cascadeRouteTimesForTimeline(
 
   if (stops.length < 1) return;
 
+  for (const stop of stops) {
+    if (String(stop?.stop_type || "") !== "pickup" || isBreakRouteStop(stop)) continue;
+    const booking = one(stop?.bookings);
+    const eventDate = String(booking?.event_date || "").slice(0, 10);
+    const eventEndTime = cleanTime(booking?.event_end_time);
+    if (!eventDate || !eventEndTime) continue;
+    const routeDayStart = dateTimeMs(stopDate, "00:00");
+    const eventEnd = dateTimeMs(eventDate, eventEndTime);
+    if (routeDayStart == null || eventEnd == null) continue;
+    if (eventEnd >= routeDayStart + 86400000) {
+      throw new Error(`Route date conflict: pickup for booking ${String(stop?.booking_id || "")} is scheduled on ${stopDate}, but the event ends on ${eventDate}. Correct the booking route dates before recalculating.`);
+    }
+  }
+
   function minimumPickupStartMinutes(stop: any) {
     if (String(stop?.stop_type || "") !== "pickup" || isBreakRouteStop(stop)) {
       return null;
