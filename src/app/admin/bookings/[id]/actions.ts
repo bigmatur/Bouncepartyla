@@ -1470,7 +1470,7 @@ export async function updateBookingItemsAction(formData: FormData) {
 
   const { data: booking, error: bookingError } = await supabase
     .from("bookings")
-    .select("id, discount_amount, delivery_fee, tax_rate, deposit_amount")
+    .select("id, event_date, discount_amount, delivery_fee, tax_rate, deposit_amount")
     .eq("id", bookingId)
     .maybeSingle();
 
@@ -1481,6 +1481,17 @@ export async function updateBookingItemsAction(formData: FormData) {
   if (!booking) {
     throw new Error("Booking not found.");
   }
+
+  const originalEventDate = getString(formData, "originalEventDate");
+  if (!originalEventDate || originalEventDate !== booking.event_date) throw new Error("Booking date changed. Refresh the page before saving.");
+  const requestedEventDate = getString(formData, "eventDate");
+  if (requestedEventDate !== originalEventDate) {
+    throw new Error("To change the event date, use Quick Edit on the booking page before editing items.");
+  }
+  const eventDate = getString(formData, "eventDate");
+  const eventStartTime = normalizeTimeValue(getString(formData, "eventStartTime"));
+  const eventEndTime = normalizeTimeValue(getString(formData, "eventEndTime"));
+  if (!eventDate || !eventStartTime || !eventEndTime) throw new Error("Date and times are required.");
 
   const deleteModifiersResult = await supabase
     .from("booking_modifiers")
@@ -1560,9 +1571,6 @@ export async function updateBookingItemsAction(formData: FormData) {
     }>,
   });
 
-  const eventDate = getString(formData, "eventDate");
-  const eventStartTime = normalizeTimeValue(getString(formData, "eventStartTime"));
-  const eventEndTime = normalizeTimeValue(getString(formData, "eventEndTime"));
   const setupAddress = getString(formData, "setupAddress");
   const setupCity = getString(formData, "setupCity");
   const setupState = getString(formData, "setupState") || "CA";
@@ -1687,7 +1695,6 @@ export async function updateBookingItemsAction(formData: FormData) {
   const { error: updateError } = await supabase
     .from("bookings")
     .update({
-      event_date: eventDate || null,
       event_start_time: eventStartTime || null,
       event_end_time: eventEndTime || null,
       setup_address: setupAddress || null,
@@ -1826,6 +1833,7 @@ export async function updateBookingScheduleQuickAction(formData: FormData) {
   const supabase = await createClient();
 
   const bookingId = getString(formData, "bookingId");
+  const originalEventDate = getString(formData, "originalEventDate");
   const eventDate = getString(formData, "eventDate");
   const eventStartTime = normalizeTimeValue(getString(formData, "eventStartTime"));
   const eventEndTime = normalizeTimeValue(getString(formData, "eventEndTime"));
@@ -1844,14 +1852,16 @@ export async function updateBookingScheduleQuickAction(formData: FormData) {
     bookingId,
   });
 
-  const updateResult = await supabase
-    .from("bookings")
-    .update({
-      event_date: eventDate,
-      event_start_time: eventStartTime,
-      event_end_time: eventEndTime,
-    })
-    .eq("id", bookingId);
+  const updateResult = await supabase.rpc(
+    "admin_reschedule_booking_with_route_stops",
+    {
+      p_booking_id: bookingId,
+      p_expected_event_date: originalEventDate,
+      p_event_date: eventDate,
+      p_event_start_time: eventStartTime,
+      p_event_end_time: eventEndTime,
+    },
+  );
 
   if (updateResult.error) {
     throw new Error(updateResult.error.message);

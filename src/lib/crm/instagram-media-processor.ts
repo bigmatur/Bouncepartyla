@@ -653,7 +653,11 @@ async function fetchSourceBinary(params: {
       });
     }
 
-    if (declaredMime && declaredMime !== detectedMime) {
+    const isAllowedJpegPngMismatch =
+      (declaredMime === "image/jpeg" && detectedMime === "image/png") ||
+      (declaredMime === "image/png" && detectedMime === "image/jpeg");
+
+    if (declaredMime && declaredMime !== detectedMime && !isAllowedJpegPngMismatch) {
       throw Object.assign(
         new Error(`Declared MIME ${declaredMime} mismatches detected ${detectedMime}.`),
         {
@@ -1492,8 +1496,56 @@ async function selectCandidateMessages(params: {
   };
 }
 
+async function selectTargetMessage(params: {
+  supabase: SupabaseClient;
+  messageId: string;
+}) {
+  const result = await params.supabase
+    .from("crm_messages")
+    .select("id, conversation_id, provider_message_id, metadata, created_at")
+    .eq("id", params.messageId)
+    .eq("channel", "instagram")
+    .eq("direction", "inbound")
+    .maybeSingle();
+
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+
+  const row = result.data as MessageRow | null;
+
+  if (!row) {
+    throw new Error(
+      `Target message ${params.messageId} was not found or is not an inbound Instagram message.`,
+    );
+  }
+
+  const metadata = parseJsonRecord(row.metadata);
+
+  if (shouldSkipSelectionTerminal(metadata)) {
+    throw new Error(
+      `Target Instagram message ${params.messageId} is already completed or has exhausted its retry budget.`,
+    );
+  }
+
+  const imageCandidates = parseAttachmentCandidates(metadata)
+    .filter((candidate) => candidate.type === "image");
+
+  if (imageCandidates.length === 0) {
+    throw new Error(
+      `Target Instagram message ${params.messageId} does not contain a source image attachment.`,
+    );
+  }
+
+  return {
+    rows: [row],
+    scanned: 1,
+  };
+}
+
 export async function processInstagramMediaBatch(params?: {
   batchSize?: number;
+  messageId?: string;
 }) {
   const config = getInstagramMediaProcessorConfiguration();
   const supabase = createServiceClient();
@@ -1507,12 +1559,17 @@ export async function processInstagramMediaBatch(params?: {
   const messageStartDeadlineAt = invocationDeadlineAt - config.cleanupReserveMs;
   const fairnessSeed = Math.floor(startedAt / FAIRNESS_ROTATION_WINDOW_MS);
 
-  const selected = await selectCandidateMessages({
-    supabase,
-    batchSize,
-    deadlineAt: messageStartDeadlineAt,
-    rotationSeed: fairnessSeed,
-  });
+  const selected = params?.messageId
+    ? await selectTargetMessage({
+        supabase,
+        messageId: params.messageId,
+      })
+    : await selectCandidateMessages({
+        supabase,
+        batchSize,
+        deadlineAt: messageStartDeadlineAt,
+        rotationSeed: fairnessSeed,
+      });
 
   const workerId = `ig-media-${process.pid}-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
 
