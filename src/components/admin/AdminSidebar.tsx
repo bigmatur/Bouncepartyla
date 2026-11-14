@@ -165,8 +165,14 @@ export default function AdminSidebar({
 
   useEffect(() => {
     let disposed = false;
+    let refreshInFlight = false;
 
     const refreshUnreadNotifications = async () => {
+      if (refreshInFlight || document.visibilityState !== "visible") {
+        return;
+      }
+
+      refreshInFlight = true;
       try {
         const response = await fetch("/api/admin/notifications/unread-count", {
           cache: "no-store",
@@ -182,6 +188,8 @@ export default function AdminSidebar({
         }
       } catch {
         // Keep the last known badge value if the network is temporarily unavailable.
+      } finally {
+        refreshInFlight = false;
       }
     };
 
@@ -189,14 +197,22 @@ export default function AdminSidebar({
       void refreshUnreadNotifications();
     };
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void refreshUnreadNotifications();
+      }
+    };
+
     void refreshUnreadNotifications();
     const intervalId = window.setInterval(refreshUnreadNotifications, 15_000);
     window.addEventListener("focus", handleWindowFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       disposed = true;
       window.clearInterval(intervalId);
       window.removeEventListener("focus", handleWindowFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
 
