@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
-const POLL_INTERVAL_MS = 3000;
+const POLL_INTERVAL_MS = 5000;
 
 type LiveResponse = { revision?: string; unreadCount?: number };
 
