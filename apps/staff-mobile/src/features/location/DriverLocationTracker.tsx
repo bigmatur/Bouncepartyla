@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import * as Location from "expo-location";
+import { AppState } from "react-native";
 
+import { loadMyDriverProfile } from "../routes/driverRoutes";
 import { supabase } from "../../lib/supabase";
 
 function localDateISO(date = new Date()) {
@@ -170,32 +172,27 @@ export function DriverLocationTracker() {
     }
 
     async function start() {
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser();
+      const driver = await loadMyDriverProfile();
+      if (cancelled || !driver?.name) return;
 
-      if (cancelled || userError || !user) return;
-
-      const driverResult = await supabase
-        .from("route_drivers")
-        .select("name")
-        .eq("auth_user_id", user.id)
-        .eq("active", true)
-        .is("deleted_at", null)
-        .order("sort_order", { ascending: true })
-        .limit(1)
-        .maybeSingle();
-
-      if (cancelled || driverResult.error || !driverResult.data?.name) return;
-
-      driverName = String(driverResult.data.name).trim();
+      driverName = String(driver.name).trim();
       await reconcileTrackingState();
 
       reconcileTimer = setInterval(() => {
-        void reconcileTrackingState();
-      }, 15000);
+        if (AppState.currentState === "active") {
+          void reconcileTrackingState();
+        }
+      }, 60000);
     }
+
+    const appStateSubscription = AppState.addEventListener(
+      "change",
+      (nextState) => {
+        if (nextState === "active") {
+          void reconcileTrackingState();
+        }
+      },
+    );
 
     void start().catch((error) => {
       console.warn(
@@ -210,6 +207,8 @@ export function DriverLocationTracker() {
       if (reconcileTimer) {
         clearInterval(reconcileTimer);
       }
+
+      appStateSubscription.remove();
 
       subscription?.remove();
       subscription = null;

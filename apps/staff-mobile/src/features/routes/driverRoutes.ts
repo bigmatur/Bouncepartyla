@@ -191,17 +191,29 @@ export function isCompletedStop(
   ].includes(status);
 }
 
-async function loadMyDriverProfile(): Promise<MobileDriverProfile> {
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
+type DriverProfileCache = {
+  userId: string;
+  value: MobileDriverProfile;
+  expiresAt: number;
+};
 
-  if (userError) {
+let driverProfileCache: DriverProfileCache | null = null;
+let driverProfileRequest: Promise<MobileDriverProfile> | null = null;
+let driverProfileRequestUserId = "";
+
+export async function loadMyDriverProfile(): Promise<MobileDriverProfile> {
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+
+  if (sessionError) {
     throw new Error(
-      userError.message,
+      sessionError.message,
     );
   }
+
+  const user = session?.user || null;
 
   if (!user) {
     throw new Error(
@@ -209,39 +221,72 @@ async function loadMyDriverProfile(): Promise<MobileDriverProfile> {
     );
   }
 
-  const driverResult = await supabase
-    .from("route_drivers")
-    .select(
-      "id, name, phone, color",
-    )
-    .eq(
-      "auth_user_id",
-      user.id,
-    )
-    .eq("active", true)
-    .is("deleted_at", null)
-    .order(
-      "sort_order",
-      {
-        ascending: true,
-      },
-    )
-    .limit(1)
-    .maybeSingle();
-
-  if (driverResult.error) {
-    throw new Error(
-      driverResult.error.message,
-    );
+  if (
+    driverProfileCache?.userId === user.id &&
+    driverProfileCache.expiresAt > Date.now()
+  ) {
+    return driverProfileCache.value;
   }
 
-  if (!driverResult.data) {
-    throw new Error(
-      "This account is not linked to an active driver profile. Ask an administrator to link the staff account.",
-    );
+  if (
+    driverProfileRequest &&
+    driverProfileRequestUserId === user.id
+  ) {
+    return driverProfileRequest;
   }
 
-  return driverResult.data as MobileDriverProfile;
+  driverProfileRequestUserId = user.id;
+  driverProfileRequest = (async () => {
+    const driverResult = await supabase
+      .from("route_drivers")
+      .select(
+        "id, name, phone, color",
+      )
+      .eq(
+        "auth_user_id",
+        user.id,
+      )
+      .eq("active", true)
+      .is("deleted_at", null)
+      .order(
+        "sort_order",
+        {
+          ascending: true,
+        },
+      )
+      .limit(1)
+      .maybeSingle();
+
+    if (driverResult.error) {
+      throw new Error(
+        driverResult.error.message,
+      );
+    }
+
+    if (!driverResult.data) {
+      throw new Error(
+        "This account is not linked to an active driver profile. Ask an administrator to link the staff account.",
+      );
+    }
+
+    const value = driverResult.data as MobileDriverProfile;
+    driverProfileCache = {
+      userId: user.id,
+      value,
+      expiresAt: Date.now() + 60_000,
+    };
+
+    return value;
+  })();
+
+  try {
+    return await driverProfileRequest;
+  } finally {
+    if (driverProfileRequestUserId === user.id) {
+      driverProfileRequest = null;
+      driverProfileRequestUserId = "";
+    }
+  }
 }
 
 export async function loadMobileChecklistForBooking(
