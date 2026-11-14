@@ -8,6 +8,7 @@ import { requireAdminPermission } from "@/lib/auth/require-admin";
 import { createServiceClient } from "@/lib/supabase/service";
 import {
   mergeEncryptedCredentials,
+  invalidateIntegrationConnectionCache,
   readStoredIntegrationForUpdate,
   resolveIntegrationConnection,
   type IntegrationProvider,
@@ -248,6 +249,7 @@ export async function saveIntegrationConnectionAction(formData: FormData) {
     if (error) throw new Error(error.message);
   }
 
+  invalidateIntegrationConnectionCache(provider);
   revalidateIntegrations();
   redirectToIntegrations(provider, { saved: "integration" });
 }
@@ -270,6 +272,7 @@ export async function disableIntegrationConnectionAction(formData: FormData) {
 
   if (error) throw new Error(error.message);
 
+  invalidateIntegrationConnectionCache(provider);
   revalidateIntegrations();
   redirectToIntegrations(provider, { saved: "disabled" });
 }

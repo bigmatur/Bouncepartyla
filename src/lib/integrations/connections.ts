@@ -23,6 +23,14 @@ type IntegrationRow = {
   updated_at: string;
 };
 
+type IntegrationCacheEntry = {
+  expiresAt: number;
+  request: Promise<IntegrationRow | null>;
+};
+
+const integrationRequestCache = new Map<string, IntegrationCacheEntry>();
+const INTEGRATION_CACHE_TTL_MS = 2_000;
+
 export type IntegrationSummary = {
   provider: IntegrationProvider;
   displayName: string;
@@ -159,6 +167,30 @@ function tableMissing(error: any) {
 }
 
 async function fetchIntegration(provider: IntegrationProvider, includeCredentials: boolean) {
+  const cacheKey = `${provider}:${includeCredentials ? "private" : "public"}`;
+  const cached = integrationRequestCache.get(cacheKey);
+
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.request;
+  }
+
+  const request = fetchIntegrationUncached(provider, includeCredentials);
+  integrationRequestCache.set(cacheKey, {
+    expiresAt: Date.now() + INTEGRATION_CACHE_TTL_MS,
+    request,
+  });
+
+  try {
+    return await request;
+  } catch (error) {
+    if (integrationRequestCache.get(cacheKey)?.request === request) {
+      integrationRequestCache.delete(cacheKey);
+    }
+    throw error;
+  }
+}
+
+async function fetchIntegrationUncached(provider: IntegrationProvider, includeCredentials: boolean) {
   const supabase = createServiceClient();
   const select = includeCredentials
     ? "id, provider, display_name, enabled, status, public_config, encrypted_credentials, last_tested_at, last_error, created_by, updated_by, created_at, updated_at"
@@ -175,6 +207,16 @@ async function fetchIntegration(provider: IntegrationProvider, includeCredential
   }
 
   return (data || null) as unknown as IntegrationRow | null;
+}
+
+export function invalidateIntegrationConnectionCache(provider?: IntegrationProvider) {
+  if (!provider) {
+    integrationRequestCache.clear();
+    return;
+  }
+
+  integrationRequestCache.delete(`${provider}:private`);
+  integrationRequestCache.delete(`${provider}:public`);
 }
 
 function envFallback(provider: IntegrationProvider) {
