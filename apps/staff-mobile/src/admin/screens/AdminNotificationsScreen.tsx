@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -53,8 +54,16 @@ export function AdminNotificationsScreen({ onBack, onOpenBooking }: { onBack: ()
 
   useEffect(() => {
     void load().finally(() => setLoading(false));
-    const interval = setInterval(() => void load(false), 20_000);
-    return () => clearInterval(interval);
+    const interval = setInterval(() => {
+      if (AppState.currentState === "active") void load(false);
+    }, 30_000);
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") void load(false);
+    });
+    return () => {
+      clearInterval(interval);
+      subscription.remove();
+    };
   }, [load]);
 
   const unreadCount = useMemo(

@@ -65,6 +65,10 @@ function AppShell() {
   }, [tab]);
 
   useEffect(() => {
+    if (tab === "chat") {
+      return;
+    }
+
     void refreshChatUnread();
 
     const interval = setInterval(() => {
@@ -74,7 +78,7 @@ function AppShell() {
     }, 8000);
 
     return () => clearInterval(interval);
-  }, [refreshChatUnread]);
+  }, [refreshChatUnread, tab]);
 
   const openChat = useCallback(() => {
     setTab("chat");

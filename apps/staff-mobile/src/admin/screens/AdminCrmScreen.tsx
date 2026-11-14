@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, AppState, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { loadMobileCrmInbox, updateMobileCrmConversation, type MobileCrmConversation, type MobileCrmMessage } from "../../lib/mobileApi";
 
 function when(value: string | null | undefined) {
@@ -17,14 +17,23 @@ export function AdminCrmScreen({ onBack, canReply }: { onBack: () => void; canRe
   const [draft, setDraft] = useState(""); const [loading, setLoading] = useState(true); const [sending, setSending] = useState(false); const [error, setError] = useState("");
   const loadList = useCallback(async () => { const result = await loadMobileCrmInbox(); if (!result.success) setError(result.error); else { setError(""); setConversations(result.data.conversations || []); } }, []);
   const open = useCallback(async (conversation: MobileCrmConversation) => { setSelected(conversation); setMessages([]); const result = await loadMobileCrmInbox(conversation.id); if (!result.success) { setError(result.error); return; } setMessages(result.data.messages || []); void updateMobileCrmConversation({ action: "read", conversationId: conversation.id }); setConversations((list) => list.map((item) => item.id === conversation.id ? { ...item, unread_count: 0 } : item)); }, []);
-  useEffect(() => { void loadList().finally(() => setLoading(false)); const id = setInterval(() => void loadList(), 20_000); return () => clearInterval(id); }, [loadList]);
+  useEffect(() => {
+    if (selected) return;
+    void loadList().finally(() => setLoading(false));
+    const id = setInterval(() => {
+      if (AppState.currentState === "active") void loadList();
+    }, 20_000);
+    return () => clearInterval(id);
+  }, [loadList, selected]);
   useEffect(() => {
     if (!selected) return;
     const refreshOpenConversation = async () => {
       const result = await loadMobileCrmInbox(selected.id);
       if (result.success) setMessages(result.data.messages || []);
     };
-    const id = setInterval(() => void refreshOpenConversation(), 12_000);
+    const id = setInterval(() => {
+      if (AppState.currentState === "active") void refreshOpenConversation();
+    }, 12_000);
     return () => clearInterval(id);
   }, [selected]);
   const visibleConversations = useMemo(() => {

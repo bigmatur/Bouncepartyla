@@ -23,16 +23,29 @@ export function SupportChatScreen({
   const [body, setBody] = useState("");
   const [error, setError] = useState("");
   const messagesScrollRef = useRef<ScrollView>(null);
+  const latestSupportMessageIdRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     setError("");
     const result = await supabase.rpc("get_my_staff_support_messages", { p_limit: 100 });
     if (result.error) { setError(result.error.message); setLoading(false); return; }
-    setMessages(Array.isArray(result.data) ? [...result.data].reverse() : []);
+    const nextMessages = Array.isArray(result.data) ? [...result.data].reverse() : [];
+    setMessages(nextMessages);
     setLoading(false);
-    const readResult = await supabase.rpc("mark_my_staff_support_read");
-    if (!readResult.error) {
-      onMessagesRead?.();
+
+    const latestSupportMessageId = [...nextMessages]
+      .reverse()
+      .find((message) => message.direction === "outbound")?.id || null;
+
+    if (
+      latestSupportMessageId &&
+      latestSupportMessageId !== latestSupportMessageIdRef.current
+    ) {
+      latestSupportMessageIdRef.current = latestSupportMessageId;
+      const readResult = await supabase.rpc("mark_my_staff_support_read");
+      if (!readResult.error) {
+        onMessagesRead?.();
+      }
     }
   }, [onMessagesRead]);
 
