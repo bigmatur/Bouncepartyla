@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getBookingMarkerColor, getBookingMarkerLabel } from "@/lib/booking/marker-color";
@@ -1458,6 +1459,13 @@ export default async function BookingDetailsPage(props: PageProps) {
                   </div>
                 </div>
               </div>
+
+              <Link
+                href={`/admin/bookings/${booking.id}/invoice`}
+                className="flex min-h-[46px] w-full items-center justify-center rounded-full border border-[#d8cec0] bg-white px-4 py-3 text-sm font-semibold text-[#23313f] transition hover:bg-[#f8f4ee]"
+              >
+                Preview invoice
+              </Link>
 
               <PaymentPosPanel
                 bookingId={String(booking.id)}
