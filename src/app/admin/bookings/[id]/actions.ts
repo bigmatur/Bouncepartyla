@@ -20,6 +20,7 @@ import {
   resolveAuthoritativeModifierInventorySelections,
   type ModifierInventorySelectionInput,
 } from "@/lib/booking/modifier-inventory-resolver";
+import { getBookingMarkerColor } from "@/lib/booking/marker-color";
 
 function getString(formData: FormData, key: string) {
   const value = formData.get(key);
@@ -1470,7 +1471,9 @@ export async function updateBookingItemsAction(formData: FormData) {
 
   const { data: booking, error: bookingError } = await supabase
     .from("bookings")
-    .select("id, event_date, discount_amount, delivery_fee, tax_rate, deposit_amount")
+    .select(
+      "id, event_date, discount_amount, delivery_fee, tax_rate, deposit_amount, internal_notes"
+    )
     .eq("id", bookingId)
     .maybeSingle();
 
@@ -1691,6 +1694,15 @@ export async function updateBookingItemsAction(formData: FormData) {
   );
   const totalAmount = Number((taxableSubtotal + deliveryFee + taxAmount).toFixed(2));
   const balanceDue = Number((totalAmount - depositAmount).toFixed(2));
+  const markerModifiers = resolvedModifiers.map((modifier) => ({
+    modifier_group_name: modifier.modifierGroupName,
+    modifier_group_option_name: modifier.modifierOptionName,
+    name: modifier.modifierOptionName,
+  }));
+  const markerColor = getBookingMarkerColor(
+    { internal_notes: (booking as any).internal_notes || null },
+    markerModifiers
+  );
 
   const { error: updateError } = await supabase
     .from("bookings")
@@ -1708,6 +1720,7 @@ export async function updateBookingItemsAction(formData: FormData) {
       tax_amount: taxAmount,
       total_amount: totalAmount,
       balance_due: balanceDue,
+      marker_color: markerColor,
     })
     .eq("id", bookingId);
 

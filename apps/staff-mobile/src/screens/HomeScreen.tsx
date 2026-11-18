@@ -255,7 +255,7 @@ const PAYMENT_NOT_COLLECTED_REASON_OPTIONS: PaymentNotCollectedReasonOption[] = 
 
 const ZELLE_QR_ASSET = require("../../assets/payments/zelle-qr.png");
 const VENMO_QR_ASSET = require("../../assets/payments/venmo-qr.png");
-const ZELLE_PHONE_NUMBER = "(747) 272-2603";
+const ZELLE_PHONE_NUMBER = "(747) 272-26-03";
 
 function hasOpenShift(dashboard: StaffTimeDashboard | null) {
   return Boolean(
