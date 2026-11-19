@@ -1,0 +1,11 @@
+# Canonical host redirect for the new production domain.
+#
+# IMPORTANT: do not add redirects from bounceparty.us here until
+# bouncepartyla.com is verified in Netlify, has a valid TLS certificate, and
+# has passed the production smoke test. Enabling the old-domain redirect too
+# early would send the working service to the legacy site.
+[[redirects]]
+from = "https://www.bouncepartyla.com/*"
+to = "https://bouncepartyla.com/:splat"
+status = 301
+force = true

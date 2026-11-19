@@ -7,7 +7,7 @@ import {
   getPublicCatalogProducts,
 } from "@/lib/customer/public-catalog";
 
-const BASE_URL = "https://bounceparty.us";
+const BASE_URL = "https://bouncepartyla.com";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const [categories, products] = await Promise.all([
