@@ -28,7 +28,7 @@ type ProfileRow = {
   last_name?: string | null;
 };
 
-const DEFAULT_APP_URL = "https://bounceparty.us";
+const DEFAULT_APP_URL = "https://bouncepartyla.com";
 
 function appUrl() {
   return String(process.env.EXPO_PUBLIC_APP_URL || DEFAULT_APP_URL)
