@@ -159,7 +159,7 @@ function getDefaultInterface(role: string, explicitValue: string) {
   return ROLE_DEFAULT_INTERFACE[role] || "admin";
 }
 
-export async function createOrUpdateStaffAction(formData: FormData) {
+async function saveStaffProfile(formData: FormData) {
   const supabase = await createClient();
 
   await assertStaffPermission(supabase, "settings");
@@ -196,6 +196,14 @@ export async function createOrUpdateStaffAction(formData: FormData) {
     throw new Error("Auth user id must be a valid UUID.");
   }
 
+  if (phone) {
+    const digits = phone.replace(/\D/g, "");
+
+    if (!/^[0-9+().\-\s]+$/.test(phone) || digits.length < 7) {
+      throw new Error("Enter a valid phone number with at least 7 digits.");
+    }
+  }
+
   const notes = buildNotes(
     {
       role,
@@ -228,6 +236,33 @@ export async function createOrUpdateStaffAction(formData: FormData) {
   }
 
   revalidateStaffPages();
+}
+
+export type StaffSaveState = {
+  status: "idle" | "success" | "error";
+  message: string;
+};
+
+export async function saveStaffProfileAction(
+  _previousState: StaffSaveState,
+  formData: FormData,
+): Promise<StaffSaveState> {
+  try {
+    await saveStaffProfile(formData);
+
+    return {
+      status: "success",
+      message: "Profile saved.",
+    };
+  } catch (error) {
+    return {
+      status: "error",
+      message:
+        error instanceof Error && error.message
+          ? error.message
+          : "Profile could not be saved. Try again.",
+    };
+  }
 }
 
 export async function deactivateStaffAction(formData: FormData) {

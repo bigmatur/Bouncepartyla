@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { requireAdminPermission } from "@/lib/auth/require-admin";
 
 const inventoryTabs = [
   {
@@ -52,7 +53,9 @@ const inventoryTabs = [
   },
 ];
 
-export default function InventoryLayout({ children }: { children: ReactNode }) {
+export default async function InventoryLayout({ children }: { children: ReactNode }) {
+  await requireAdminPermission("inventory.view");
+
   return (
     <div className="admin-ipad-page admin-ipad-inventory space-y-4 sm:space-y-5">
       <section className="rounded-[22px] border border-black/5 bg-white p-3.5 shadow-[0_8px_28px_rgba(0,0,0,0.035)] sm:rounded-[28px] sm:p-4 sm:shadow-[0_10px_35px_rgba(0,0,0,0.035)]">

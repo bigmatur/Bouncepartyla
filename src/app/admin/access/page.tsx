@@ -406,7 +406,8 @@ export default async function AdminAccessPage(props: {
 
                 <div className="grid gap-5 xl:grid-cols-2">
                   <div>
-                    <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#9a7a49]">Individual permissions</div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#9a7a49]">Individual permission overrides</div>
+                    <p className="mt-1 text-xs text-[#7b7168]">Extra grants added on top of the primary and additional roles.</p>
                     <div className="mt-3 grid gap-2 md:grid-cols-2">
                       {SYSTEM_PERMISSIONS.map((permission) => (
                         <label key={`${user.name}-grant-${permission}`} className="flex items-start gap-2 rounded-2xl border border-[#eee5d9] bg-[#fcfaf7] px-3 py-3 text-sm text-[#3a342d]">
@@ -419,6 +420,7 @@ export default async function AdminAccessPage(props: {
 
                   <div>
                     <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[#9a7a49]">Explicit denies</div>
+                    <p className="mt-1 text-xs text-[#7b7168]">These always remove access, even when a role grants it.</p>
                     <div className="mt-3 grid gap-2 md:grid-cols-2">
                       {SYSTEM_PERMISSIONS.map((permission) => (
                         <label key={`${user.name}-deny-${permission}`} className="flex items-start gap-2 rounded-2xl border border-[#eee5d9] bg-[#fff6f4] px-3 py-3 text-sm text-[#3a342d]">

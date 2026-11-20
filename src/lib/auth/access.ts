@@ -1,15 +1,11 @@
 import "server-only";
 import {
-  SYSTEM_ROLES,
   SYSTEM_PERMISSIONS,
   defaultInterfaceForRole,
   getAvailableInterfacesForAccess,
   getBasePermissionsForRoleKey,
   isInterfaceKey,
-  isStaffRole,
-  isSystemRole,
   type AppPermission,
-  type AppRole,
   type InterfaceKey,
   type RoleKey,
 } from "./access-shared";
@@ -63,10 +59,6 @@ function isMissingColumnError(error: any) {
   const code = String(error?.code || "").toLowerCase();
 
   return code === "42703" || (message.includes("column") && message.includes("does not exist"));
-}
-
-function isRole(value: unknown): value is AppRole {
-  return isSystemRole(value);
 }
 
 function isPermission(value: unknown): value is AppPermission {
@@ -235,7 +227,7 @@ async function getRouteDriverRecord(supabase: any, user: any) {
   return null;
 }
 
-async function getCustomRolesByKeys(supabase: any, roleKeys: string[]) {
+async function getStoredRolesByKeys(supabase: any, roleKeys: string[]) {
   if (roleKeys.length === 0) {
     return {} as Record<string, { permissions: AppPermission[]; interfaces: InterfaceKey[] }>;
   }
@@ -372,11 +364,13 @@ export async function getUnifiedAccess(supabase: any): Promise<UnifiedAccess> {
   const explicitPermissions = profileHasPermissions
     ? normalizePermissionList(profile?.permissions)
     : legacyMeta.appPermissions;
-  const legacyPermissions = getLegacyGrantedPermissions(legacyMeta.permissions || []);
-  const customRoles = await getCustomRolesByKeys(
+  const legacyPermissions = profileHasPermissions
+    ? []
+    : getLegacyGrantedPermissions(legacyMeta.permissions || []);
+  const customRoles = await getStoredRolesByKeys(
     supabase,
     [role, ...additionalRoles]
-      .filter((value): value is string => Boolean(value) && !isSystemRole(value))
+      .filter((value): value is string => Boolean(value))
   );
   const customRolePermissions = Object.fromEntries(
     Object.entries(customRoles).map(([key, value]) => [key, value.permissions])
@@ -393,16 +387,19 @@ export async function getUnifiedAccess(supabase: any): Promise<UnifiedAccess> {
         customRolePermissions
       )
     : [];
-  const defaultInterface = isInterfaceKey(defaultInterfaceCandidate)
+  const preferredDefaultInterface = isInterfaceKey(defaultInterfaceCandidate)
     ? defaultInterfaceCandidate
     : defaultInterfaceForRole(role);
   const availableInterfaces = getAvailableInterfacesForAccess({
     role,
     additionalRoles,
     grantedPermissions,
-    defaultInterface,
+    defaultInterface: preferredDefaultInterface,
     customRoleInterfaces,
   });
+  const defaultInterface = availableInterfaces.includes(preferredDefaultInterface)
+    ? preferredDefaultInterface
+    : availableInterfaces[0] || defaultInterfaceForRole(role);
 
   return {
     user,
@@ -462,7 +459,7 @@ export function isAllowedPathForAccess(access: UnifiedAccess, path: string) {
   }
 
   if (path.startsWith("/admin")) {
-    return isStaffRole(access.role);
+    return access.availableInterfaces.includes("admin");
   }
 
   return false;

@@ -24,6 +24,10 @@ export default async function DriverViewProxyPage(props: {
 
   const { supabase, access, linkedDriverRecord } = await requireDriverInterfaceAccess();
 
+  if (!access.can("routes.view")) {
+    redirect("/driver");
+  }
+
   if (!isStaffRole(access.role) && access.role !== "driver") {
     const fallbackQuery = new URLSearchParams();
     fallbackQuery.set("date", selectedDate);

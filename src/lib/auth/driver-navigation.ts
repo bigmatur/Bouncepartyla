@@ -8,7 +8,7 @@ export type DriverNavItem = {
 };
 
 const DRIVER_NAV_ITEMS: DriverNavItem[] = [
-  { label: "Dashboard", href: "/driver", icon: "⌂", permission: "dashboard.view" },
+  { label: "Dashboard", href: "/driver", icon: "⌂" },
   { label: "Route board", href: "/driver/routes", icon: "▧", permission: "routes.view" },
   { label: "Driver view", href: "/driver/routes/view", icon: "▸", permission: "routes.view" },
   { label: "Driver checklist", href: "/driver/routes/checklists", icon: "☑", permission: "routes.view" },
@@ -20,7 +20,7 @@ const DRIVER_QUICK_TABS: Array<{
   label: string;
   permission?: AppPermission;
 }> = [
-  { href: "/driver", label: "Dashboard", permission: "dashboard.view" },
+  { href: "/driver", label: "Dashboard" },
   { href: "/driver/routes", label: "Route board", permission: "routes.view" },
   { href: "/driver/routes/view", label: "Driver view", permission: "routes.view" },
   { href: "/driver/routes/checklists", label: "Checklist", permission: "routes.view" },

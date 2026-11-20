@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { filterAdminNavItems } from "@/lib/auth/admin-navigation";
 import { filterDriverNavItems } from "@/lib/auth/driver-navigation";
-import { INTERFACE_LABELS, type AppPermission, type InterfaceKey, type RoleKey } from "@/lib/auth/access-shared";
+import { INTERFACE_LABELS, isDriverWorkspacePath, type AppPermission, type InterfaceKey, type RoleKey } from "@/lib/auth/access-shared";
 
 type AdminNavItem = ReturnType<typeof filterAdminNavItems>[number];
 type DriverNavItem = ReturnType<typeof filterDriverNavItems>[number];
@@ -138,8 +138,8 @@ export default function AdminSidebar({
   mobile?: boolean;
 }) {
   const pathname = usePathname();
-  const isDriverInterface = pathname.startsWith("/driver");
   const isDriverRole = role === "driver";
+  const isDriverInterface = isDriverWorkspacePath(pathname, role);
   const navItems = isDriverInterface
     ? filterDriverNavItems(grantedPermissions)
     : filterAdminNavItems(grantedPermissions);
