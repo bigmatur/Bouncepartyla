@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { filterAdminQuickTabs } from "@/lib/auth/admin-navigation";
 import { filterDriverQuickTabs } from "@/lib/auth/driver-navigation";
-import { ROLE_LABELS, isSystemRole, type AppPermission, type RoleKey } from "@/lib/auth/access-shared";
+import { ROLE_LABELS, isDriverWorkspacePath, isSystemRole, type AppPermission, type RoleKey } from "@/lib/auth/access-shared";
 
 function formatRoleLabel(role: RoleKey | null) {
   if (!role) {
@@ -153,7 +153,7 @@ export default function AdminTopbar({
     setPathname(window.location.pathname);
   }, []);
 
-  const isDriverInterface = pathname.startsWith("/driver");
+  const isDriverInterface = isDriverWorkspacePath(pathname, role);
   const quickTabs = isDriverInterface
     ? filterDriverQuickTabs(grantedPermissions)
     : filterAdminQuickTabs(grantedPermissions);

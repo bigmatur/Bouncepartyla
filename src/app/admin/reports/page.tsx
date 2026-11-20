@@ -79,10 +79,12 @@ function getDisplayedTaxForRow(
 function StatCard({
   label,
   value,
+  hint,
   tone = "default",
 }: {
   label: string;
   value: React.ReactNode;
+  hint?: string;
   tone?: "default" | "green" | "red" | "blue" | "gold";
 }) {
   const toneClass =
@@ -105,6 +107,7 @@ function StatCard({
       <div className={`mt-1.5 break-words text-xl font-bold leading-tight sm:mt-2 sm:text-3xl sm:font-semibold ${toneClass}`}>
         {value}
       </div>
+      {hint ? <div className="mt-1 text-[10px] text-[#8b8177] sm:text-xs">{hint}</div> : null}
     </div>
   );
 }
@@ -126,10 +129,6 @@ export default async function ReportsPage(props: {
   const today = new Date();
   const todayIso = today.toISOString().slice(0, 10);
 
-  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1)
-    .toISOString()
-    .slice(0, 10);
-
   const next30 = new Date(today);
   next30.setDate(today.getDate() + 30);
   const next30Iso = next30.toISOString().slice(0, 10);
@@ -138,7 +137,6 @@ export default async function ReportsPage(props: {
     salesTaxReport,
     bookingsResult,
     upcomingBookingsResult,
-    customersResult,
     inventoryItemsResult,
     unitsResult,
     movementsResult,
@@ -172,9 +170,10 @@ export default async function ReportsPage(props: {
         )
       `
       )
-      .gte("event_date", monthStart)
+      .gte("event_date", salesTaxRange.from)
+      .lte("event_date", salesTaxRange.to)
       .order("event_date", { ascending: false })
-      .limit(250),
+      .limit(2000),
 
     supabase
       .from("bookings")
@@ -198,8 +197,6 @@ export default async function ReportsPage(props: {
       .lte("event_date", next30Iso)
       .order("event_date", { ascending: true })
       .limit(12),
-
-    supabase.from("customers").select("id"),
 
     supabase
       .from("inventory_items")
@@ -251,7 +248,6 @@ export default async function ReportsPage(props: {
 
   if (bookingsResult.error) throw new Error(bookingsResult.error.message);
   if (upcomingBookingsResult.error) throw new Error(upcomingBookingsResult.error.message);
-  if (customersResult.error) throw new Error(customersResult.error.message);
   if (inventoryItemsResult.error) throw new Error(inventoryItemsResult.error.message);
   if (unitsResult.error) throw new Error(unitsResult.error.message);
   if (movementsResult.error) throw new Error(movementsResult.error.message);
@@ -259,23 +255,42 @@ export default async function ReportsPage(props: {
 
   const bookings = bookingsResult.data || [];
   const upcomingBookings = upcomingBookingsResult.data || [];
-  const customers = customersResult.data || [];
   const inventoryItems = inventoryItemsResult.data || [];
   const units = unitsResult.data || [];
   const movements = movementsResult.data || [];
   const reservations = reservationsResult.data || [];
 
-  const revenue = bookings.reduce(
+  const reportBookings = bookings.filter(
+    (booking: any) =>
+      !["cancelled", "canceled", "archived"].includes(
+        String(booking.status || "").toLowerCase(),
+      ),
+  );
+
+  const customerCount = new Set(
+    reportBookings
+      .map((booking: any) => {
+        const customer = Array.isArray(booking.customers)
+          ? booking.customers[0]
+          : booking.customers;
+        return String(customer?.id || "").trim();
+      })
+      .filter(Boolean),
+  ).size;
+
+  const reportPeriodLabel = `${formatSalesTaxDate(salesTaxRange.from)} – ${formatSalesTaxDate(salesTaxRange.to)}`;
+
+  const revenue = reportBookings.reduce(
     (sum: number, booking: any) => sum + Number(booking.total_amount || 0),
     0
   );
 
-  const balanceDue = bookings.reduce(
+  const balanceDue = reportBookings.reduce(
     (sum: number, booking: any) => sum + Number(booking.balance_due || 0),
     0
   );
 
-  const deposits = bookings.reduce(
+  const deposits = reportBookings.reduce(
     (sum: number, booking: any) => sum + Number(booking.deposit_amount || 0),
     0
   );
@@ -371,14 +386,18 @@ export default async function ReportsPage(props: {
       </section>
 
       <section className="grid grid-cols-2 gap-2.5 sm:gap-4 md:grid-cols-3 xl:grid-cols-5">
-        <StatCard label="Month revenue" value={formatMoney(revenue)} tone="green" />
-        <StatCard label="Balance due" value={formatMoney(balanceDue)} tone="red" />
-        <StatCard label="Deposits" value={formatMoney(deposits)} tone="gold" />
-        <StatCard label="Bookings this month" value={bookings.length} />
+        <StatCard label="Booked revenue" value={formatMoney(revenue)} hint={reportPeriodLabel} tone="green" />
+        <StatCard label="Outstanding balance" value={formatMoney(balanceDue)} hint={reportPeriodLabel} tone="red" />
+        <StatCard label="Deposit amounts" value={formatMoney(deposits)} hint={reportPeriodLabel} tone="gold" />
+        <StatCard label="Bookings in period" value={reportBookings.length} hint={reportPeriodLabel} />
         <div className="col-span-2 md:col-span-1">
-          <StatCard label="Customers" value={customers.length} tone="blue" />
+          <StatCard label="Customers in period" value={customerCount} hint="Unique booked customers" tone="blue" />
         </div>
       </section>
+
+      <p className="rounded-2xl border border-[#e7ded3] bg-[#fcfaf7] px-4 py-3 text-xs leading-5 text-[#6c6258] sm:text-sm">
+        Overview cards use booking event dates in the selected range. Booked revenue is the sum of Total Amount, Outstanding balance is Balance Due, and Deposit amounts is Deposit Amount. Cancelled and archived bookings are excluded.
+      </p>
 
       <section className="min-w-0 overflow-hidden rounded-[20px] border border-black/5 bg-white shadow-[0_8px_26px_rgba(0,0,0,0.035)] sm:rounded-[30px] sm:shadow-[0_12px_40px_rgba(0,0,0,0.04)]">
         <div className="border-b border-[#eee5d9] px-3.5 py-3 sm:px-6 sm:py-5">

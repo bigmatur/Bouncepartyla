@@ -97,13 +97,13 @@ export default async function PublicProductPage({
       product.short_description ||
       product.description ||
       "Bounce Party LA rental.",
-    url: `https://bounceparty.us/product/${encodeURIComponent(slug)}`,
+    url: `https://bouncepartyla.com/product/${encodeURIComponent(slug)}`,
     ...(product.image_url ? { image: [product.image_url] } : {}),
     offers: {
       "@type": "Offer",
       priceCurrency: "USD",
       price: Number(product.base_price || 0).toFixed(2),
-      url: `https://bounceparty.us/product/${encodeURIComponent(slug)}`,
+      url: `https://bouncepartyla.com/product/${encodeURIComponent(slug)}`,
     },
   };
 

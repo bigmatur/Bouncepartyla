@@ -4,7 +4,15 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/server";
-import { getUnifiedAccess, isStaffRole, isSystemRole, type AppPermission, type InterfaceKey } from "@/lib/auth/access";
+import { createServiceClient } from "@/lib/supabase/service";
+import {
+  SYSTEM_PERMISSIONS,
+  getUnifiedAccess,
+  isStaffRole,
+  isSystemRole,
+  type AppPermission,
+  type InterfaceKey,
+} from "@/lib/auth/access";
 import {
   ACCESS_MATRIX_ROLES,
   buildStaffNotes,
@@ -34,7 +42,10 @@ function slugifyRoleKey(value: string) {
 }
 
 function normalizePermissions(values: string[]) {
-  return Array.from(new Set(values)) as AppPermission[];
+  const allowedPermissions = new Set<string>(SYSTEM_PERMISSIONS);
+  return Array.from(
+    new Set(values.filter((value): value is AppPermission => allowedPermissions.has(value)))
+  );
 }
 
 function normalizeInterfaces(values: string[]) {
@@ -285,8 +296,9 @@ function redirectToTab(tab: string) {
 }
 
 export async function upsertRoleAction(formData: FormData) {
-  const supabase = await createClient();
-  const access = await assertCanManageRoles(supabase);
+  const authClient = await createClient();
+  const access = await assertCanManageRoles(authClient);
+  const supabase = createServiceClient();
   const tab = getString(formData, "tab") || "roles";
   const originalKey = getString(formData, "originalKey");
   const isSystem = getString(formData, "isSystem") === "true";
@@ -367,8 +379,9 @@ export async function upsertRoleAction(formData: FormData) {
 }
 
 export async function cloneRoleAction(formData: FormData) {
-  const supabase = await createClient();
-  const access = await assertCanManageRoles(supabase);
+  const authClient = await createClient();
+  const access = await assertCanManageRoles(authClient);
+  const supabase = createServiceClient();
   const tab = getString(formData, "tab") || "roles";
   const sourceKey = getString(formData, "sourceKey");
   const clonedKey = slugifyRoleKey(getString(formData, "clonedRoleKey"));
@@ -412,8 +425,9 @@ export async function cloneRoleAction(formData: FormData) {
 }
 
 export async function deleteRoleAction(formData: FormData) {
-  const supabase = await createClient();
-  const access = await assertCanManageRoles(supabase);
+  const authClient = await createClient();
+  const access = await assertCanManageRoles(authClient);
+  const supabase = createServiceClient();
   const tab = getString(formData, "tab") || "roles";
   const key = getString(formData, "roleKey");
 
@@ -464,8 +478,9 @@ export async function deleteRoleAction(formData: FormData) {
 }
 
 export async function updateUserAccessAction(formData: FormData) {
-  const supabase = await createClient();
-  const access = await assertCanAssignRoles(supabase);
+  const authClient = await createClient();
+  const access = await assertCanAssignRoles(authClient);
+  const supabase = createServiceClient();
   const tab = getString(formData, "tab") || "users";
   const authUserId = getString(formData, "authUserId") || null;
   const driverId = getString(formData, "driverId") || null;
@@ -609,8 +624,9 @@ export async function updateUserAccessAction(formData: FormData) {
 }
 
 export async function updatePermissionMatrixAction(formData: FormData) {
-  const supabase = await createClient();
-  const access = await assertCanManageRoles(supabase);
+  const authClient = await createClient();
+  const access = await assertCanManageRoles(authClient);
+  const supabase = createServiceClient();
   const tab = getString(formData, "tab") || "matrix";
   const roles = await fetchManagedRoles(supabase);
 

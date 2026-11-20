@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 
 export default async function DriverProfilePage() {
   const { access, linkedDriverRecord } = await requireDriverInterfaceAccess();
+  const canUseRouteTools = access.can("routes.view");
 
   const roleLabel =
     access.role === "driver"
@@ -51,7 +52,7 @@ export default async function DriverProfilePage() {
 
       <section className="rounded-[28px] border border-black/5 bg-white p-6 shadow-[0_10px_35px_rgba(0,0,0,0.035)]">
         <div className="text-sm font-semibold text-[#1f1e1b]">Links</div>
-        <div className="mt-4 flex flex-wrap gap-2">
+        {canUseRouteTools ? <div className="mt-4 flex flex-wrap gap-2">
           <Link
             href="/driver/routes"
             className="rounded-full bg-[#23313f] px-5 py-3 text-sm font-semibold text-white"
@@ -70,7 +71,11 @@ export default async function DriverProfilePage() {
           >
             Checklist
           </Link>
-        </div>
+        </div> : (
+          <p className="mt-3 text-sm text-[#6c6258]">
+            Route tools are not assigned to this account. Ask an administrator to grant Routes View when needed.
+          </p>
+        )}
       </section>
     </div>
   );

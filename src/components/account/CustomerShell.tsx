@@ -145,8 +145,24 @@ export default function CustomerShell({
 
     loadUnreadCount();
 
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void loadUnreadCount();
+      }
+    }, 30000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void loadUnreadCount();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [pathname]);
 

@@ -85,7 +85,10 @@ export default async function DriverRoutePage({
 
   const { supabase, access } = await requireAdminUser();
 
-  if (!access.can("routes.view") && access.role !== "driver") {
+  if (
+    !access.can("routes.view") &&
+    !(access.role !== "driver" && access.can("preview.driver"))
+  ) {
     throw new Error("You do not have permission to view routes.");
   }
   const isLockedDriverScope = access.role === "driver";

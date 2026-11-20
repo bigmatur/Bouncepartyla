@@ -1,6 +1,6 @@
 import { supabase } from "./supabase";
 
-const DEFAULT_APP_URL = "https://bouncepartybooking.netlify.app";
+const DEFAULT_APP_URL = "https://bouncepartyla.com";
 
 function appUrl() {
   return String(

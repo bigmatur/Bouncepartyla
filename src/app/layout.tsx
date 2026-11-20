@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://bounceparty.us"),
+  metadataBase: new URL("https://bouncepartyla.com"),
   title: {
     default: "Bounce Party LA | Modern Party Rentals",
     template: "%s | Bounce Party LA",

@@ -1,10 +1,14 @@
 import { requireAdminPermission } from "@/lib/auth/require-admin";
 import { getCurrentStaffAccess } from "@/lib/staff-access";
 import {
-  createOrUpdateStaffAction,
   deactivateStaffAction,
+  saveStaffProfileAction,
   sendStaffPasswordResetAction,
 } from "./actions";
+import {
+  StaffProfileForm,
+  StaffSaveButton,
+} from "./StaffProfileForm";
 
 const META_START = "[[STAFF_META]]";
 const META_END = "[[/STAFF_META]]";
@@ -329,21 +333,21 @@ export default async function AdminStaffPage() {
                   </div>
                 </summary>
 
-                <form
-                  action={createOrUpdateStaffAction}
+                <StaffProfileForm
+                  action={saveStaffProfileAction}
                   className="border-t border-[#eee5d9] bg-[#fcfaf7] p-3 sm:p-6"
                 >
                   <input type="hidden" name="driverId" value={member.id} />
 
                   <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                     <label className="block">
-                      <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.12em] text-[#9a7a49]">Full name</span>
+                      <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.12em] text-[#9a7a49]">Full name (first and last)</span>
                       <input name="name" defaultValue={member.name || ""} className="w-full min-w-0 rounded-xl border border-[#d8cec0] bg-white px-3 py-2.5 text-sm sm:rounded-2xl sm:px-4 sm:py-3" required />
                     </label>
 
                     <label className="block">
                       <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.12em] text-[#9a7a49]">Phone</span>
-                      <input name="phone" defaultValue={member.phone || ""} className="w-full min-w-0 rounded-xl border border-[#d8cec0] bg-white px-3 py-2.5 text-sm sm:rounded-2xl sm:px-4 sm:py-3" />
+                      <input name="phone" type="tel" inputMode="tel" pattern="[0-9+() .-]*" title="Use digits and phone symbols only" placeholder="+1 424 555 0123" defaultValue={member.phone || ""} className="w-full min-w-0 rounded-xl border border-[#d8cec0] bg-white px-3 py-2.5 text-sm sm:rounded-2xl sm:px-4 sm:py-3" />
                     </label>
 
                     <label className="block">
@@ -425,11 +429,11 @@ export default async function AdminStaffPage() {
                   </details>
 
                   <div className="mt-4 grid gap-2 sm:flex sm:flex-wrap">
-                    <button type="submit" className="w-full rounded-full bg-[#23313f] px-5 py-3 text-sm font-semibold text-white sm:w-auto sm:py-2.5">Save profile</button>
+                    <StaffSaveButton />
                     <button type="submit" formAction={sendStaffPasswordResetAction} className="w-full rounded-full bg-[#c9964f] px-5 py-3 text-sm font-semibold text-white sm:w-auto sm:py-2.5">{member.auth_user_id ? "Send password reset" : "Create login & send invite"}</button>
                     <button type="submit" formAction={deactivateStaffAction} className="w-full rounded-full border border-red-200 bg-red-50 px-5 py-3 text-sm font-semibold text-red-700 sm:w-auto sm:py-2.5">Deactivate</button>
                   </div>
-                </form>
+                </StaffProfileForm>
               </details>
             );
         })}
@@ -441,7 +445,7 @@ export default async function AdminStaffPage() {
           Creates a profile used in routes and operations. After saving, create the login and send an invite to let the employee set a password.
         </p>
 
-        <form action={createOrUpdateStaffAction} className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <StaffProfileForm action={saveStaffProfileAction} className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <input
             name="name"
             placeholder="Full name"
@@ -450,7 +454,11 @@ export default async function AdminStaffPage() {
           />
           <input
             name="phone"
-            placeholder="Phone"
+            type="tel"
+            inputMode="tel"
+            pattern="[0-9+() .-]*"
+            title="Use digits and phone symbols only"
+            placeholder="Phone, e.g. +1 424 555 0123"
             className="rounded-2xl border border-[#d8cec0] bg-white px-4 py-3 text-sm"
           />
           <input
@@ -545,7 +553,7 @@ export default async function AdminStaffPage() {
           >
             Add staff member
           </button>
-        </form>
+        </StaffProfileForm>
       </section>
     </div>
   );

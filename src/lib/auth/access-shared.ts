@@ -205,6 +205,12 @@ export function getBasePermissionsForRoleKey(
     return [];
   }
 
+  // Stored role definitions are the source of truth for both system and
+  // custom roles. The hard-coded map remains a safe bootstrap fallback.
+  if (Object.prototype.hasOwnProperty.call(customRolePermissions, roleKey)) {
+    return customRolePermissions[roleKey] || [];
+  }
+
   if (isRole(roleKey)) {
     return ROLE_PERMISSION_MAP[roleKey] || [];
   }
@@ -242,15 +248,18 @@ export function getAvailableInterfacesForAccess(params: {
       return;
     }
 
-    if (isStaffRole(roleKey)) {
-      interfaces.add("admin");
+    const configuredInterfaces = params.customRoleInterfaces?.[roleKey];
+
+    if (configuredInterfaces) {
+      configuredInterfaces.forEach((value) => {
+        if (isInterfaceKey(value)) {
+          interfaces.add(value);
+        }
+      });
+      return;
     }
 
-    (params.customRoleInterfaces?.[roleKey] || []).forEach((value) => {
-      if (isInterfaceKey(value)) {
-        interfaces.add(value);
-      }
-    });
+    interfaces.add(defaultInterfaceForRole(roleKey));
   };
 
   addRoleInterfaces(params.role);
@@ -264,7 +273,22 @@ export function getAvailableInterfacesForAccess(params: {
     interfaces.add("customer");
   }
 
-  interfaces.add(params.defaultInterface);
+  // A stale profile preference must not grant an interface that the assigned
+  // roles do not expose. Use it only as a bootstrap fallback for legacy roles
+  // that have no interface configuration at all.
+  if (interfaces.size === 0) {
+    interfaces.add(params.defaultInterface);
+  }
 
   return Array.from(interfaces);
+}
+
+export function isDriverWorkspacePath(
+  pathname: string,
+  role: RoleKey | null,
+) {
+  return (
+    pathname.startsWith("/driver") ||
+    (role === "driver" && pathname.startsWith("/admin/routes/driver"))
+  );
 }

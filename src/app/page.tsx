@@ -23,17 +23,17 @@ const homepageStructuredData = {
   "@graph": [
     {
       "@type": "WebSite",
-      "@id": "https://bounceparty.us/#website",
+      "@id": "https://bouncepartyla.com/#website",
       name: "Bounce Party LA",
-      url: "https://bounceparty.us",
+      url: "https://bouncepartyla.com",
       description:
         "Modern bounce houses, soft play, bubble houses and party rentals in Los Angeles.",
     },
     {
       "@type": "LocalBusiness",
-      "@id": "https://bounceparty.us/#localbusiness",
+      "@id": "https://bouncepartyla.com/#localbusiness",
       name: "Bounce Party LA",
-      url: "https://bounceparty.us",
+      url: "https://bouncepartyla.com",
       telephone: "+1-747-272-2603",
       email: "bouncepartyla@gmail.com",
       priceRange: "$$",
